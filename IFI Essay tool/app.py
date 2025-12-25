@@ -143,6 +143,8 @@ if "csv_written" not in st.session_state:
     st.session_state.csv_written = False
 if "notifications" not in st.session_state:
     st.session_state.notifications = []
+if "file_uploader_key" not in st.session_state:
+    st.session_state.file_uploader_key = 0
 
 def show_notification(message: str, notification_type: str = "success"):
     """Add a notification to session state that will persist across reruns."""
@@ -200,7 +202,8 @@ if upload_mode == "Single Entry":
     uploaded_file = st.file_uploader(
         "Choose an essay entry form",
         type=["png", "jpg", "jpeg", "pdf"],
-        help="Upload a single IFI essay contest entry form"
+        help="Upload a single IFI essay contest entry form",
+        key=f"file_uploader_single_{st.session_state.file_uploader_key}"
     )
     uploaded_files = [uploaded_file] if uploaded_file else []
 else:
@@ -208,7 +211,8 @@ else:
         "Choose multiple entry forms",
         type=["png", "jpg", "jpeg", "pdf"],
         accept_multiple_files=True,
-        help="Upload multiple IFI essay contest entry forms"
+        help="Upload multiple IFI essay contest entry forms",
+        key=f"file_uploader_multiple_{st.session_state.file_uploader_key}"
     )
     if not uploaded_files:
         uploaded_files = []
@@ -280,6 +284,12 @@ if len(uploaded_files) > 0:
                             st.session_state.processing_report = report
                             st.session_state.csv_written = False
                             st.success("✅ Entry form processed successfully!")
+                            # Clear file uploader after successful processing
+                            st.session_state.file_uploader_key += 1
+                            st.rerun()  # Rerun to clear the file uploader
+                            # Clear file uploader after successful processing
+                            st.session_state.file_uploader_key += 1
+                            st.rerun()  # Rerun to clear the file uploader
                 
                 except Exception as file_error:
                     error_msg = str(file_error)
@@ -299,6 +309,11 @@ if len(uploaded_files) > 0:
                 # Update progress
                 if upload_mode == "Multiple Entries":
                     progress_bar.progress((idx + 1) / len(uploaded_files))
+            
+            # Clear file uploader after successful processing by incrementing the key
+            # This forces Streamlit to reset the file uploader widget
+            if upload_mode == "Multiple Entries":
+                st.session_state.file_uploader_key += 1
             
             # Bulk processing summary
             if upload_mode == "Multiple Entries":
@@ -341,6 +356,9 @@ if len(uploaded_files) > 0:
                                 })
                         else:
                             st.write(result['status'])
+                
+                # Rerun to clear the file uploader now that summary is shown
+                st.rerun()
             
         except RuntimeError as e:
             # Catch processing errors
@@ -596,9 +614,62 @@ else:
     records = get_db_records(needs_review=False)
     action_label = "Send for Review"
 
-# Show count
+# Show count and export button for approved records
 if records:
     st.info(f"📋 Found **{len(records)}** record(s) in {review_mode.lower()}")
+    
+    # Add export button for approved/clean records
+    if review_mode == "Approved Records" and len(records) > 0:
+        col1, col2 = st.columns([1, 4])
+        with col1:
+            # Generate CSV data for export
+            import io
+            import csv
+            
+            output = io.StringIO()
+            writer = csv.writer(output)
+            
+            # Write headers
+            headers = [
+                "submission_id", "student_name", "school_name", "grade",
+                "teacher_name", "city_or_location", "father_figure_name",
+                "phone", "email", "word_count", "ocr_confidence_avg",
+                "review_reason_codes", "artifact_dir", "filename"
+            ]
+            writer.writerow(headers)
+            
+            # Write records
+            for record_dict in records:
+                row = [
+                    record_dict.get("submission_id", ""),
+                    record_dict.get("student_name", ""),
+                    record_dict.get("school_name", ""),
+                    record_dict.get("grade", ""),
+                    record_dict.get("teacher_name", ""),
+                    record_dict.get("city_or_location", ""),
+                    record_dict.get("father_figure_name", ""),
+                    record_dict.get("phone", ""),
+                    record_dict.get("email", ""),
+                    record_dict.get("word_count", 0),
+                    f"{record_dict.get('ocr_confidence_avg', 0):.2f}" if record_dict.get("ocr_confidence_avg") else "",
+                    record_dict.get("review_reason_codes", ""),
+                    record_dict.get("artifact_dir", ""),
+                    record_dict.get("filename", "")
+                ]
+                writer.writerow(row)
+            
+            csv_data = output.getvalue()
+            
+            st.download_button(
+                label="💾 Export All Clean Records to CSV",
+                data=csv_data,
+                file_name=f"clean_records_export_{len(records)}_records.csv",
+                mime="text/csv",
+                use_container_width=True,
+                help="Download all approved records as a CSV file"
+            )
+        with col2:
+            st.caption("💡 Export all approved records to CSV for external use or backup.")
 else:
     st.info(f"📋 No records found in {review_mode.lower()}")
 

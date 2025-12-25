@@ -13,6 +13,178 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _extract_school_name_fallback(contact_block: str) -> Optional[str]:
+    """
+    Fallback rule-based extraction for school names when LLM fails.
+    
+    Searches for school name patterns in the contact block:
+    - Lines containing school type keywords (Elementary, Middle, High, School, Academy)
+    - Lines near "School" or "Escuela" labels (within 5 lines)
+    - Capitalized multi-word phrases that look like school names
+    
+    Args:
+        contact_block: Text containing contact information
+        
+    Returns:
+        Extracted school name or None
+    """
+    lines = contact_block.split('\n')
+    
+    # School type keywords
+    school_type_patterns = [
+        r'\b(?:Elementary|Middle|High|School|Academy|Academia|Escuela)\b',
+    ]
+    
+    # Look for school names near "School" or "Escuela" labels
+    for i, line in enumerate(lines):
+        line_lower = line.lower().strip()
+        
+        # Check if this line contains a school label
+        if any(label in line_lower for label in ['school', 'escuela']):
+            # Check lines before and after the label (within 5 lines)
+            search_range = range(max(0, i - 3), min(len(lines), i + 4))
+            for j in search_range:
+                if j == i:  # Skip the label line itself
+                    continue
+                    
+                candidate_line = lines[j].strip()
+                if not candidate_line or len(candidate_line) < 3:
+                    continue
+                
+                # Look for school-type keywords in the candidate line
+                if any(re.search(pattern, candidate_line, re.IGNORECASE) for pattern in school_type_patterns):
+                    # This looks like a school name
+                    # Clean up common OCR artifacts
+                    cleaned = re.sub(r'[^\w\s\-&]', '', candidate_line)  # Remove special chars except hyphens and ampersands
+                    cleaned = ' '.join(cleaned.split())  # Normalize whitespace
+                    if len(cleaned) > 3:  # Must have some content
+                        return cleaned
+                
+                # If no school type keyword, but line looks like a name (capitalized words)
+                # and it's near the School label, check if it's likely a school
+                if re.match(r'^[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+$', candidate_line):
+                    # Capitalized multi-word phrase - could be a school name
+                    # Only return if it's 2-5 words (typical school name length)
+                    words = candidate_line.split()
+                    if 2 <= len(words) <= 5:
+                        return candidate_line
+    
+    # Fallback: Look for any line containing school-type keywords anywhere in contact block
+    for line in lines:
+        line_stripped = line.strip()
+        if not line_stripped or len(line_stripped) < 5:
+            continue
+            
+        # Check if line contains school-type keywords
+        for pattern in school_type_patterns:
+            if re.search(pattern, line_stripped, re.IGNORECASE):
+                # Extract the school name (everything on this line, cleaned)
+                cleaned = re.sub(r'[^\w\s\-&]', '', line_stripped)
+                cleaned = ' '.join(cleaned.split())
+                # Must be substantial (not just "School" by itself)
+                if len(cleaned) > 8 and 'school' not in cleaned.lower() or len(cleaned.split()) > 1:
+                    return cleaned
+    
+    return None
+
+
+def _extract_phone_fallback(contact_block: str) -> Optional[str]:
+    """
+    Fallback rule-based extraction for phone numbers when LLM fails.
+    
+    Searches for phone number patterns near "Phone" or "Teléfono" labels.
+    
+    Args:
+        contact_block: Text containing contact information
+        
+    Returns:
+        Extracted phone number or None
+    """
+    lines = contact_block.split('\n')
+    
+    # Look for phone numbers near "Phone" or "Teléfono" labels
+    for i, line in enumerate(lines):
+        line_lower = line.lower().strip()
+        
+        # Check if this line contains a phone label
+        if any(label in line_lower for label in ['phone', 'teléfono', 'telefono', 'tel']):
+            # Check same line first (e.g., "Phone: 773-251-0354")
+            phone_match = re.search(r'(?:phone|tel[éé]fono|tel)[:\s]+([0-9\s\-\(\)\.]+)', line, re.IGNORECASE)
+            if phone_match:
+                phone = phone_match.group(1).strip()
+                # Clean up phone number (remove spaces, keep digits and common separators)
+                phone = re.sub(r'[^\d\-\(\)\.]', '', phone)
+                if len(re.sub(r'[^\d]', '', phone)) >= 10:  # Must have at least 10 digits
+                    return phone
+            
+            # Check next few lines for phone number
+            for j in range(i + 1, min(i + 3, len(lines))):
+                candidate_line = lines[j].strip()
+                if not candidate_line:
+                    continue
+                
+                # Look for phone number patterns: digits with optional separators
+                phone_patterns = [
+                    r'(\d{3}[-.\s]?\d{3}[-.\s]?\d{4})',  # 773-251-0354 or 773.251.0354
+                    r'(\(\d{3}\)\s?\d{3}[-.\s]?\d{4})',  # (773) 251-0354
+                    r'(\d{10})',  # 7732510354 (10 digits in a row)
+                ]
+                
+                for pattern in phone_patterns:
+                    match = re.search(pattern, candidate_line)
+                    if match:
+                        phone = match.group(1).strip()
+                        # Clean up but preserve format
+                        if len(re.sub(r'[^\d]', '', phone)) >= 10:
+                            return phone
+    
+    return None
+
+
+def _extract_email_fallback(contact_block: str) -> Optional[str]:
+    """
+    Fallback rule-based extraction for email addresses when LLM fails.
+    
+    Searches for email patterns near "Email" or "Correo" labels.
+    
+    Args:
+        contact_block: Text containing contact information
+        
+    Returns:
+        Extracted email address or None
+    """
+    lines = contact_block.split('\n')
+    
+    # Look for email addresses near "Email" or "Correo" labels
+    for i, line in enumerate(lines):
+        line_lower = line.lower().strip()
+        
+        # Check if this line contains an email label
+        if any(label in line_lower for label in ['email', 'correo', 'e-mail']):
+            # Check same line first (e.g., "Email: user@domain.com")
+            email_match = re.search(r'(?:email|correo|e-mail)[:\s]+([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})', line, re.IGNORECASE)
+            if email_match:
+                email = email_match.group(1).strip()
+                if '@' in email and '.' in email.split('@')[1]:
+                    return email
+            
+            # Check next few lines for email address
+            for j in range(i + 1, min(i + 3, len(lines))):
+                candidate_line = lines[j].strip()
+                if not candidate_line:
+                    continue
+                
+                # Look for email pattern
+                email_pattern = r'([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})'
+                match = re.search(email_pattern, candidate_line)
+                if match:
+                    email = match.group(1).strip()
+                    if '@' in email and '.' in email.split('@')[1]:
+                        return email
+    
+    return None
+
+
 def parse_name_from_filename(filename: str) -> Optional[str]:
     """
     Extract student name from filename.
@@ -285,7 +457,6 @@ Return ONLY valid JSON, no markdown, no explanation."""
             try:
                 # Handle string inputs like "1st", "first", etc.
                 if isinstance(grade_raw, str):
-                    import re
                     # Try to extract number from ordinals: "1st", "2nd", "first", etc.
                     ordinal_match = re.search(r'\b(\d+)(?:st|nd|rd|th)\b', grade_raw.lower())
                     if ordinal_match:
@@ -318,39 +489,64 @@ Return ONLY valid JSON, no markdown, no explanation."""
             except (ValueError, TypeError):
                 pass
         
-        # Fallback: Check line immediately after "Grade / Grado" label if LLM didn't find grade
+        # Priority 3 Fix: Enhanced fallback grade extraction with expanded search
         if not grade_found:
-            import re
             lines = contact_block.split('\n')
             for i, line in enumerate(lines):
                 # Check if this line contains grade label
                 line_lower = line.lower()
-                if ('grade' in line_lower or 'grado' in line_lower) and ('/' in line or 'grade' in line_lower):
-                    # Check if the next line is blank/empty (OCR might have missed handwritten grade)
-                    # Then check next few lines for grade value
-                    next_idx = i + 1
-                    # Check if line immediately after grade label is empty or a different label
-                    if next_idx < len(lines):
-                        next_line_immediate = lines[next_idx].strip()
-                        # If next line is empty or another label, the grade field was likely blank/not captured
-                        is_blank_field = (not next_line_immediate or 
-                                         'deadline' in next_line_immediate.lower() or
-                                         'march' in next_line_immediate.lower() or
-                                         'april' in next_line_immediate.lower() or
-                                         'may' in next_line_immediate.lower() or
-                                         'june' in next_line_immediate.lower())
-                        
-                        if is_blank_field:
-                            # Grade field appears blank - OCR didn't capture it
-                            # We can't infer it, so leave as None
-                            logger.info("Grade field appears blank in OCR (not captured)")
+                if ('grade' in line_lower or 'grado' in line_lower):
+                    # First, check same line as label for patterns like "Grade: 5" or "Grade 5" or "Grade / Grado: 3"
+                    same_line_grade_match = re.search(r'(?:grade|grado)[:\s/]*(\d{1,2})(?:\s|$)', line, re.IGNORECASE)
+                    if same_line_grade_match:
+                        grade_int = int(same_line_grade_match.group(1))
+                        if 1 <= grade_int <= 12:
+                            normalized["grade"] = grade_int
+                            logger.info(f"Fallback: Found grade {grade_int} on same line as label: '{line.strip()[:50]}'")
+                            grade_found = True
+                            break
                     
-                    # Still check next few lines in case grade appears later
-                    for j in range(i + 1, min(i + 5, len(lines))):
+                    # Also check for ordinal on same line: "Grade 1st" or "1st Grade"
+                    same_line_ordinal = re.search(r'(?:grade|grado).*?\b(\d+)(?:st|nd|rd|th)\b', line, re.IGNORECASE)
+                    if not same_line_ordinal:
+                        same_line_ordinal = re.search(r'\b(\d+)(?:st|nd|rd|th)\b.*?(?:grade|grado)', line, re.IGNORECASE)
+                    if same_line_ordinal:
+                        grade_int = int(same_line_ordinal.group(1))
+                        if 1 <= grade_int <= 12:
+                            normalized["grade"] = grade_int
+                            logger.info(f"Fallback: Found grade {grade_int} (ordinal) on same line as label")
+                            grade_found = True
+                            break
+                    
+                    # Check if the next line is blank/empty (OCR might have missed handwritten grade)
+                    next_idx = i + 1
+                    # Check if lines immediately after grade label are empty or contain other labels
+                    blank_field_indicators = []
+                    for check_idx in range(next_idx, min(next_idx + 3, len(lines))):
+                        check_line = lines[check_idx].strip() if check_idx < len(lines) else ""
+                        if not check_line:
+                            blank_field_indicators.append(True)
+                        elif any(indicator in check_line.lower() for indicator in 
+                                ['deadline', 'march', 'april', 'may', 'june', 'july', 'august', 'contest', 'character maximum']):
+                            blank_field_indicators.append(True)
+                        else:
+                            blank_field_indicators.append(False)
+                    
+                    # If multiple consecutive lines are blank/other labels, grade field is likely blank
+                    if len(blank_field_indicators) >= 2 and all(blank_field_indicators[:2]):
+                        logger.info("Grade field appears blank in OCR (not captured) - multiple blank lines after label")
+                        # Don't break - continue searching in case grade appears elsewhere
+                    
+                    # Expanded search: Check next 10 lines (increased from 5) for grade value
+                    for j in range(i + 1, min(i + 11, len(lines))):
                         next_line = lines[j].strip()
-                        # Skip empty lines, labels, dates
-                        if not next_line or 'deadline' in next_line.lower() or 'march' in next_line.lower() or 'april' in next_line.lower() or 'may' in next_line.lower() or 'june' in next_line.lower():
+                        # Skip empty lines and label lines
+                        if not next_line:
                             continue
+                        if any(indicator in next_line.lower() for indicator in 
+                              ['deadline', 'march', 'april', 'may', 'june', 'july', 'august', 'contest']):
+                            continue
+                        
                         # Try to extract grade from this line
                         # Look for ordinal: "1st", "1st Grade", "first", etc.
                         ordinal_match = re.search(r'\b(\d+)(?:st|nd|rd|th)\b', next_line.lower())
@@ -358,20 +554,54 @@ Return ONLY valid JSON, no markdown, no explanation."""
                             grade_int = int(ordinal_match.group(1))
                             if 1 <= grade_int <= 12:
                                 normalized["grade"] = grade_int
-                                logger.info(f"Fallback: Found grade {grade_int} on line after 'Grade / Grado' label")
+                                logger.info(f"Fallback: Found grade {grade_int} (ordinal) on line {j+1} after 'Grade / Grado' label")
                                 grade_found = True
                                 break
-                        # Look for standalone digit 1-12
+                        
+                        # Look for standalone digit 1-12 (must be alone on the line or with minimal text)
                         digit_match = re.match(r'^\s*(\d{1,2})\s*$', next_line)
                         if digit_match:
                             grade_int = int(digit_match.group(1))
                             if 1 <= grade_int <= 12:
                                 normalized["grade"] = grade_int
-                                logger.info(f"Fallback: Found grade {grade_int} as standalone digit after 'Grade / Grado' label")
+                                logger.info(f"Fallback: Found grade {grade_int} as standalone digit on line {j+1} after 'Grade / Grado' label")
                                 grade_found = True
                                 break
+                        
+                        # Also check for "Grade X" or "Xth Grade" patterns on this line
+                        grade_on_line = re.search(r'(?:grade|grado)\s*(\d{1,2})', next_line, re.IGNORECASE)
+                        if not grade_on_line:
+                            grade_on_line = re.search(r'(\d{1,2})(?:st|nd|rd|th)?\s*(?:grade|grado)', next_line, re.IGNORECASE)
+                        if grade_on_line:
+                            grade_int = int(grade_on_line.group(1))
+                            if 1 <= grade_int <= 12:
+                                normalized["grade"] = grade_int
+                                logger.info(f"Fallback: Found grade {grade_int} in 'Grade X' pattern on line {j+1}")
+                                grade_found = True
+                                break
+                    
                     if grade_found:
                         break
+        
+        # Priority 2 Fix: Fallback school name extraction if LLM didn't find it
+        if not normalized.get("school_name") and contact_block:
+            school_name_fallback = _extract_school_name_fallback(contact_block)
+            if school_name_fallback:
+                normalized["school_name"] = school_name_fallback
+                logger.info(f"Fallback: Found school name via pattern matching: {school_name_fallback}")
+        
+        # Fallback phone and email extraction if LLM didn't find them
+        if not normalized.get("phone") and contact_block:
+            phone_fallback = _extract_phone_fallback(contact_block)
+            if phone_fallback:
+                normalized["phone"] = phone_fallback
+                logger.info(f"Fallback: Found phone via pattern matching: {phone_fallback}")
+        
+        if not normalized.get("email") and contact_block:
+            email_fallback = _extract_email_fallback(contact_block)
+            if email_fallback:
+                normalized["email"] = email_fallback
+                logger.info(f"Fallback: Found email via pattern matching: {email_fallback}")
         
         # Note: Removed filename-based name extraction - only extract from PDF document
         

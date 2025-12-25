@@ -12,6 +12,52 @@ from pipeline.ocr import get_ocr_provider
 from pipeline.segment import split_contact_vs_essay
 from pipeline.extract import extract_fields_rules, compute_essay_metrics
 from pipeline.validate import validate_record
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+def _get_best_essay_text(essay_block: str, llm_essay_text: str = None, raw_text: str = None) -> tuple[str, str]:
+    """
+    Get the best available essay text from multiple sources.
+    
+    Priority order:
+    1. LLM-extracted essay_text (if segmentation failed and LLM found substantial text)
+    2. Segmented essay_block (if it has substantial content)
+    3. Raw text fallback (last resort)
+    
+    Args:
+        essay_block: Text from segmentation
+        llm_essay_text: Essay text extracted by LLM (from _ifi_metadata)
+        raw_text: Full OCR text (fallback only)
+        
+    Returns:
+        Tuple of (best_essay_text, source_name)
+    """
+    # Count words in each source
+    essay_block_words = len(essay_block.split()) if essay_block else 0
+    llm_words = len(llm_essay_text.split()) if llm_essay_text else 0
+    
+    # If segmentation found substantial text (> 50 words), use it
+    if essay_block_words > 50:
+        return essay_block, "segmentation"
+    
+    # If LLM extracted substantial essay text (> 50 words), use it as fallback
+    if llm_essay_text and llm_words > 50:
+        logger.info(f"Using LLM-extracted essay_text as fallback (segmentation found only {essay_block_words} words, LLM found {llm_words})")
+        return llm_essay_text, "llm_extraction"
+    
+    # If segmentation found some text (even if < 50 words), use it
+    if essay_block_words > 0:
+        return essay_block, "segmentation"
+    
+    # If LLM found some text, use it
+    if llm_essay_text and llm_words > 0:
+        logger.info(f"Using LLM-extracted essay_text (segmentation found 0 words, LLM found {llm_words})")
+        return llm_essay_text, "llm_extraction"
+    
+    # Last resort: return segmented block (will be empty, but preserves original behavior)
+    return essay_block, "segmentation"
 
 
 def process_submission(
@@ -69,17 +115,9 @@ def process_submission(
     # Stage 2: Segmentation
     contact_block, essay_block = split_contact_vs_essay(ocr_result.text)
     
-    # Write segmentation artifacts
+    # Write segmentation artifacts (initial segmentation)
     with open(artifact_path / "contact_block.txt", "w", encoding="utf-8") as f:
         f.write(contact_block)
-    
-    with open(artifact_path / "essay_block.txt", "w", encoding="utf-8") as f:
-        f.write(essay_block)
-    
-    processing_report["stages"]["segmentation"] = {
-        "contact_lines": len(contact_block.split('\n')),
-        "essay_lines": len(essay_block.split('\n'))
-    }
     
     # Stage 3: Extraction (IFI-specific two-phase extraction)
     from pipeline.extract_ifi import extract_fields_ifi
@@ -119,7 +157,29 @@ def process_submission(
             "is_off_prompt": ifi_metadata.get("is_off_prompt"),
             "notes": ifi_metadata.get("notes", [])
         }
-    essay_metrics = compute_essay_metrics(essay_block)
+    
+    # Priority 1 Fix: Use best available essay text source
+    # If segmentation failed (essay_block too short), try LLM-extracted essay_text as fallback
+    final_essay_text, essay_source = _get_best_essay_text(
+        essay_block, 
+        ifi_metadata.get("essay_text") if ifi_metadata else None,
+        ocr_result.text
+    )
+    
+    # Write final essay_block.txt (may be improved from LLM extraction)
+    with open(artifact_path / "essay_block.txt", "w", encoding="utf-8") as f:
+        f.write(final_essay_text)
+    
+    processing_report["stages"]["segmentation"] = {
+        "contact_lines": len(contact_block.split('\n')),
+        "essay_lines": len(final_essay_text.split('\n')),
+        "essay_source": essay_source,
+        "initial_essay_words": len(essay_block.split()),
+        "final_essay_words": len(final_essay_text.split())
+    }
+    
+    essay_metrics = compute_essay_metrics(final_essay_text)
+    essay_metrics["essay_source"] = essay_source  # Track which source was used for debugging
     
     structured_data = {
         **contact_fields,

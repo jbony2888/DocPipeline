@@ -370,6 +370,15 @@ def extract_fields_ifi(contact_block: str, raw_text: str = "",
     # Run full IFI extraction
     ifi_result = extract_ifi_submission(raw_text, contact_block, None, original_filename)
     
+    # Fallback extraction for phone and email (IFI prompt doesn't extract these)
+    from pipeline.extract_llm import _extract_phone_fallback, _extract_email_fallback
+    
+    phone = None
+    email = None
+    if contact_block:
+        phone = _extract_phone_fallback(contact_block)
+        email = _extract_email_fallback(contact_block)
+    
     # Map to pipeline format
     pipeline_fields = {
         'student_name': ifi_result.get('student_name'),
@@ -378,8 +387,8 @@ def extract_fields_ifi(contact_block: str, raw_text: str = "",
         'teacher_name': None,
         'city_or_location': None,
         'father_figure_name': ifi_result.get('father_figure_name'),
-        'phone': None,
-        'email': None,
+        'phone': phone,
+        'email': email,
         '_ifi_metadata': ifi_result  # Store full IFI result for reference
     }
     
