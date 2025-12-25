@@ -1,0 +1,34 @@
+{
+  "student_name": "Andrick Vargas-Hernandez",
+  "school_name": "Edwards",
+  "grade": "K",
+  "teacher_name": null,
+  "city_or_location": null,
+  "father_figure_name": "Antonio Vargas",
+  "phone": null,
+  "email": null,
+  "_ifi_metadata": {
+    "doc_type": "IFI_OFFICIAL_FORM_FILLED",
+    "is_blank_template": false,
+    "language": "Mixed",
+    "student_name": "Andrick Vargas-Hernandez",
+    "school_name": "Edwards",
+    "grade": "K",
+    "father_figure_name": "Antonio Vargas",
+    "father_figure_type": "Father",
+    "essay_text": "Mi pap\u00e1 es el mejor del mundo. Me gusta jugar con \u00e9l. Lo extra\u00f1o muchisimo. Me abraza por que me compra helados y por el dia de San Valent\u00edn me dio Conejitos.",
+    "parent_reaction_text": "Me llena de orgullo, amor y ternura escuchar estas palabras hijo. Aprendo de ti todos los d\u00edas, ya que eres un ni\u00f1o muy cari\u00f1oso y juguet\u00f3n. Quiero ser el mejor pap\u00e1. Te amo Andrick hoy y siempre. To papa. Antonio Vargas",
+    "topic": "Father",
+    "is_off_prompt": false,
+    "notes": [
+      "OCR corrected: None",
+      "Mixed language detected in the document"
+    ],
+    "extraction_method": "llm_ifi",
+    "model": "llama-3.3-70b-versatile (groq)"
+  },
+  "word_count": 174,
+  "char_count": 1011,
+  "paragraph_count": 1,
+  "essay_source": "segmentation"
+}

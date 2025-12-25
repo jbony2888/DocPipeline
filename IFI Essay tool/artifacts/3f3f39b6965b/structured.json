@@ -1,0 +1,34 @@
+{
+  "student_name": "Francely Pacheco",
+  "school_name": null,
+  "grade": null,
+  "teacher_name": null,
+  "city_or_location": null,
+  "father_figure_name": "Frank Hernadez",
+  "phone": "872-348-2241",
+  "email": "cinthiapacheco982@gmail.com",
+  "_ifi_metadata": {
+    "doc_type": "IFI_OFFICIAL_FORM_FILLED",
+    "is_blank_template": false,
+    "language": "English",
+    "student_name": "Francely Pacheco",
+    "school_name": null,
+    "grade": null,
+    "father_figure_name": "Frank Hernadez",
+    "father_figure_type": "Father-Figure",
+    "essay_text": "My father was born in Mexico. That's were he met my mom they met around the age 15 or 17. He mostly spend his time at the arcade. He loves video games a lot and still plays it on his free time. Also he likes to cook and clean most of the time as well. He watches scary, adventure, and action movies. My father has impacted my life. My father is very helpful. One time we went to the store. We saw an old man stuggling (he stuggled with walking) with his grociers. My dad has offered him a ride home because he also had groceries. He also clean and cooks so my mom doesn't do much work, because she always comes from work tired and just want to lay down. Another time we were walking home and took all the groceris. Hes also fixed a lot of things around the house for example a table, TV, phone, etc. And hes cleaned a lot my room because its sometimes a mess and he cleans it up. He's also very caring because he makes sure we eat and have good hygene. He would come into my room to ask if I ate or not. And if we respond with no he would ask if we want anything to eat or takes. us out sometimes to eat something. Even ask us about our day, how was school, and if anything interesting happened. Another thing he does is makes sure were ok and if were doing well. He cares a lot about my family's feelings and well being. He constantly checks up on us. Another great quality he has is hes funny and fun to hang out with. Every time were being serious he always says something funny out when were sad to lighten up the mood. He also says a bunch of jokes at random times. His big quality is being really funny cause it stands out a lot. He does a lot of fun things as well and takes a lot of risk most of the time. In conclusion what my father figure means to me is being there for me and a role model for me. I'm really proud of him most of the time I know he always tries his best to be a good dad. Almost all his qualities are really good that's why a lot of people look out for him. I admire him a lot he is a big role in my life since I was little. He never dissapoints to make people smile and that's what makes him so loveable. I'm glad he was always there for me when I needed him.",
+    "parent_reaction_text": "Its so nice being your role model/figure. I try to be the best to be a great dad. Again its nice knowing im a father figure it means alot to me that you have always looked up to me. I will continue to be a figure with you. I appreciate you writing about me. I also hope im a role model to your brothers and sister. It feels like im doing a good job at being a parent so thank you again for writing about me I always wanted to inspire you and I wanted you to have a great role model growing up.",
+    "topic": "Father",
+    "is_off_prompt": false,
+    "notes": [
+      "OCR corrected: stuggled -> struggled",
+      "No school or grade information present"
+    ],
+    "extraction_method": "llm_ifi",
+    "model": "llama-3.3-70b-versatile (groq)"
+  },
+  "word_count": 447,
+  "char_count": 2188,
+  "paragraph_count": 1,
+  "essay_source": "llm_extraction"
+}

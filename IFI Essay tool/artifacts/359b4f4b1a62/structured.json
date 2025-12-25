@@ -1,0 +1,34 @@
+{
+  "student_name": "Jordan Altman",
+  "school_name": null,
+  "grade": null,
+  "teacher_name": null,
+  "city_or_location": null,
+  "father_figure_name": null,
+  "phone": "7732510354",
+  "email": "jnaltman@cps.edu",
+  "_ifi_metadata": {
+    "doc_type": "IFI_OFFICIAL_FORM_FILLED",
+    "is_blank_template": false,
+    "language": "English",
+    "student_name": "Jordan Altman",
+    "school_name": null,
+    "grade": null,
+    "father_figure_name": null,
+    "father_figure_type": null,
+    "essay_text": "My father is special to me. He is caring, helpful, supportive, inspirational, and much more. He never gives up on his dreams and inspires me to keep moving forward. He always finds a way to solve problems and never gives up. I don't know what I would do without him. One thing that really inspires me about him is how hard he works. He always works towards his dreams and goals. He almost never misses a day of work and is always on time. He doesn't slack off or play around, and is always serious about his job. He works at night, and even day sometimes. He works hard to support his family, and is always supportive. He is also a very caring person. He always cares for others, even if he doesn't know them. Whenever someone is down, he always tries to cheer them up. He cares for the physical, and mental well being of others. I can always rely on him when I need help or I am down. My father is always there for me. whether it be something serious or a little as help with homework. I can always count on him when I need help. If I need him to fix something, he is there to help me. He is always there for me and helpful. In conclusion, my father is who inspires me in life. He is always there for me and my family. He works hard to take care of us, and doesn't fail to make me happy. I can always rely on him when I need him. I don't know what I would do without him.",
+    "parent_reaction_text": "I am very proud of my sons work, and can't wait to see what he will make in the future.",
+    "topic": "Father",
+    "is_off_prompt": false,
+    "notes": [
+      "No school or grade information present",
+      "No father figure name or type explicitly stated"
+    ],
+    "extraction_method": "llm_ifi",
+    "model": "llama-3.3-70b-versatile (groq)"
+  },
+  "word_count": 274,
+  "char_count": 1372,
+  "paragraph_count": 1,
+  "essay_source": "llm_extraction"
+}

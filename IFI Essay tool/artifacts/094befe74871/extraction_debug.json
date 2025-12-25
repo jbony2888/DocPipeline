@@ -1,0 +1,31 @@
+{
+  "extraction_method": "llm_ifi",
+  "model": "llama-3.3-70b-versatile (groq)",
+  "fields_extracted": 5,
+  "required_fields_found": {
+    "student_name": true,
+    "school_name": true,
+    "grade": false
+  },
+  "result": {
+    "student_name": "Andres Alvarez Olguin",
+    "school_name": "Edwards",
+    "grade": null,
+    "teacher_name": null,
+    "city_or_location": null,
+    "father_figure_name": "Eder Alvarez",
+    "phone": "773414.7126",
+    "email": "alvarez@gmail.com"
+  },
+  "ifi_classification": {
+    "doc_type": "IFI_OFFICIAL_FORM_FILLED",
+    "is_blank_template": false,
+    "language": "Spanish",
+    "topic": "Father",
+    "is_off_prompt": false,
+    "notes": [
+      "OCR corrected: Olouin -> Olguin",
+      "Corrected 'alerja' to likely 'alegra' but left as-is due to instruction to not guess"
+    ]
+  }
+}

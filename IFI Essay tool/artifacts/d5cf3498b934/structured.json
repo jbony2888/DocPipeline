@@ -1,0 +1,34 @@
+{
+  "student_name": "Isabella Almaraz",
+  "school_name": "Rachel Carson School",
+  "grade": null,
+  "teacher_name": null,
+  "city_or_location": null,
+  "father_figure_name": null,
+  "phone": null,
+  "email": null,
+  "_ifi_metadata": {
+    "doc_type": "ESSAY_WITH_HEADER_METADATA",
+    "is_blank_template": false,
+    "language": "English",
+    "student_name": "Isabella Almaraz",
+    "school_name": "Rachel Carson School",
+    "grade": null,
+    "father_figure_name": null,
+    "father_figure_type": null,
+    "essay_text": "A lot of people talk about my mother because I look Like her. But I tell them I look like my dad too. Then I tell them about him too. I say \"he is so nice to others\". People often tell me that I can never be one of the people that work at the hospital. But when I get home, I told my dad what people told me and said \"Bella dont give up on your dreams\". That's why I'm still alive because of him, my father means a lot to me because he is kind, smart, and also very fun. My father is so Kind to me and other people. Once I was hungry I waited until my dad was home and he asked me if I was hungry. I said \"yeah\" but I also told him \"you can't because you're working\". But he also said that he was on a break, so I said ok and we went to get some food. Another reason why he is kind is because he bought me candy one time, I first told him I wanted candy, he was sitting watching tv and I went to tell him that I wanted candy. He said yeah and we went to the store and we went overboard on buying candy!. My final reason on why he is so kind is because he gave me money to buy him ice cream. I was nervous to ask my dad if he could buy me ice cream because he was outside sitting on a chair. Then I asked him if he was ok to give me money to buy ice cream. So he said \"yes!\" I was so happy because I thought he would say no. He actually took me to buy 4 ice cream's for the family.As you can see, my father is very sweet. My father is very smart. Once I was out of school I was nervous because I didn't know how to do my homework. When I got home I asked my father if he could help me, he actually explained it to me. Another reason why he is smart is because he knows how to build a mini house for me. One Time when I was young I was sitting.",
+    "parent_reaction_text": null,
+    "topic": "Father",
+    "is_off_prompt": false,
+    "notes": [
+      "No grade mentioned in the document",
+      "No father figure name mentioned in the document"
+    ],
+    "extraction_method": "llm_ifi",
+    "model": "llama-3.3-70b-versatile (groq)"
+  },
+  "word_count": 379,
+  "char_count": 1742,
+  "paragraph_count": 1,
+  "essay_source": "llm_extraction"
+}

@@ -1,0 +1,33 @@
+{
+  "student_name": "Cesar Zaragoza",
+  "school_name": "Rachel Carson Elementary",
+  "grade": 6,
+  "teacher_name": null,
+  "city_or_location": null,
+  "father_figure_name": null,
+  "phone": null,
+  "email": null,
+  "_ifi_metadata": {
+    "doc_type": "ESSAY_WITH_HEADER_METADATA",
+    "is_blank_template": false,
+    "language": "English",
+    "student_name": "Cesar Zaragoza",
+    "school_name": "Rachel Carson Elementary",
+    "grade": 6,
+    "father_figure_name": null,
+    "father_figure_type": "Father",
+    "essay_text": "My father means alot to me because he is a strict person for me to succeed in life. Another reason why I admire my dad is that he doesn't like to lie to me or anyone he wants to be himself. Last reason why I admire my dad is being a fun person. He is a dad in a child's body. He is a fun person. My father is a very strict person and also an honest and fun father. The reason why I admire my father is that he is strict in a good way and for example one time he won't let me do anything when I get home until I study because he wants me to be successful. Another example is he wont let me play anything until I help him with his invention ideas because he wants me to do something productive that doesn't waste my time. He also doesn't let me play games until he says I can. I know these rules are meant to help me succeed in life. My father is a strict person. Another reason why I admire my father is because he is a very honest person. For example, one way he is an honest person is he will always tell me the truth and never hide anything from me. Another example is that he will always tell me the truth whether I like it or not. Final reason why my dad is an honest person is he will never change his thoughts for anyone. Final reason why I admire my father is because he is a very Fun Person in the way he likes to make me happy and does activities with me such as watching scary movies together and with some snacks until 3 a.m when it's a weekend. And his friend's final example is he plays video games with me. I appreciate him for that because not a lot of parents get to do that with their kids and it's also fun. So Reasons why admire my dad is He is a strict man in the good way. One way he is a strict person is he Wont let me turn on anything until I study. He also I can't play until I can help him with his invention ideas he also doesn't let me play until he says I can. Another reason or (topic) who I admire my dad is he is a honest person and he likes to be himself. He doesn't let people change the way he thinks about something. Another way he is honest is he doesn't tell lies he will always be honest with me and whether I like it or not. Last reason why I admire my dad is because he is a fun person. Not only does he play sports with me but he enjoys it. Sometimes we play arcade games and sometimes we might even play video games together in order for me to be happy. He plays football with me and his friends. e.t.c. I know these reasons are not meant in a bad way, my father just wants me to be ready for life.",
+    "parent_reaction_text": null,
+    "topic": "Father",
+    "is_off_prompt": false,
+    "notes": [
+      "No OCR corrections needed"
+    ],
+    "extraction_method": "llm_ifi",
+    "model": "llama-3.3-70b-versatile (groq)"
+  },
+  "word_count": 526,
+  "char_count": 2541,
+  "paragraph_count": 1,
+  "essay_source": "llm_extraction"
+}
