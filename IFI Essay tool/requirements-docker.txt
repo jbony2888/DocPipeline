@@ -1,0 +1,12 @@
+# Core dependencies for Docker deployment
+streamlit
+pydantic
+PyMuPDF
+
+# Google Cloud Vision for OCR
+google-cloud-vision
+
+# LLM for extraction (OpenAI or Groq)
+openai
+groq
+

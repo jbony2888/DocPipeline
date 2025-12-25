@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+artifacts/
+outputs/
+
+# Credentials - NEVER commit
+credentials/
+*service-account*.json
+.env
+
+# Keep .streamlit/ config for deployment
+!.streamlit/config.toml
+
