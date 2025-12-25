@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  essayflow:
+    build: .
+    ports:
+      - "8501:8501"
+    volumes:
+      # Mount artifacts and outputs for persistence
+      - ./artifacts:/app/artifacts
+      - ./outputs:/app/outputs
+      # Mount data directory for database persistence
+      - ./data:/app/data
+      # Mount Google Cloud credentials
+      - /Users/jerrybony/Downloads/youtube-ai-tool-478918-1941d902d881.json:/app/credentials.json:ro
+    environment:
+      # Google Cloud Vision credentials
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/credentials.json
+      # Groq API key for LLM extraction (FREE and FAST)
+      - GROQ_API_KEY=${GROQ_API_KEY}
+    restart: unless-stopped
