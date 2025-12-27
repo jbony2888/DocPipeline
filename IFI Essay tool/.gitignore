@@ -1,14 +1,35 @@
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+.Python
 .venv/
 venv/
+env/
+ENV/
 artifacts/
 outputs/
+archive/
+*.db-shm
+*.db-wal
 
 # Credentials - NEVER commit
 credentials/
 *service-account*.json
 .env
+*.pem
+*.key
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
 
 # Keep .streamlit/ config for deployment
 !.streamlit/config.toml
