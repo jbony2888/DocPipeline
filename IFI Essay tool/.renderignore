@@ -1,0 +1,19 @@
+# Files to ignore during Render deployment
+artifacts/
+outputs/
+data/
+archive/
+*.db
+*.db-shm
+*.db-wal
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+.git/
+.venv/
+venv/
+*.md
+docs/
+scripts/
+
