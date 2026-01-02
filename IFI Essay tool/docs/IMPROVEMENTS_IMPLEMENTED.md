@@ -143,3 +143,4 @@ To validate these improvements:
 - The improvements focus on fallback mechanisms, so LLM extraction remains the primary method
 - Logging has been enhanced to help debug extraction issues
 
+
