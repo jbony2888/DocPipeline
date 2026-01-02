@@ -1,31 +1,30 @@
 {
-  "extraction_method": "llm_ifi",
-  "model": "llama-3.3-70b-versatile (groq)",
-  "fields_extracted": 4,
+  "extraction_method": "fallback",
+  "model": "none",
+  "fields_extracted": 0,
   "required_fields_found": {
-    "student_name": true,
-    "school_name": true,
-    "grade": true
+    "student_name": false,
+    "school_name": false,
+    "grade": false
   },
   "result": {
-    "student_name": "Andrick Vargas-Hernandez",
-    "school_name": "Edwards",
-    "grade": "K",
+    "student_name": null,
+    "school_name": null,
+    "grade": null,
     "teacher_name": null,
     "city_or_location": null,
-    "father_figure_name": "Antonio Vargas",
+    "father_figure_name": null,
     "phone": null,
     "email": null
   },
   "ifi_classification": {
-    "doc_type": "IFI_OFFICIAL_FORM_FILLED",
+    "doc_type": "UNKNOWN",
     "is_blank_template": false,
-    "language": "Mixed",
+    "language": "English",
     "topic": "Father",
     "is_off_prompt": false,
     "notes": [
-      "OCR corrected: None",
-      "Mixed language detected in the document"
+      "Fallback extraction - no LLM available"
     ]
   }
 }
