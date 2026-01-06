@@ -8,6 +8,9 @@ Thank you for testing the IFI Essay Gateway! This tool helps teachers organize e
 
 ## Getting Started
 
+
+
+
 ### Step 1: Sign Up / Log In
 
 1. Go to the application URL (you'll receive this from the team)
