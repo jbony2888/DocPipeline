@@ -66,6 +66,7 @@ def process_job(job):
         owner_user_id = job_data.get("owner_user_id")
         access_token = job_data.get("access_token")
         ocr_provider = job_data.get("ocr_provider", "google")
+        upload_batch_id = job_data.get("upload_batch_id")  # Optional batch ID
         
         if not all([filename, owner_user_id, access_token]):
             raise ValueError("Missing required job parameters")
@@ -85,7 +86,8 @@ def process_job(job):
             filename=filename,
             owner_user_id=owner_user_id,
             access_token=access_token,
-            ocr_provider=ocr_provider
+            ocr_provider=ocr_provider,
+            upload_batch_id=upload_batch_id
         )
         
         # Check if processing succeeded

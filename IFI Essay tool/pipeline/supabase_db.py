@@ -24,7 +24,7 @@ def init_database():
         return False
 
 
-def save_record(record: SubmissionRecord, filename: str, owner_user_id: str, access_token: Optional[str] = None) -> bool:
+def save_record(record: SubmissionRecord, filename: str, owner_user_id: str, access_token: Optional[str] = None, upload_batch_id: Optional[str] = None) -> bool:
     """Save a submission record to Supabase."""
     try:
         # Get Supabase client and set authenticated session if token provided
@@ -47,6 +47,15 @@ def save_record(record: SubmissionRecord, filename: str, owner_user_id: str, acc
         record_dict["filename"] = filename
         record_dict["owner_user_id"] = owner_user_id
         record_dict["updated_at"] = datetime.now().isoformat()
+        
+        # Add batch tracking
+        if upload_batch_id:
+            record_dict["upload_batch_id"] = upload_batch_id
+        
+        # Set source tracking (default to 'extracted' for new records)
+        # These will be overridden by batch defaults or manual edits
+        # Note: Removed school_source, grade_source, teacher_source
+        # These columns don't exist in the database for simple bulk edit
         
         # Insert or update (upsert)
         result = supabase.table("submissions").upsert(
@@ -142,7 +151,8 @@ def get_record_by_id(submission_id: str, owner_user_id: Optional[str] = None, ac
 def update_record(submission_id: str, updates: Dict, owner_user_id: Optional[str] = None, access_token: Optional[str] = None) -> bool:
     """Update a submission record."""
     try:
-        supabase = get_supabase_client()
+        # Use authenticated client if access_token provided (required for RLS)
+        supabase = get_supabase_client(access_token=access_token) if access_token else get_supabase_client()
         
         # Set authenticated session if access token provided (required for RLS)
         if access_token:

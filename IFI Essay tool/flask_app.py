@@ -11,7 +11,7 @@ import json
 import io
 import csv
 import re
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Any
 
 from pipeline.supabase_storage import ingest_upload_supabase, get_file_url, download_file, BUCKET_NAME
 from pipeline.runner import process_submission
@@ -28,8 +28,9 @@ from pipeline.supabase_db import (
     get_stats as get_db_stats
 )
 from pipeline.validate import can_approve_record
+from pipeline.batch_defaults import create_upload_batch, get_batch_with_submissions, apply_batch_defaults
 from auth.supabase_client import get_supabase_client, get_user_id
-from jobs.queue import enqueue_submission, get_job_status, get_queue_status
+from jobs.pg_queue import enqueue_submission, get_job_status, get_queue_status
 from supabase import create_client
 
 app = Flask(__name__)
@@ -290,6 +291,7 @@ def upload():
         return jsonify({"success": False, "error": "Not authenticated"}), 401
     
     user_id = session.get("user_id")
+    access_token = session.get("supabase_access_token")
     
     if "files" not in request.files:
         return jsonify({"success": False, "error": "No files selected"}), 400
@@ -300,8 +302,12 @@ def upload():
     if not files or files[0].filename == "":
         return jsonify({"success": False, "error": "Please select at least one file"}), 400
     
+    # Create an upload batch for this upload session
+    upload_batch_id = create_upload_batch(owner_user_id=user_id, access_token=access_token)
+    if not upload_batch_id:
+        return jsonify({"success": False, "error": "Failed to create upload batch"}), 500
+    
     ocr_provider = "google"
-    access_token = session.get("supabase_access_token")
     job_ids = []
     errors = []
     
@@ -315,7 +321,8 @@ def upload():
                     filename=file.filename,
                     owner_user_id=user_id,
                     access_token=access_token,
-                    ocr_provider=ocr_provider
+                    ocr_provider=ocr_provider,
+                    upload_batch_id=upload_batch_id  # Pass batch ID to job
                 )
                 job_ids.append({
                     "filename": file.filename,
@@ -330,17 +337,19 @@ def upload():
     if not job_ids:
         return jsonify({
             "success": False,
-            "error": "Failed to enqueue any files. " + ("Errors: " + "; ".join(errors) if errors else "Check Redis connection.")
+            "error": "Failed to enqueue any files. " + ("Errors: " + "; ".join(errors) if errors else "Check connection.")
         }), 500
     
-    # Store job IDs in session for progress tracking
+    # Store job IDs and batch ID in session for progress tracking
     session["processing_jobs"] = job_ids
+    session["upload_batch_id"] = upload_batch_id  # Store batch ID for later use
     session["total_files"] = len(job_ids)
     session["processed_count"] = 0
     
     return jsonify({
         "success": True,
         "job_ids": job_ids,
+        "upload_batch_id": upload_batch_id,  # Return batch ID to frontend
         "total": len(job_ids),
         "errors": errors if errors else None
     })
@@ -355,6 +364,45 @@ def review():
     user_id = session.get("user_id")
     access_token = session.get("supabase_access_token")
     review_mode = request.args.get("mode", "needs_review")
+    
+    # Get current batch ID from session (if available), or find most recent batch with submissions needing review
+    upload_batch_id = session.get("upload_batch_id")
+    batch_info = None
+    
+    # If no batch in session, try to find the most recent batch with submissions needing review
+    if not upload_batch_id and review_mode == "needs_review":
+        # Get all records needing review
+        needs_review_records = get_db_records(needs_review=True, owner_user_id=user_id, access_token=access_token)
+        # Find batches that have submissions needing review
+        batch_ids = set()
+        for record in needs_review_records:
+            if record.get("upload_batch_id"):
+                batch_ids.add(record["upload_batch_id"])
+        
+        # Get the most recent batch
+        if batch_ids:
+            try:
+                supabase = get_supabase_client(access_token=access_token)
+                if supabase and access_token:
+                    try:
+                        supabase.auth.set_session(access_token=access_token, refresh_token="")
+                    except:
+                        pass
+                
+                # Get the most recent batch from the list
+                batches_result = supabase.table("upload_batches").select("*").eq("owner_user_id", user_id).in_("id", list(batch_ids)).order("created_at", desc=True).limit(1).execute()
+                
+                if batches_result.data and len(batches_result.data) > 0:
+                    upload_batch_id = str(batches_result.data[0]["id"])
+                    batch_info = get_batch_with_submissions(upload_batch_id, owner_user_id=user_id, access_token=access_token)
+            except Exception as e:
+                print(f"⚠️ Warning: Could not fetch batch: {e}")
+                import traceback
+                traceback.print_exc()
+    
+    # If we have a batch_id from session, get its info
+    if upload_batch_id and not batch_info:
+        batch_info = get_batch_with_submissions(upload_batch_id, owner_user_id=user_id, access_token=access_token)
     
     # Get all records (both needs_review and approved)
     all_records = get_db_records(needs_review=None, owner_user_id=user_id, access_token=access_token)
@@ -396,7 +444,9 @@ def review():
                          format_review_reasons=format_review_reasons,
                          get_pdf_path=lambda ad: get_pdf_path(ad, session.get("supabase_access_token")),
                          grouped_data=grouped if review_mode == "approved" else None,
-                         schools_data=schools_data)
+                         schools_data=schools_data,
+                         batch_info=batch_info,
+                         upload_batch_id=upload_batch_id)
 
 
 @app.route("/record/<submission_id>", methods=["GET", "POST"])
@@ -414,17 +464,29 @@ def record_detail(submission_id):
         return redirect(url_for("review"))
     
     if request.method == "POST":
-        # Update record
-        updates = {
-            "student_name": request.form.get("student_name", "").strip() or None,
-            "school_name": request.form.get("school_name", "").strip() or None,
-            "grade": request.form.get("grade", "").strip() or None,
-            "teacher_name": request.form.get("teacher_name", "").strip() or None,
-            "city_or_location": request.form.get("city_or_location", "").strip() or None,
-            "father_figure_name": request.form.get("father_figure_name", "").strip() or None,
-            "phone": request.form.get("phone", "").strip() or None,
-            "email": request.form.get("email", "").strip() or None,
-        }
+        # Update record - support both individual edits and bulk edits
+        updates = {}
+        
+        # Only update fields that are provided (for bulk edits, only school_name and grade might be provided)
+        if "student_name" in request.form:
+            updates["student_name"] = request.form.get("student_name", "").strip() or None
+        if "school_name" in request.form:
+            updates["school_name"] = request.form.get("school_name", "").strip() or None
+        if "grade" in request.form:
+            updates["grade"] = request.form.get("grade", "").strip() or None
+        if "teacher_name" in request.form:
+            updates["teacher_name"] = request.form.get("teacher_name", "").strip() or None
+        if "city_or_location" in request.form:
+            updates["city_or_location"] = request.form.get("city_or_location", "").strip() or None
+        if "father_figure_name" in request.form:
+            updates["father_figure_name"] = request.form.get("father_figure_name", "").strip() or None
+        if "phone" in request.form:
+            updates["phone"] = request.form.get("phone", "").strip() or None
+        if "email" in request.form:
+            updates["email"] = request.form.get("email", "").strip() or None
+        
+        # Note: Removed school_source, grade_source, teacher_source tracking
+        # These columns don't exist in the database for simple bulk edit
         
         # Parse grade - keep as string if it's text like "Kindergarten", "K", etc.
         # Otherwise try to extract number
@@ -535,6 +597,75 @@ def send_for_review(submission_id):
         return jsonify({"success": False, "error": "Failed to update record"}), 500
 
 
+@app.route("/api/bulk_update_records", methods=["POST"])
+def bulk_update_records():
+    """Apply bulk updates to selected records."""
+    if not require_auth():
+        return jsonify({"success": False, "error": "Unauthorized"}), 401
+    
+    user_id = session.get("user_id")
+    access_token = session.get("supabase_access_token")
+    
+    data = request.get_json()
+    selected_ids = data.get("selected_ids", [])
+    school_name = data.get("school_name", "").strip() or None
+    grade = data.get("grade", "").strip() or None
+    
+    if not selected_ids:
+        return jsonify({"success": False, "error": "No records selected for bulk update."}), 400
+    
+    if not school_name and not grade:
+        return jsonify({"success": False, "error": "Please provide a school name or grade for bulk update."}), 400
+    
+    updated_count = 0
+    errors = []
+    
+    for submission_id in selected_ids:
+        updates = {}
+        if school_name:
+            updates["school_name"] = school_name
+        if grade:
+            # Parse grade - handle text values like "K", "Kindergarten", etc.
+            grade_upper = grade.upper() if grade else ""
+            if grade_upper in ["K", "KINDER", "KINDERGARTEN"]:
+                updates["grade"] = "K"
+            elif grade_upper in ["PRE-K", "PREK", "PRE-KINDERGARTEN"]:
+                updates["grade"] = "Pre-K"
+            else:
+                # Try to extract number
+                grade_match = re.search(r'\d+', grade)
+                if grade_match:
+                    grade_int = int(grade_match.group())
+                    if 1 <= grade_int <= 12:
+                        updates["grade"] = grade_int
+                    else:
+                        updates["grade"] = grade  # Keep as text if out of range
+                else:
+                    updates["grade"] = grade  # Keep as text if no number found
+        
+        try:
+            if update_db_record(submission_id, updates, owner_user_id=user_id, access_token=access_token):
+                updated_count += 1
+            else:
+                errors.append(f"Failed to update {submission_id}")
+        except Exception as e:
+            errors.append(f"Error updating {submission_id}: {str(e)}")
+    
+    if errors:
+        return jsonify({
+            "success": False,
+            "updated_count": updated_count,
+            "errors": errors,
+            "message": f"Updated {updated_count} records with errors."
+        }), 500
+    
+    return jsonify({
+        "success": True,
+        "updated_count": updated_count,
+        "message": f"Successfully updated {updated_count} records."
+    })
+
+
 @app.route("/record/<submission_id>/delete", methods=["POST"])
 def delete_record(submission_id):
     """Delete a record."""
@@ -572,30 +703,33 @@ def _export_records_to_csv(records: List[Dict]) -> io.BytesIO:
     ]
     writer.writerow(headers)
     
+    # Get access token for generating PDF URLs (if available from session)
+    # Note: This function might be called from routes that have access_token in session
+    access_token = session.get("supabase_access_token") if hasattr(session, 'get') else None
+    
     # Write records
     for record_dict in records:
         # Generate PDF URL from artifact_dir
         pdf_url = ""
         artifact_dir = record_dict.get("artifact_dir", "")
-        filename = record_dict.get("filename", "")
         
-        if artifact_dir and filename:
-            # Construct the file path in Supabase Storage
-            # Format: user_id/submission_id/original.pdf
-            pdf_path = f"{artifact_dir}/original.pdf"
+        if artifact_dir:
+            # Try to get PDF path (handles .pdf, .png, .jpg, .jpeg)
+            pdf_path = get_pdf_path(artifact_dir, access_token=access_token)
             
-            # Get the public URL for the PDF
-            try:
-                pdf_url = get_file_url(pdf_path)
-                if not pdf_url:
-                    # Fallback: construct URL manually if get_file_url fails
-                    supabase_url = os.environ.get("SUPABASE_URL", "")
-                    if supabase_url:
-                        # Public URL format: https://[project].supabase.co/storage/v1/object/public/[bucket]/[path]
-                        pdf_url = f"{supabase_url}/storage/v1/object/public/{BUCKET_NAME}/{pdf_path}"
-            except Exception as e:
-                print(f"⚠️ Warning: Could not generate PDF URL for {artifact_dir}: {e}")
-                pdf_url = ""
+            if pdf_path:
+                # Get the direct Supabase Storage public URL (shareable, no authentication required)
+                try:
+                    pdf_url = get_file_url(pdf_path, access_token=access_token)
+                    if not pdf_url:
+                        # Fallback: construct URL manually if get_file_url fails
+                        supabase_url = os.environ.get("SUPABASE_URL", "")
+                        if supabase_url:
+                            # Public URL format: https://[project].supabase.co/storage/v1/object/public/[bucket]/[path]
+                            pdf_url = f"{supabase_url}/storage/v1/object/public/{BUCKET_NAME}/{pdf_path}"
+                except Exception as e:
+                    print(f"⚠️ Warning: Could not generate PDF URL for {artifact_dir}: {e}")
+                    pdf_url = ""
         
         row = [
             record_dict.get("submission_id", ""),
@@ -629,8 +763,8 @@ def export_csv():
     user_id = session.get("user_id")
     access_token = session.get("supabase_access_token")
     records = get_db_records(needs_review=False, owner_user_id=user_id, access_token=access_token)
-    
-    csv_buffer = _export_records_to_csv(records)
+
+    csv_buffer = _export_records_to_csv(records, access_token=access_token)
     
     return send_file(
         csv_buffer,
@@ -660,7 +794,7 @@ def export_school_csv(school_name: str):
         if normalize_key(r.get("school_name", "")) == school_key
     ]
     
-    csv_buffer = _export_records_to_csv(school_records)
+    csv_buffer = _export_records_to_csv(school_records, access_token=access_token)
     
     # Sanitize school name for filename
     safe_school_name = "".join(c for c in school_name if c.isalnum() or c in (' ', '-', '_')).strip()
@@ -697,7 +831,7 @@ def export_grade_csv(school_name: str, grade: str):
            normalize_key(str(r.get("grade", ""))) == grade_key
     ]
     
-    csv_buffer = _export_records_to_csv(grade_records)
+    csv_buffer = _export_records_to_csv(grade_records, access_token=access_token)
     
     # Sanitize names for filename
     safe_school_name = "".join(c for c in school_name if c.isalnum() or c in (' ', '-', '_')).strip()
@@ -772,6 +906,56 @@ def job_status(job_id):
     return jsonify(status)
 
 
+@app.route("/api/batches/<upload_batch_id>", methods=["GET"])
+def get_batch(upload_batch_id: str):
+    """Get batch details with submissions."""
+    if not require_auth():
+        return jsonify({"success": False, "error": "Not authenticated"}), 401
+    
+    user_id = session.get("user_id")
+    access_token = session.get("supabase_access_token")
+    
+    batch = get_batch_with_submissions(upload_batch_id, owner_user_id=user_id, access_token=access_token)
+    
+    if not batch:
+        return jsonify({"success": False, "error": "Batch not found"}), 404
+    
+    return jsonify({"success": True, "batch": batch})
+
+
+@app.route("/api/batches/<upload_batch_id>/apply-defaults", methods=["POST"])
+def apply_defaults(upload_batch_id: str):
+    """Apply batch defaults to all submissions in the batch."""
+    if not require_auth():
+        return jsonify({"success": False, "error": "Not authenticated"}), 401
+    
+    user_id = session.get("user_id")
+    access_token = session.get("supabase_access_token")
+    
+    data = request.get_json()
+    default_school_name = data.get("default_school_name", "").strip() or None
+    default_grade = data.get("default_grade", "").strip() or None
+    default_teacher_name = data.get("default_teacher_name", "").strip() or None
+    
+    # At least one default must be provided
+    if not any([default_school_name, default_grade, default_teacher_name]):
+        return jsonify({"success": False, "error": "At least one default value must be provided"}), 400
+    
+    result = apply_batch_defaults(
+        upload_batch_id=upload_batch_id,
+        default_school_name=default_school_name,
+        default_grade=default_grade,
+        default_teacher_name=default_teacher_name,
+        owner_user_id=user_id,
+        access_token=access_token
+    )
+    
+    if result.get("success"):
+        return jsonify(result)
+    else:
+        return jsonify(result), 500
+
+
 @app.route("/api/batch_status")
 def batch_status():
     """Get status of all jobs in current batch."""
@@ -809,6 +993,7 @@ def batch_status():
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("FLASK_PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=True)
+    # Render sets PORT environment variable, fallback to FLASK_PORT or 5000
+    port = int(os.environ.get("PORT", os.environ.get("FLASK_PORT", 5000)))
+    app.run(host="0.0.0.0", port=port, debug=False)  # debug=False for production
 

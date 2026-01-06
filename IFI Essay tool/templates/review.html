@@ -34,6 +34,45 @@
     </div>
 </div>
 
+{% if batch_info and upload_batch_id and review_mode == 'needs_review' %}
+<div class="card mb-3 border-primary">
+    <div class="card-header bg-primary text-white">
+        <h5 class="mb-0"><i class="bi bi-sliders"></i> Batch Defaults</h5>
+    </div>
+    <div class="card-body">
+        <p class="text-muted">Set default values for all submissions in this batch. These will only fill empty fields and won't overwrite manual edits.</p>
+        <form id="batchDefaultsForm">
+            <div class="row">
+                <div class="col-md-4">
+                    <label for="default_school_name" class="form-label">Default School Name</label>
+                    <input type="text" class="form-control" id="default_school_name" 
+                           value="{{ batch_info.default_school_name or '' }}" 
+                           placeholder="e.g., Lincoln Elementary">
+                </div>
+                <div class="col-md-4">
+                    <label for="default_grade" class="form-label">Default Grade</label>
+                    <input type="text" class="form-control" id="default_grade" 
+                           value="{{ batch_info.default_grade or '' }}" 
+                           placeholder="e.g., 5, K, or Kindergarten">
+                </div>
+                <div class="col-md-4">
+                    <label for="default_teacher_name" class="form-label">Default Teacher Name (Optional)</label>
+                    <input type="text" class="form-control" id="default_teacher_name" 
+                           value="{{ batch_info.default_teacher_name or '' }}" 
+                           placeholder="e.g., Mrs. Smith">
+                </div>
+            </div>
+            <div class="mt-3">
+                <button type="submit" class="btn btn-primary">
+                    <i class="bi bi-check-circle"></i> Apply Defaults to Batch
+                </button>
+                <span id="batchDefaultsStatus" class="ms-3"></span>
+            </div>
+        </form>
+    </div>
+</div>
+{% endif %}
+
 <div class="card">
     <div class="card-header">
         <div class="btn-group" role="group">
@@ -60,12 +99,53 @@
             {% if records %}
             <p class="text-muted">Found <strong>{{ records|length }}</strong> record(s) needing review</p>
             
+            {# Bulk Edit Panel - ALWAYS SHOWN #}
+            <div class="card mb-4 border-info shadow-sm" style="border-width: 2px !important;">
+                <div class="card-header bg-info text-white">
+                    <h5 class="mb-0"><i class="bi bi-pencil-square"></i> Bulk Edit Selected Records</h5>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted small">Select records below, then set school name or grade to apply to all selected records.</p>
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label for="bulk_school_name" class="form-label">School Name</label>
+                            <input type="text" class="form-control" id="bulk_school_name" 
+                                   placeholder="e.g., Lincoln Elementary">
+                        </div>
+                        <div class="col-md-6">
+                            <label for="bulk_grade" class="form-label">Grade</label>
+                            <input type="text" class="form-control" id="bulk_grade" 
+                                   placeholder="e.g., 5, K, or Kindergarten">
+                        </div>
+                    </div>
+                    <div class="d-flex gap-2 align-items-center">
+                        <button type="button" class="btn btn-primary" onclick="applyBulkEdit()">
+                            <i class="bi bi-check-circle"></i> Apply to Selected (<span id="selectedCount">0</span>)
+                        </button>
+                        <button type="button" class="btn btn-outline-secondary" onclick="selectAllRecords()">
+                            <i class="bi bi-check-all"></i> Select All
+                        </button>
+                        <button type="button" class="btn btn-outline-secondary" onclick="deselectAllRecords()">
+                            <i class="bi bi-x-square"></i> Deselect All
+                        </button>
+                        <span id="bulkEditStatus" class="ms-3"></span>
+                    </div>
+                </div>
+            </div>
+            
             <div class="accordion" id="recordsAccordion">
                 {% for record in records %}
             <div class="accordion-item">
                 <h2 class="accordion-header" id="heading{{ loop.index }}">
                     <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" 
                             data-bs-target="#collapse{{ loop.index }}">
+                        <div class="form-check me-3">
+                            <input class="form-check-input record-checkbox" type="checkbox" 
+                                   value="{{ record.submission_id }}" 
+                                   id="checkbox{{ loop.index }}"
+                                   onchange="updateSelectedCount()"
+                                   onclick="event.stopPropagation();">
+                        </div>
                         {% if review_mode == 'needs_review' %}⚠️{% else %}✅{% endif %}
                         {{ record.submission_id }} - {{ record.student_name or 'Unknown' }}
                     </button>
@@ -266,6 +346,136 @@
 
 {% block extra_js %}
 <script>
+// Bulk edit functionality
+function updateSelectedCount() {
+    const checkboxes = document.querySelectorAll('.record-checkbox:checked');
+    const countEl = document.getElementById('selectedCount');
+    if (countEl) {
+        countEl.textContent = checkboxes.length;
+    }
+}
+
+function selectAllRecords() {
+    document.querySelectorAll('.record-checkbox').forEach(cb => cb.checked = true);
+    updateSelectedCount();
+}
+
+function deselectAllRecords() {
+    document.querySelectorAll('.record-checkbox').forEach(cb => cb.checked = false);
+    updateSelectedCount();
+}
+
+function applyBulkEdit() {
+    const checkboxes = document.querySelectorAll('.record-checkbox:checked');
+    const selectedIds = Array.from(checkboxes).map(cb => cb.value);
+    const bulkSchoolName = document.getElementById('bulk_school_name').value.trim();
+    const bulkGrade = document.getElementById('bulk_grade').value.trim();
+    const statusEl = document.getElementById('bulkEditStatus');
+
+    if (selectedIds.length === 0) {
+        showToastModal('Please select at least one record to update.', 'error');
+        return;
+    }
+
+    if (!bulkSchoolName && !bulkGrade) {
+        showToastModal('Please enter a School Name or Grade to apply.', 'error');
+        return;
+    }
+
+    showConfirmModal(
+        'Apply Bulk Edit',
+        `Are you sure you want to update ${selectedIds.length} selected record(s)?`,
+        'Apply',
+        'btn-primary',
+        function() {
+            statusEl.innerHTML = '<span class="text-info"><i class="bi bi-arrow-clockwise spin"></i> Applying...</span>';
+            fetch('/api/bulk_update_records', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    selected_ids: selectedIds,
+                    school_name: bulkSchoolName,
+                    grade: bulkGrade
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showToastModal(data.message, 'success');
+                    statusEl.innerHTML = '<span class="text-success">✅ Applied!</span>';
+                    setTimeout(() => location.reload(), 1500);
+                } else {
+                    showToastModal('Error applying bulk edit: ' + (data.error || 'Unknown error'), 'error');
+                    statusEl.innerHTML = '<span class="text-danger">❌ Error!</span>';
+                }
+            })
+            .catch(error => {
+                console.error('Error during bulk update:', error);
+                showToastModal('Network error during bulk update.', 'error');
+                statusEl.innerHTML = '<span class="text-danger">❌ Network Error!</span>';
+            });
+        }
+    );
+}
+
+// Initialize selected count on page load
+document.addEventListener('DOMContentLoaded', function() {
+    updateSelectedCount();
+});
+
+{% if batch_info and upload_batch_id %}
+// Handle batch defaults form submission
+document.addEventListener('DOMContentLoaded', function() {
+    const form = document.getElementById('batchDefaultsForm');
+    const statusEl = document.getElementById('batchDefaultsStatus');
+    
+    if (form) {
+        form.addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const defaultSchool = document.getElementById('default_school_name').value.trim();
+            const defaultGrade = document.getElementById('default_grade').value.trim();
+            const defaultTeacher = document.getElementById('default_teacher_name').value.trim();
+            
+            if (!defaultSchool && !defaultGrade && !defaultTeacher) {
+                statusEl.innerHTML = '<span class="text-warning">⚠️ Please enter at least one default value</span>';
+                return;
+            }
+            
+            statusEl.innerHTML = '<span class="text-info">⏳ Applying defaults...</span>';
+            
+            fetch(`/api/batches/{{ upload_batch_id }}/apply-defaults`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    default_school_name: defaultSchool || null,
+                    default_grade: defaultGrade || null,
+                    default_teacher_name: defaultTeacher || null
+                })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    statusEl.innerHTML = `<span class="text-success">✅ Updated ${data.updated_count} of ${data.total_submissions} submissions</span>`;
+                    // Reload page after 1.5 seconds to show updated records
+                    setTimeout(() => {
+                        window.location.reload();
+                    }, 1500);
+                } else {
+                    statusEl.innerHTML = `<span class="text-danger">❌ Error: ${data.error || 'Failed to apply defaults'}</span>`;
+                }
+            })
+            .catch(error => {
+                console.error('Error applying defaults:', error);
+                statusEl.innerHTML = '<span class="text-danger">❌ Network error</span>';
+            });
+        });
+    }
+});
+{% endif %}
+
 function togglePdfView(submissionId, pdfUrl) {
     const viewer = document.getElementById('pdf-viewer-' + submissionId);
     if (!viewer) {

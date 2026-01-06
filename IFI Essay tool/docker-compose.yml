@@ -13,7 +13,8 @@ services:
       # Mount data directory for database persistence
       - ./data:/app/data
       # Mount Google Cloud credentials
-      - /Users/jerrybony/Downloads/youtube-ai-tool-478918-1941d902d881.json:/app/credentials.json:ro
+      # Update this path to point to your own Google Cloud service account JSON file
+      - ${GOOGLE_CREDENTIALS_PATH:-./credentials.json}:/app/credentials.json:ro
     environment:
       # Google Cloud Vision credentials
       - GOOGLE_APPLICATION_CREDENTIALS=/app/credentials.json
@@ -41,7 +42,8 @@ services:
       # Mount data directory for database persistence
       - ./data:/app/data
       # Mount Google Cloud credentials
-      - /Users/jerrybony/Downloads/youtube-ai-tool-478918-1941d902d881.json:/app/credentials.json:ro
+      # Update this path to point to your own Google Cloud service account JSON file
+      - ${GOOGLE_CREDENTIALS_PATH:-./credentials.json}:/app/credentials.json:ro
     environment:
       # Google Cloud Vision credentials
       - GOOGLE_APPLICATION_CREDENTIALS=/app/credentials.json
@@ -51,7 +53,7 @@ services:
       - SUPABASE_URL=${SUPABASE_URL}
       - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
       # Supabase Service Role Key (required for worker to bypass RLS)
-      - SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVzY2JjZGpsYWZ6anh6cWllcGhjIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NzY3ODM1NywiZXhwIjoyMDgzMjU0MzU3fQ.n5H7DF914ZkvsFcRSQQXpvnMbajATY86TXPpdXJi9xg
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
       # Worker ID (optional, defaults to worker-<pid>)
       - WORKER_ID=${WORKER_ID:-worker-1}
     restart: unless-stopped

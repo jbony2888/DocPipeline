@@ -28,15 +28,20 @@ This means the storage bucket has Row Level Security (RLS) enabled but no polici
 
 ### Step 3: Configure Bucket Settings
 
-**Option A: Public Bucket (Recommended for easier access)**
-- Go to bucket settings
-- Enable "Public bucket"
-- Files will be accessible via public URLs
+**Option A: Public Bucket (Recommended for shareable URLs in CSV exports)**
+- Run the SQL script: `supabase/make_bucket_public.sql` in Supabase SQL Editor
+- OR manually in Dashboard:
+  - Go to Storage → Buckets → essay-submissions
+  - Click "Settings" or "Edit"
+  - Enable "Public bucket" toggle
+- Files will be accessible via public URLs like:
+  `https://escbcdjlafzjxzqiephc.supabase.co/storage/v1/object/public/essay-submissions/...`
 
 **Option B: Private Bucket (More secure)**
 - Keep bucket private
 - Files accessible only to authenticated users
 - Requires authenticated session token
+- CSV export URLs will only work for logged-in users
 
 ### Step 4: Test Upload
 

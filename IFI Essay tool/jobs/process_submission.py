@@ -16,7 +16,8 @@ def process_submission_job(
     filename: str,
     owner_user_id: str,
     access_token: str,
-    ocr_provider: str = "google"
+    ocr_provider: str = "google",
+    upload_batch_id: str = None
 ):
     """
     Process a single submission in the background.
@@ -63,7 +64,8 @@ def process_submission_job(
                 record, 
                 filename=filename, 
                 owner_user_id=owner_user_id, 
-                access_token=access_token
+                access_token=access_token,
+                upload_batch_id=upload_batch_id
             )
             
             if not save_success:

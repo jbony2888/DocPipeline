@@ -16,8 +16,8 @@ cd "/Users/jerrybony/Documents/GitHub/DocPipeline/IFI Essay tool"
 # Run the helper script
 python scripts/prepare_render_env.py /path/to/your/google-credentials.json
 
-# Example:
-python scripts/prepare_render_env.py ~/Downloads/youtube-ai-tool-478918-1941d902d881.json
+# Example (replace with your own credentials file path):
+python scripts/prepare_render_env.py ~/path/to/your-google-credentials.json
 ```
 
 **What it does:**

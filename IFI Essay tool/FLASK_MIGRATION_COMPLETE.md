@@ -32,9 +32,10 @@ pip install -r requirements-flask.txt
 ### 2. Set Environment Variables
 
 ```bash
-export SUPABASE_URL="https://escbcdjlafzjxzqiephc.supabase.co"
-export SUPABASE_ANON_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVzY2JjZGpsYWZ6anh6cWllcGhjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc2NzgzNTcsImV4cCI6MjA4MzI1NDM1N30.kxxKhBcp1iZuwSrucZhBx31f59AlW3EO0pu279lIhJI"
-export FLASK_SECRET_KEY="dev-secret-key-12345"
+# Load from .env file or set manually
+export SUPABASE_URL="https://your-project-id.supabase.co"
+export SUPABASE_ANON_KEY="your-supabase-anon-key-here"
+export FLASK_SECRET_KEY="generate-a-secure-random-key"
 export FLASK_PORT=5000
 ```
 

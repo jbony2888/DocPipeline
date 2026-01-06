@@ -17,11 +17,14 @@ archive/
 credentials/
 *service-account*.json
 .env
+.env.*
 *.pem
 *.key
 env.yaml
 .env.local
 .env.production
+# But DO commit .env.example as a template
+!.env.example
 
 # IDE
 .vscode/

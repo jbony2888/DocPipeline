@@ -16,7 +16,8 @@ def enqueue_submission(
     filename: str,
     owner_user_id: str,
     access_token: str,
-    ocr_provider: str = "google"
+    ocr_provider: str = "google",
+    upload_batch_id: Optional[str] = None
 ) -> str:
     """
     Enqueue a submission for background processing.
@@ -42,7 +43,8 @@ def enqueue_submission(
             "filename": filename,
             "owner_user_id": owner_user_id,
             "access_token": access_token,  # Store access token for worker
-            "ocr_provider": ocr_provider
+            "ocr_provider": ocr_provider,
+            "upload_batch_id": upload_batch_id  # Store batch ID for linking submissions
         }
         
         # Insert job into database

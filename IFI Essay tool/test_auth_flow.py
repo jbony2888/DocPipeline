@@ -9,14 +9,23 @@ import sys
 import requests
 from supabase import create_client
 
-# Set environment variables
-os.environ.setdefault("SUPABASE_URL", "https://escbcdjlafzjxzqiephc.supabase.co")
-os.environ.setdefault("SUPABASE_ANON_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVzY2JjZGpsYWZ6anh6cWllcGhjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc2NzgzNTcsImV4cCI6MjA4MzI1NDM1N30.kxxKhBcp1iZuwSrucZhBx31f59AlW3EO0pu279lIhJI")
+# Load environment variables from .env file if it exists
+from dotenv import load_dotenv
+load_dotenv()
+
+# Environment variables must be set in .env file or exported
+# Required: SUPABASE_URL, SUPABASE_ANON_KEY
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY")
 FLASK_URL = "http://localhost:5001"
 STREAMLIT_URL = "http://localhost:8501"
+
+if not SUPABASE_URL or not SUPABASE_ANON_KEY:
+    print("❌ Error: SUPABASE_URL and SUPABASE_ANON_KEY must be set")
+    print("   Create a .env file or export these environment variables")
+    print("   See .env.example for reference")
+    sys.exit(1)
 
 def test_flask_health():
     """Test if Flask service is running."""
@@ -63,7 +72,12 @@ def test_magic_link_config():
     print(f"   Flask callback URL: {FLASK_URL}/auth/callback")
     print(f"   Streamlit URL: {STREAMLIT_URL}")
     print(f"   ⚠️  Make sure Supabase redirect URL is set to: {FLASK_URL}/auth/callback")
-    print(f"   📧 Go to: https://supabase.com/dashboard/project/escbcdjlafzjxzqiephc/auth/url-configuration")
+    if SUPABASE_URL:
+        # Extract project ID from URL if possible
+        project_id = SUPABASE_URL.split("//")[1].split(".")[0] if "supabase.co" in SUPABASE_URL else "your-project-id"
+        print(f"   📧 Go to: https://supabase.com/dashboard/project/{project_id}/auth/url-configuration")
+    else:
+        print(f"   📧 Go to: Supabase Dashboard → Authentication → URL Configuration")
 
 def main():
     print("=" * 60)

@@ -20,7 +20,8 @@ VARIABLE 2: Groq API Key
 ─────────────────────────────────────────────────────────────────────
 Key: GROQ_API_KEY
 
-Value: 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
+Value: <your-groq-api-key-here>
+       Get it from: https://console.groq.com/keys
 
 ─────────────────────────────────────────────────────────────────────
 
