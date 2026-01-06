@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}IFI Essay Gateway{% endblock %}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
+    <style>
+        :root {
+            --primary-color: #2563eb;
+            --success-color: #10b981;
+            --warning-color: #f59e0b;
+            --danger-color: #ef4444;
+        }
+        body {
+            background-color: #f8fafc;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+        }
+        .navbar {
+            background-color: white;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            margin-bottom: 2rem;
+        }
+        .navbar-text {
+            display: flex;
+            align-items: center;
+            padding-top: 0.5rem;
+            padding-bottom: 0.5rem;
+        }
+        .navbar-text i {
+            margin-right: 0.5rem;
+        }
+        .main-content {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 0 1rem;
+        }
+        .card {
+            border: none;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            margin-bottom: 1.5rem;
+        }
+        .btn-primary {
+            background-color: var(--primary-color);
+            border-color: var(--primary-color);
+        }
+        .alert {
+            border-radius: 0.5rem;
+        }
+        #toastModal .modal-content {
+            border-width: 3px;
+        }
+        #toastModal .modal-body {
+            padding: 2rem;
+        }
+    </style>
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+    {% if session.user_id %}
+    <nav class="navbar navbar-expand-lg navbar-light">
+        <div class="container-fluid main-content">
+            <a class="navbar-brand" href="{{ url_for('index') }}">
+                <i class="bi bi-file-text"></i> IFI Essay Gateway
+            </a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav me-auto">
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('index') }}">
+                            <i class="bi bi-house"></i> Dashboard
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('review', mode='needs_review') }}">
+                            <i class="bi bi-exclamation-triangle"></i> Review
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('review', mode='approved') }}">
+                            <i class="bi bi-check-circle"></i> Approved
+                        </a>
+                    </li>
+                </ul>
+                <ul class="navbar-nav">
+                    <li class="nav-item">
+                        <span class="navbar-text me-3">
+                            <i class="bi bi-person-circle"></i> {{ session.user_email }}
+                        </span>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('logout') }}">
+                            <i class="bi bi-box-arrow-right"></i> Logout
+                        </a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+    {% endif %}
+
+    <div class="main-content">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ 'danger' if category == 'error' else 'success' if category == 'success' else 'warning' if category == 'warning' else 'info' }} alert-dismissible fade show" role="alert">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        {% block content %}{% endblock %}
+    </div>
+
+    <!-- Custom Modal Component -->
+    <div class="modal fade" id="customModal" tabindex="-1" aria-labelledby="customModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header" id="modalHeader">
+                    <h5 class="modal-title" id="customModalLabel">Confirm Action</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" id="modalBody">
+                    Are you sure you want to proceed?
+                </div>
+                <div class="modal-footer" id="modalFooter">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" id="modalConfirmBtn">Confirm</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Success/Error Toast Modal -->
+    <div class="modal fade" id="toastModal" tabindex="-1" aria-labelledby="toastModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered modal-sm">
+            <div class="modal-content">
+                <div class="modal-body text-center p-4" id="toastModalBody">
+                    <div id="toastIcon" class="mb-3" style="font-size: 3rem;"></div>
+                    <div id="toastMessage" class="h5"></div>
+                </div>
+                <div class="modal-footer justify-content-center">
+                    <button type="button" class="btn btn-primary" data-bs-dismiss="modal">OK</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Custom modal functions
+        function showConfirmModal(title, message, confirmText, confirmClass, onConfirm) {
+            const modal = new bootstrap.Modal(document.getElementById('customModal'));
+            const header = document.getElementById('modalHeader');
+            const body = document.getElementById('modalBody');
+            const confirmBtn = document.getElementById('modalConfirmBtn');
+            
+            document.getElementById('customModalLabel').textContent = title;
+            body.textContent = message;
+            confirmBtn.textContent = confirmText || 'Confirm';
+            confirmBtn.className = 'btn ' + (confirmClass || 'btn-primary');
+            
+            // Remove previous event listeners
+            const newConfirmBtn = confirmBtn.cloneNode(true);
+            confirmBtn.parentNode.replaceChild(newConfirmBtn, confirmBtn);
+            
+            // Add new event listener
+            newConfirmBtn.addEventListener('click', function() {
+                modal.hide();
+                if (onConfirm) onConfirm();
+            });
+            
+            modal.show();
+        }
+        
+        function showToastModal(message, type, autoHide = true) {
+            const modal = new bootstrap.Modal(document.getElementById('toastModal'));
+            const icon = document.getElementById('toastIcon');
+            const messageEl = document.getElementById('toastMessage');
+            const modalContent = document.querySelector('#toastModal .modal-content');
+            
+            messageEl.textContent = message;
+            
+            // Set icon and color based on type
+            if (type === 'success') {
+                icon.innerHTML = '<i class="bi bi-check-circle-fill text-success"></i>';
+                modalContent.classList.remove('border-danger', 'border-warning');
+                modalContent.classList.add('border-success');
+            } else if (type === 'error') {
+                icon.innerHTML = '<i class="bi bi-x-circle-fill text-danger"></i>';
+                modalContent.classList.remove('border-success', 'border-warning');
+                modalContent.classList.add('border-danger');
+            } else if (type === 'warning') {
+                icon.innerHTML = '<i class="bi bi-exclamation-triangle-fill text-warning"></i>';
+                modalContent.classList.remove('border-success', 'border-danger');
+                modalContent.classList.add('border-warning');
+            } else {
+                icon.innerHTML = '<i class="bi bi-info-circle-fill text-info"></i>';
+                modalContent.classList.remove('border-success', 'border-danger', 'border-warning');
+            }
+            
+            modal.show();
+            
+            // Auto-hide after 3 seconds for success messages (if autoHide is true)
+            if (type === 'success' && autoHide) {
+                setTimeout(() => modal.hide(), 3000);
+            } else if (type === 'error' || type === 'warning') {
+                // Don't auto-hide errors or warnings
+                autoHide = false;
+            }
+        }
+    </script>
+    {% block extra_js %}{% endblock %}
+</body>
+</html>
+

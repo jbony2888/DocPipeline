@@ -53,9 +53,16 @@ def init_database():
                 review_reason_codes TEXT,
                 artifact_dir TEXT,
                 filename TEXT,
+                owner_user_id TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
+        """)
+        
+        # Create index for owner_user_id
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_owner_user_id 
+            ON submissions(owner_user_id)
         """)
         
         # Create index for faster queries
@@ -90,9 +97,15 @@ def init_database():
                     review_reason_codes TEXT,
                     artifact_dir TEXT,
                     filename TEXT,
+                    owner_user_id TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
+            """)
+            
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_owner_user_id 
+                ON submissions(owner_user_id)
             """)
             
             cursor.execute("""
@@ -110,17 +123,22 @@ def init_database():
         print(f"Warning: Database initialization error (will retry on first use): {e}")
 
 
-def save_record(record: SubmissionRecord, filename: str = None) -> bool:
+def save_record(record: SubmissionRecord, filename: str = None, owner_user_id: str = None) -> bool:
     """
     Save a submission record to the database.
     
     Args:
         record: SubmissionRecord to save
         filename: Original filename (optional)
+        owner_user_id: User ID of the teacher who owns this record (required)
         
     Returns:
         True if successful, False otherwise
     """
+    if not owner_user_id:
+        print("Error: owner_user_id is required to save a record")
+        return False
+    
     init_database()
     
     db_path = Path(DB_PATH)
@@ -134,8 +152,8 @@ def save_record(record: SubmissionRecord, filename: str = None) -> bool:
                 teacher_name, city_or_location, father_figure_name,
                 phone, email, word_count, ocr_confidence_avg,
                 needs_review, review_reason_codes, artifact_dir,
-                filename, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                filename, owner_user_id, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             record.submission_id,
             record.student_name,
@@ -152,6 +170,7 @@ def save_record(record: SubmissionRecord, filename: str = None) -> bool:
             record.review_reason_codes,
             record.artifact_dir,
             filename,
+            owner_user_id,
             datetime.now()
         ))
         
@@ -165,17 +184,22 @@ def save_record(record: SubmissionRecord, filename: str = None) -> bool:
         conn.close()
 
 
-def get_records(needs_review: Optional[bool] = None, limit: int = 1000) -> List[Dict]:
+def get_records(needs_review: Optional[bool] = None, limit: int = 1000, owner_user_id: str = None) -> List[Dict]:
     """
     Get submission records from the database.
     
     Args:
         needs_review: Filter by needs_review status (None = all records)
         limit: Maximum number of records to return
+        owner_user_id: Filter by owner user ID (required for multi-tenant security)
         
     Returns:
         List of record dictionaries
     """
+    if not owner_user_id:
+        print("Error: owner_user_id is required to query records")
+        return []
+    
     init_database()
     
     db_path = Path(DB_PATH)
@@ -186,16 +210,17 @@ def get_records(needs_review: Optional[bool] = None, limit: int = 1000) -> List[
     if needs_review is None:
         cursor.execute("""
             SELECT * FROM submissions 
+            WHERE owner_user_id = ?
             ORDER BY created_at DESC 
             LIMIT ?
-        """, (limit,))
+        """, (owner_user_id, limit))
     else:
         cursor.execute("""
             SELECT * FROM submissions 
-            WHERE needs_review = ?
+            WHERE owner_user_id = ? AND needs_review = ?
             ORDER BY created_at DESC 
             LIMIT ?
-        """, (1 if needs_review else 0, limit))
+        """, (owner_user_id, 1 if needs_review else 0, limit))
     
     rows = cursor.fetchall()
     conn.close()
@@ -219,6 +244,7 @@ def get_records(needs_review: Optional[bool] = None, limit: int = 1000) -> List[
             "review_reason_codes": row["review_reason_codes"],
             "artifact_dir": row["artifact_dir"],
             "filename": row["filename"],
+            "owner_user_id": row.get("owner_user_id"),  # May be None for old records
             "created_at": row["created_at"],
             "updated_at": row["updated_at"]
         })
@@ -226,8 +252,21 @@ def get_records(needs_review: Optional[bool] = None, limit: int = 1000) -> List[
     return records
 
 
-def get_record_by_id(submission_id: str) -> Optional[Dict]:
-    """Get a single record by submission_id."""
+def get_record_by_id(submission_id: str, owner_user_id: str = None) -> Optional[Dict]:
+    """
+    Get a single record by submission_id.
+    
+    Args:
+        submission_id: The submission ID to retrieve
+        owner_user_id: User ID of the owner (required for security)
+        
+    Returns:
+        Record dictionary if found and owned by user, None otherwise
+    """
+    if not owner_user_id:
+        print("Error: owner_user_id is required to get a record")
+        return None
+    
     init_database()
     
     db_path = Path(DB_PATH)
@@ -235,7 +274,10 @@ def get_record_by_id(submission_id: str) -> Optional[Dict]:
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     
-    cursor.execute("SELECT * FROM submissions WHERE submission_id = ?", (submission_id,))
+    cursor.execute(
+        "SELECT * FROM submissions WHERE submission_id = ? AND owner_user_id = ?",
+        (submission_id, owner_user_id)
+    )
     row = cursor.fetchone()
     conn.close()
     
@@ -256,23 +298,29 @@ def get_record_by_id(submission_id: str) -> Optional[Dict]:
             "review_reason_codes": row["review_reason_codes"],
             "artifact_dir": row["artifact_dir"],
             "filename": row["filename"],
+            "owner_user_id": row.get("owner_user_id"),
             "created_at": row["created_at"],
             "updated_at": row["updated_at"]
         }
     return None
 
 
-def update_record(submission_id: str, updates: Dict) -> bool:
+def update_record(submission_id: str, updates: Dict, owner_user_id: str = None) -> bool:
     """
     Update a record in the database.
     
     Args:
         submission_id: The submission ID to update
         updates: Dictionary of fields to update
+        owner_user_id: User ID of the owner (required for security)
         
     Returns:
         True if successful, False otherwise
     """
+    if not owner_user_id:
+        print("Error: owner_user_id is required to update a record")
+        return False
+    
     init_database()
     
     db_path = Path(DB_PATH)
@@ -305,13 +353,15 @@ def update_record(submission_id: str, updates: Dict) -> bool:
     # Add updated_at timestamp
     set_clauses.append("updated_at = ?")
     values.append(datetime.now())
+    # Add owner_user_id check to WHERE clause
     values.append(submission_id)
+    values.append(owner_user_id)
     
     try:
         query = f"""
             UPDATE submissions 
             SET {', '.join(set_clauses)}
-            WHERE submission_id = ?
+            WHERE submission_id = ? AND owner_user_id = ?
         """
         cursor.execute(query, values)
         conn.commit()
@@ -324,8 +374,21 @@ def update_record(submission_id: str, updates: Dict) -> bool:
         conn.close()
 
 
-def delete_record(submission_id: str) -> bool:
-    """Delete a record from the database."""
+def delete_record(submission_id: str, owner_user_id: str = None) -> bool:
+    """
+    Delete a record from the database.
+    
+    Args:
+        submission_id: The submission ID to delete
+        owner_user_id: User ID of the owner (required for security)
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    if not owner_user_id:
+        print("Error: owner_user_id is required to delete a record")
+        return False
+    
     init_database()
     
     db_path = Path(DB_PATH)
@@ -333,7 +396,10 @@ def delete_record(submission_id: str) -> bool:
     cursor = conn.cursor()
     
     try:
-        cursor.execute("DELETE FROM submissions WHERE submission_id = ?", (submission_id,))
+        cursor.execute(
+            "DELETE FROM submissions WHERE submission_id = ? AND owner_user_id = ?",
+            (submission_id, owner_user_id)
+        )
         conn.commit()
         return cursor.rowcount > 0
     except Exception as e:
@@ -344,21 +410,45 @@ def delete_record(submission_id: str) -> bool:
         conn.close()
 
 
-def get_stats() -> Dict:
-    """Get statistics about records in the database."""
+def get_stats(owner_user_id: str = None) -> Dict:
+    """
+    Get statistics about records in the database.
+    
+    Args:
+        owner_user_id: User ID of the owner (required for multi-tenant security)
+        
+    Returns:
+        Dictionary with statistics
+    """
+    if not owner_user_id:
+        return {
+            "total_count": 0,
+            "clean_count": 0,
+            "needs_review_count": 0
+        }
+    
     init_database()
     
     db_path = Path(DB_PATH)
     conn = sqlite3.connect(str(db_path))
     cursor = conn.cursor()
     
-    cursor.execute("SELECT COUNT(*) FROM submissions WHERE needs_review = 0")
+    cursor.execute(
+        "SELECT COUNT(*) FROM submissions WHERE owner_user_id = ? AND needs_review = 0",
+        (owner_user_id,)
+    )
     clean_count = cursor.fetchone()[0]
     
-    cursor.execute("SELECT COUNT(*) FROM submissions WHERE needs_review = 1")
+    cursor.execute(
+        "SELECT COUNT(*) FROM submissions WHERE owner_user_id = ? AND needs_review = 1",
+        (owner_user_id,)
+    )
     needs_review_count = cursor.fetchone()[0]
     
-    cursor.execute("SELECT COUNT(*) FROM submissions")
+    cursor.execute(
+        "SELECT COUNT(*) FROM submissions WHERE owner_user_id = ?",
+        (owner_user_id,)
+    )
     total_count = cursor.fetchone()[0]
     
     conn.close()

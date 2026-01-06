@@ -153,9 +153,13 @@ Extract these fields (DO NOT GUESS - only extract if explicitly present):
 student_name (string | null):
 - From "Student's Name / Nombre del Estudiante" label (official forms)
 - From first line (header metadata format)
+- Look for names near labels like "Name:", "Student:", "Estudiante:"
+- Common patterns: "Name: Jordan Altman", "Student's Name: Maria Garcia"
+- Names are typically 2-4 words (first + last name, sometimes middle)
+- Correct OCR errors (e.g., "Alv4rez" -> "Alvarez", "J0rdan" -> "Jordan")
+- If you see a name that looks like a person's name (capitalized words, 2-4 words), extract it
 - DO NOT extract from filename - only from PDF document content
-- Correct OCR errors (e.g., "Alv4rez" -> "Alvarez")
-- null if not found
+- null ONLY if absolutely no name is visible in the document
 
 school_name (string | null):
 - From "School / Escuela" label proximity
@@ -379,9 +383,23 @@ def extract_fields_ifi(contact_block: str, raw_text: str = "",
         phone = _extract_phone_fallback(contact_block)
         email = _extract_email_fallback(contact_block)
     
+    # Fallback: If LLM didn't extract student_name, try rule-based extraction from contact_block
+    student_name = ifi_result.get('student_name')
+    if not student_name and contact_block:
+        from pipeline.extract import extract_value_near_label, STUDENT_NAME_ALIASES
+        lines = [line.strip() for line in contact_block.split('\n') if line.strip()]
+        student_name = extract_value_near_label(lines, STUDENT_NAME_ALIASES)
+        if student_name:
+            logger.info(f"Fallback extraction found student_name: {student_name}")
+            # Update the IFI result for consistency
+            ifi_result['student_name'] = student_name
+            if 'notes' not in ifi_result:
+                ifi_result['notes'] = []
+            ifi_result['notes'].append(f"Student name extracted via fallback rule-based method: {student_name}")
+    
     # Map to pipeline format
     pipeline_fields = {
-        'student_name': ifi_result.get('student_name'),
+        'student_name': student_name or ifi_result.get('student_name'),
         'school_name': ifi_result.get('school_name'),
         'grade': ifi_result.get('grade'),
         'teacher_name': None,

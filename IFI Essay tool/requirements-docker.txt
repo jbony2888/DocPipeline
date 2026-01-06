@@ -10,3 +10,6 @@ google-cloud-vision
 openai
 groq
 
+# Supabase Authentication
+supabase
+

@@ -20,3 +20,10 @@ groq
 # OpenAI for highest accuracy LLM extraction
 openai
 
+# Testing
+pytest
+
+# Supabase authentication
+supabase
+requests
+

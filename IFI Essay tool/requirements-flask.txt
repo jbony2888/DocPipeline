@@ -1,0 +1,13 @@
+flask
+werkzeug
+requests
+supabase
+pydantic
+pillow
+openai
+groq
+google-cloud-vision
+google-auth
+python-dotenv
+PyMuPDF
+flask-cors

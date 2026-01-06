@@ -3,7 +3,7 @@ Data models for essay contest submissions.
 Uses Pydantic for validation and type safety.
 """
 
-from typing import Optional, List
+from typing import Optional, List, Union
 from pydantic import BaseModel, Field
 
 
@@ -24,7 +24,7 @@ class SubmissionRecord(BaseModel):
     # Contact fields (optional, may be missing or illegible)
     student_name: Optional[str] = None
     school_name: Optional[str] = None
-    grade: Optional[int] = None
+    grade: Optional[Union[int, str]] = None  # Can be integer (1-12) or text ("Kindergarten", "K", etc.)
     teacher_name: Optional[str] = None
     city_or_location: Optional[str] = None
     

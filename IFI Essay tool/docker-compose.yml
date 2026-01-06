@@ -1,10 +1,11 @@
-version: '3.8'
-
 services:
-  essayflow:
-    build: .
+  # Main Flask application
+  flask-app:
+    build:
+      context: .
+      dockerfile: Dockerfile.flask
     ports:
-      - "8501:8501"
+      - "5000:5000"
     volumes:
       # Mount artifacts and outputs for persistence
       - ./artifacts:/app/artifacts
@@ -12,10 +13,51 @@ services:
       # Mount data directory for database persistence
       - ./data:/app/data
       # Mount Google Cloud credentials
-      - /Users/jerrybony/Downloads/youtube-ai-tool-478918-1941d902d881.json:/app/credentials.json:ro
+      # Update this path to point to your own Google Cloud service account JSON file
+      - ${GOOGLE_CREDENTIALS_PATH:-./credentials.json}:/app/credentials.json:ro
     environment:
       # Google Cloud Vision credentials
       - GOOGLE_APPLICATION_CREDENTIALS=/app/credentials.json
       # Groq API key for LLM extraction (FREE and FAST)
       - GROQ_API_KEY=${GROQ_API_KEY}
+      # Supabase Authentication
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+      # Flask configuration
+      - FLASK_SECRET_KEY=${FLASK_SECRET_KEY:-change-me-in-production}
+      - FLASK_PORT=5000
     restart: unless-stopped
+
+  # Background worker for processing submissions
+  # Uses PostgreSQL (Supabase) for job queue - no Redis needed!
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.flask
+    command: python worker.py
+    volumes:
+      # Mount artifacts and outputs for persistence
+      - ./artifacts:/app/artifacts
+      - ./outputs:/app/outputs
+      # Mount data directory for database persistence
+      - ./data:/app/data
+      # Mount Google Cloud credentials
+      # Update this path to point to your own Google Cloud service account JSON file
+      - ${GOOGLE_CREDENTIALS_PATH:-./credentials.json}:/app/credentials.json:ro
+    environment:
+      # Google Cloud Vision credentials
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/credentials.json
+      # Groq API key for LLM extraction (FREE and FAST)
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      # Supabase Authentication
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+      # Supabase Service Role Key (required for worker to bypass RLS)
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      # Worker ID (optional, defaults to worker-<pid>)
+      - WORKER_ID=${WORKER_ID:-worker-1}
+    restart: unless-stopped
+
+networks:
+  default:
+    driver: bridge

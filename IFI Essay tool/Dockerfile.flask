@@ -1,0 +1,28 @@
+# Dockerfile for Flask application
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements first for better caching
+COPY requirements-flask.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements-flask.txt
+
+# Copy application code
+COPY . .
+
+# Create directories for artifacts and outputs
+RUN mkdir -p artifacts outputs data templates static/css static/js
+
+# Expose Flask port
+EXPOSE 5000
+
+# Run Flask app
+CMD ["python", "flask_app.py"]
+

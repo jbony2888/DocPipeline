@@ -17,8 +17,14 @@ archive/
 credentials/
 *service-account*.json
 .env
+.env.*
 *.pem
 *.key
+env.yaml
+.env.local
+.env.production
+# But DO commit .env.example as a template
+!.env.example
 
 # IDE
 .vscode/
@@ -34,3 +40,16 @@ Thumbs.db
 # Keep .streamlit/ config for deployment
 !.streamlit/config.toml
 
+# Streamlit Cloud - don't commit secrets
+.streamlit/secrets.toml
+
+# Data directories (will recreate on deployment)
+data/
+*.db
+
+# Render helper output (contains formatted credentials)
+render_google_creds.txt
+
+COPY_THIS_EXACT_STRING.txt
+render_google_creds.txt
+*.credentials.json

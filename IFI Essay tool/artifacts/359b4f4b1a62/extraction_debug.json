@@ -1,14 +1,14 @@
 {
-  "extraction_method": "llm_ifi",
-  "model": "llama-3.3-70b-versatile (groq)",
-  "fields_extracted": 3,
+  "extraction_method": "fallback",
+  "model": "none",
+  "fields_extracted": 2,
   "required_fields_found": {
-    "student_name": true,
+    "student_name": false,
     "school_name": false,
     "grade": false
   },
   "result": {
-    "student_name": "Jordan Altman",
+    "student_name": null,
     "school_name": null,
     "grade": null,
     "teacher_name": null,
@@ -18,14 +18,13 @@
     "email": "jnaltman@cps.edu"
   },
   "ifi_classification": {
-    "doc_type": "IFI_OFFICIAL_FORM_FILLED",
+    "doc_type": "UNKNOWN",
     "is_blank_template": false,
     "language": "English",
     "topic": "Father",
     "is_off_prompt": false,
     "notes": [
-      "No school or grade information present",
-      "No father figure name or type explicitly stated"
+      "Fallback extraction - no LLM available"
     ]
   }
 }

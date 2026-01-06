@@ -35,6 +35,9 @@ from pipeline.database import (
     delete_record as delete_db_record,
     get_stats as get_db_stats
 )
+from pipeline.validate import can_approve_record
+from pipeline.migration import migrate_add_owner_user_id
+from auth.auth_ui import require_auth, show_logout_button
 
 
 def format_review_reasons(reason_codes: str) -> str:
@@ -87,18 +90,58 @@ st.set_page_config(
     layout="wide"
 )
 
+# Inject JavaScript to handle Supabase magic link callback
+# Use immediate execution and sessionStorage as fallback
+st.markdown("""
+<script>
+(function() {
+    'use strict';
+    console.log('[Magic Link Handler] Script loaded, checking URL...');
+    
+    // Check if URL has hash fragment (Supabase magic link callback)
+    if (window.location.hash && window.location.hash.includes('access_token')) {
+        console.log('[Magic Link] Hash detected!');
+        const hash = window.location.hash.substring(1);
+        const params = new URLSearchParams(hash);
+        const accessToken = params.get('access_token');
+        const refreshToken = params.get('refresh_token');
+        const expiresAt = params.get('expires_at');
+        
+        if (accessToken) {
+            console.log('[Magic Link] Token found, redirecting...');
+            // Store in sessionStorage as backup
+            sessionStorage.setItem('supabase_auth_token', accessToken);
+            if (refreshToken) sessionStorage.setItem('supabase_refresh_token', refreshToken);
+            
+            // Redirect with query params
+            const baseUrl = window.location.origin + window.location.pathname;
+            const newUrl = baseUrl + '?access_token=' + encodeURIComponent(accessToken) + 
+                          (refreshToken ? '&refresh_token=' + encodeURIComponent(refreshToken) : '') +
+                          (expiresAt ? '&expires_at=' + encodeURIComponent(expiresAt) : '');
+            console.log('[Magic Link] Redirecting to:', newUrl.substring(0, 80) + '...');
+            window.location.replace(newUrl);
+        }
+    }
+})();
+</script>
+""", unsafe_allow_html=True)
+
 # Ensure required directories exist
 Path("artifacts").mkdir(exist_ok=True)
 Path("outputs").mkdir(exist_ok=True)
 
-# Initialize database
+# Initialize database and run migration
 init_database()
+migrate_add_owner_user_id()
+
+# Require authentication - redirects to login if not authenticated
+user_id = require_auth()
 
 # Title and description
 st.title("📝 IFI Essay Gateway")
 st.caption("Clearing the way so every fatherhood story is heard.")
 st.markdown("""
-Welcome to IFI Essay Gateway. This tool helps volunteers and school partners organize essay entries, so more time can be spent reading students' stories about what their fathers and father‑figures mean to them. It automatically gathers basic information from the official entry forms and sorts essays by grade level, while keeping each student's words exactly as they wrote them.
+Welcome to IFI Essay Gateway. This tool helps teachers organize essay entries, so more time can be spent reading students' stories about what their fathers and father‑figures mean to them. It automatically gathers basic information from the official entry forms and sorts essays by grade level, while keeping each student's words exactly as they wrote them.
 """)
 
 # Processing setup status
@@ -265,7 +308,7 @@ if len(uploaded_files) > 0:
                         )
                         
                         # Save to database
-                        save_record(record, filename=uploaded_file.name)
+                        save_record(record, filename=uploaded_file.name, owner_user_id=user_id)
                         
                         # Store results
                         if upload_mode == "Multiple Entries":
@@ -407,7 +450,7 @@ if hasattr(st.session_state, 'bulk_results') and len(st.session_state.bulk_resul
         st.success(f"✅ {exported_count} record(s) exported to CSV! (Records are also saved in database)")
     
     # Show database statistics
-    db_stats = get_db_stats()
+    db_stats = get_db_stats(owner_user_id=user_id)
     
     st.markdown("**📁 Database Status:**")
     col1, col2, col3 = st.columns(3)
@@ -442,10 +485,8 @@ elif st.session_state.processed_record is not None:
             st.text(f"Location: {record.city_or_location}")
     
     with col2:
-        st.markdown("**📊 Essay Metrics**")
+        st.markdown("**📊 Status**")
         st.text(f"Word Count: {record.word_count}")
-        if record.ocr_confidence_avg:
-            st.text(f"OCR Confidence: {record.ocr_confidence_avg:.2%}")
         
         # Validation status
         if record.needs_review:
@@ -454,66 +495,8 @@ elif st.session_state.processed_record is not None:
         else:
             st.success("✅ Ready for submission")
     
-    # Artifacts info
-    with st.expander("🗂️ Artifact Details"):
-        st.text(f"Artifact Directory: {record.artifact_dir}")
-        st.markdown("**Generated Files:**")
-        artifact_files = [
-            "original.[ext]",
-            "ocr.json",
-            "raw_text.txt",
-            "contact_block.txt",
-            "essay_block.txt",
-            "structured.json",
-            "validation.json"
-        ]
-        for filename in artifact_files:
-            st.text(f"  • {filename}")
-    
-    # Processing report
-    with st.expander("📈 Processing Report"):
-        st.json(report)
-    
-    # Debug: Raw OCR + Artifacts Inspector
-    with st.expander("🔎 Debug: Raw OCR Payload & Artifacts", expanded=False):
-        artifact_path = Path(record.artifact_dir)
-        
-        # OCR JSON
-        ocr_path = artifact_path / "ocr.json"
-        if ocr_path.exists():
-            st.subheader("📄 ocr.json")
-            st.caption("Full OCR output with confidence and line-by-line text")
-            ocr_data = json.loads(ocr_path.read_text(encoding="utf-8"))
-            st.json(ocr_data)
-        
-        # Raw Text
-        raw_path = artifact_path / "raw_text.txt"
-        if raw_path.exists():
-            st.subheader("📝 raw_text.txt")
-            st.caption("Complete OCR text output (what EasyOCR/Google Vision returned)")
-            st.code(raw_path.read_text(encoding="utf-8"), language="text")
-        
-        # Contact Block (after segmentation)
-        contact_path = artifact_path / "contact_block.txt"
-        if contact_path.exists():
-            st.subheader("👤 contact_block.txt")
-            st.caption("Text fed to extraction (after segmentation)")
-            st.code(contact_path.read_text(encoding="utf-8"), language="text")
-        
-        # Essay Block (after segmentation)
-        essay_path = artifact_path / "essay_block.txt"
-        if essay_path.exists():
-            st.subheader("✍️ essay_block.txt")
-            st.caption("Essay text (after segmentation)")
-            st.code(essay_path.read_text(encoding="utf-8"), language="text")
-        
-        # Extraction Debug Report
-        debug_path = artifact_path / "extraction_debug.json"
-        if debug_path.exists():
-            st.subheader("🧠 extraction_debug.json")
-            st.caption("Shows which labels matched, what candidates were considered, and why each field was extracted")
-            debug_data = json.loads(debug_path.read_text(encoding="utf-8"))
-            st.json(debug_data)
+    # Technical details removed from teacher-facing UI
+    # Processing details are logged server-side only
     
     # CSV export section
     st.divider()
@@ -546,15 +529,26 @@ elif st.session_state.processed_record is not None:
         
         with col1:
             if record.needs_review:
+                # Check if record can be approved (has required fields)
+                record_dict = {
+                    "student_name": record.student_name,
+                    "school_name": record.school_name,
+                    "grade": record.grade
+                }
+                can_approve, missing_fields = can_approve_record(record_dict)
+                
                 if st.button("✅ Approve & Move to Clean", type="primary", use_container_width=True):
-                    if update_db_record(record.submission_id, {"needs_review": False}):
+                    if not can_approve:
+                        missing_fields_str = ", ".join(missing_fields).replace("_", " ").title()
+                        st.error(f"❌ Cannot approve: Missing required fields: {missing_fields_str}. Please edit the record to add these fields before approving.")
+                    elif update_db_record(record.submission_id, {"needs_review": False}, owner_user_id=user_id):
                         st.success("✅ Record approved and moved to clean batch!")
                         st.rerun()
                     else:
                         st.error("❌ Failed to move record")
             else:
                 if st.button("⚠️ Send for Review", type="secondary", use_container_width=True):
-                    if update_db_record(record.submission_id, {"needs_review": True}):
+                    if update_db_record(record.submission_id, {"needs_review": True}, owner_user_id=user_id):
                         st.success("⚠️ Record sent for review!")
                         st.rerun()
                     else:
@@ -564,7 +558,7 @@ elif st.session_state.processed_record is not None:
             st.caption("💡 Use these buttons to manually move records between review and approved batches.")
     
     # Show database statistics
-    db_stats = get_db_stats()
+    db_stats = get_db_stats(owner_user_id=user_id)
     
     st.markdown("**📁 Database Status:**")
     col1, col2, col3 = st.columns(3)
@@ -608,10 +602,10 @@ st.session_state.review_mode = review_mode
 
 # Load appropriate records from database
 if review_mode == "Needs Review":
-    records = get_db_records(needs_review=True)
+    records = get_db_records(needs_review=True, owner_user_id=user_id)
     action_label = "Approve"
 else:
-    records = get_db_records(needs_review=False)
+    records = get_db_records(needs_review=False, owner_user_id=user_id)
     action_label = "Send for Review"
 
 # Show count and export button for approved records
@@ -734,11 +728,6 @@ if records:
                         key=f"edit_email_{submission_id}"
                     )
                     st.text(f"Word Count: {record_dict.get('word_count', 0)}")
-                    ocr_conf = record_dict.get('ocr_confidence_avg')
-                    if ocr_conf:
-                        st.text(f"OCR Confidence: {float(ocr_conf):.2%}")
-                    else:
-                        st.text("OCR Confidence: N/A")
                     
                     # Format review reasons nicely
                     review_reasons = record_dict.get("review_reason_codes", "")
@@ -822,7 +811,7 @@ if records:
                             "needs_review": updated_record.needs_review,
                             "review_reason_codes": updated_record.review_reason_codes
                         }
-                        if update_db_record(submission_id, updates):
+                        if update_db_record(submission_id, updates, owner_user_id=user_id):
                             show_notification("Record updated successfully!", "success")
                             st.session_state.editing_record_id = None
                             st.rerun()
@@ -842,7 +831,7 @@ if records:
                         col_yes, col_no = st.columns(2)
                         with col_yes:
                             if st.button("✅ Yes, Delete", key=f"delete_yes_{submission_id}", type="primary"):
-                                if delete_db_record(submission_id):
+                                if delete_db_record(submission_id, owner_user_id=user_id):
                                     show_notification("Record deleted successfully!", "success")
                                     st.session_state.editing_record_id = None
                                     # Clear confirmation state
@@ -869,8 +858,20 @@ if records:
                 
                 with col_action:
                     if review_mode == "Needs Review":
+                        # Check if record can be approved (has required fields)
+                        record_dict_check = {
+                            "student_name": edited_student_name,
+                            "school_name": edited_school_name,
+                            "grade": edited_grade
+                        }
+                        can_approve, missing_fields = can_approve_record(record_dict_check)
+                        
                         if st.button(f"✅ {action_label}", key=f"approve_{submission_id}", type="secondary"):
-                            if update_db_record(submission_id, {"needs_review": False}):
+                            if not can_approve:
+                                missing_fields_str = ", ".join(missing_fields).replace("_", " ").title()
+                                show_notification(f"Cannot approve: Missing required fields: {missing_fields_str}. Please fill in these fields before approving.", "error")
+                                st.rerun()
+                            elif update_db_record(submission_id, {"needs_review": False}, owner_user_id=user_id):
                                 show_notification("Record approved and moved to clean batch!", "success")
                                 st.session_state.editing_record_id = None
                                 st.rerun()
@@ -879,7 +880,7 @@ if records:
                                 st.rerun()
                     else:
                         if st.button(f"⚠️ {action_label}", key=f"review_{submission_id}", type="secondary"):
-                            if update_db_record(submission_id, {"needs_review": True}):
+                            if update_db_record(submission_id, {"needs_review": True}, owner_user_id=user_id):
                                 show_notification("Record sent for review!", "warning")
                                 st.session_state.editing_record_id = None
                                 st.rerun()
@@ -909,11 +910,6 @@ if records:
                     if record_dict.get('email'):
                         st.text(f"Email: {record_dict.get('email')}")
                     st.text(f"Word Count: {record_dict.get('word_count', 0)}")
-                    ocr_conf = record_dict.get('ocr_confidence_avg')
-                    if ocr_conf:
-                        st.text(f"OCR Confidence: {float(ocr_conf):.2%}")
-                    else:
-                        st.text("OCR Confidence: N/A")
                     
                     # Format review reasons nicely
                     review_reasons = record_dict.get("review_reason_codes", "")
@@ -958,8 +954,20 @@ if records:
                 with col2:
                     # Quick action button
                     if review_mode == "Needs Review":
+                        # Check if record can be approved (has required fields)
+                        record_dict_check = {
+                            "student_name": record_dict.get("student_name"),
+                            "school_name": record_dict.get("school_name"),
+                            "grade": record_dict.get("grade")
+                        }
+                        can_approve, missing_fields = can_approve_record(record_dict_check)
+                        
                         if st.button(f"✅ {action_label}", key=f"quick_approve_{submission_id}", type="primary"):
-                            if update_db_record(submission_id, {"needs_review": False}):
+                            if not can_approve:
+                                missing_fields_str = ", ".join(missing_fields).replace("_", " ").title()
+                                show_notification(f"Cannot approve: Missing required fields: {missing_fields_str}. Please edit the record to add these fields.", "error")
+                                st.rerun()
+                            elif update_db_record(submission_id, {"needs_review": False}, owner_user_id=user_id):
                                 show_notification("Record approved!", "success")
                                 st.rerun()
                             else:
@@ -967,7 +975,7 @@ if records:
                                 st.rerun()
                     else:
                         if st.button(f"⚠️ {action_label}", key=f"quick_review_{submission_id}", type="secondary"):
-                            if update_db_record(submission_id, {"needs_review": True}):
+                            if update_db_record(submission_id, {"needs_review": True}, owner_user_id=user_id):
                                 show_notification("Record sent for review!", "warning")
                                 st.rerun()
                             else:
@@ -986,7 +994,7 @@ if records:
                         col_yes, col_no = st.columns(2)
                         with col_yes:
                             if st.button("✅ Delete", key=f"delete_yes_view_{submission_id}", type="primary"):
-                                if delete_db_record(submission_id):
+                                if delete_db_record(submission_id, owner_user_id=user_id):
                                     show_notification("Record deleted successfully!", "success")
                                     # Clear confirmation state
                                     st.session_state[delete_key] = False
@@ -1004,10 +1012,7 @@ if records:
                             st.session_state[delete_key] = True
                             st.rerun()
                 
-                # Show artifact info
-                if record_dict.get("artifact_dir"):
-                    with st.expander("📁 Artifact Details"):
-                        st.text(f"Artifact Directory: {record_dict.get('artifact_dir')}")
+                # Artifact details removed from teacher-facing UI
 
 # Footer
 st.divider()
