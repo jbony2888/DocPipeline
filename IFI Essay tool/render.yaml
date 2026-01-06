@@ -4,9 +4,23 @@ services:
     env: python
     region: oregon
     plan: starter  # $7/month - upgrade to avoid spin-down. Use 'free' for free tier (spins down after 15min idle)
-    buildCommand: pip install -r requirements-docker.txt && mkdir -p artifacts outputs data
-    startCommand: streamlit run app.py --server.port=$PORT --server.address=0.0.0.0 --server.headless=true
+    buildCommand: pip install -r requirements-flask.txt && mkdir -p artifacts outputs data templates static/css static/js
+    startCommand: python flask_app.py
     envVars:
+      # Required: Supabase Configuration
+      - key: SUPABASE_URL
+        sync: false  # Set manually in Render dashboard
+      - key: SUPABASE_ANON_KEY
+        sync: false  # Set manually in Render dashboard
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false  # Set manually in Render dashboard
+      
+      # Required: Flask Configuration
+      - key: FLASK_SECRET_KEY
+        sync: false  # Set manually in Render dashboard (generate with: python -c "import secrets; print(secrets.token_hex(32))")
+      - key: FLASK_PORT
+        value: $PORT  # Render provides this automatically
+      
       # Required: Google Cloud Vision credentials (as JSON string)
       # Set this in Render dashboard: Paste entire service account JSON as a single-line string
       - key: GOOGLE_CLOUD_VISION_CREDENTIALS_JSON
@@ -17,11 +31,7 @@ services:
       - key: GROQ_API_KEY
         sync: false  # Set manually in Render dashboard
       
-      # Streamlit configuration (these are set automatically)
-      - key: STREAMLIT_SERVER_PORT
-        value: $PORT  # Render provides this automatically
-      - key: STREAMLIT_SERVER_ADDRESS
-        value: 0.0.0.0
-      - key: STREAMLIT_SERVER_HEADLESS
-        value: true
+      # Optional: Worker Configuration
+      - key: WORKER_ID
+        value: worker-1
 
