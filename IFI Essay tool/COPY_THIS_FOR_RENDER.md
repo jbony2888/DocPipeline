@@ -12,10 +12,24 @@ To get your credentials:
 5. Download the JSON key file
 6. Copy the **entire JSON content** (everything from `{` to `}`)
 
-**Example format** (this is NOT a real credential):
+**Example format** (⚠️ THIS IS FAKE - DO NOT USE - REPLACE ALL VALUES WITH YOUR ACTUAL CREDENTIALS ⚠️):
 ```
-{"type":"service_account","project_id":"your-project-id","private_key_id":"...","private_key":"-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n","client_email":"your-service-account@your-project.iam.gserviceaccount.com","client_id":"...","auth_uri":"https://accounts.google.com/o/oauth2/auth","token_uri":"https://oauth2.googleapis.com/token","auth_provider_x509_cert_url":"https://www.googleapis.com/oauth2/v1/certs","client_x509_cert_url":"...","universe_domain":"googleapis.com"}
+{
+  "type": "service_account",
+  "project_id": "YOUR-PROJECT-ID-HERE",
+  "private_key_id": "FAKE-KEY-ID-DO-NOT-USE",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nFAKE_PRIVATE_KEY_CONTENT_REPLACE_THIS\n-----END PRIVATE KEY-----\n",
+  "client_email": "your-service-account@YOUR-PROJECT-ID.iam.gserviceaccount.com",
+  "client_id": "123456789012345678901",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/your-service-account%40YOUR-PROJECT-ID.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
+}
 ```
+
+**⚠️ IMPORTANT:** The above is a template/example. Every value marked with "YOUR-", "FAKE-", or placeholder text must be replaced with your actual credentials from Google Cloud Console.
 
 ---
 

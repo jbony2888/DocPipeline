@@ -50,3 +50,6 @@ data/
 # Render helper output (contains formatted credentials)
 render_google_creds.txt
 
+COPY_THIS_EXACT_STRING.txt
+render_google_creds.txt
+*.credentials.json
