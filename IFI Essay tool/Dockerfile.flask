@@ -23,6 +23,7 @@ RUN mkdir -p artifacts outputs data templates static/css static/js
 # Expose Flask port
 EXPOSE 5000
 
-# Run Flask app
-CMD ["python", "flask_app.py"]
+# Run Flask app with Gunicorn (production WSGI server)
+# PORT is set by Render automatically
+CMD gunicorn --bind 0.0.0.0:${PORT:-5000} --workers 2 --threads 2 --timeout 120 flask_app:app
 

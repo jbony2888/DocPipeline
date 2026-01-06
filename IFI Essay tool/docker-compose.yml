@@ -16,7 +16,9 @@ services:
       # Update this path to point to your own Google Cloud service account JSON file
       - ${GOOGLE_CREDENTIALS_PATH:-./credentials.json}:/app/credentials.json:ro
     environment:
-      # Google Cloud Vision credentials
+      # Google Cloud Vision credentials (JSON string - preferred method)
+      - GOOGLE_CLOUD_VISION_CREDENTIALS_JSON=${GOOGLE_CLOUD_VISION_CREDENTIALS_JSON}
+      # Google Cloud Vision credentials (file path - fallback)
       - GOOGLE_APPLICATION_CREDENTIALS=/app/credentials.json
       # Groq API key for LLM extraction (FREE and FAST)
       - GROQ_API_KEY=${GROQ_API_KEY}
@@ -45,7 +47,9 @@ services:
       # Update this path to point to your own Google Cloud service account JSON file
       - ${GOOGLE_CREDENTIALS_PATH:-./credentials.json}:/app/credentials.json:ro
     environment:
-      # Google Cloud Vision credentials
+      # Google Cloud Vision credentials (JSON string - preferred method)
+      - GOOGLE_CLOUD_VISION_CREDENTIALS_JSON=${GOOGLE_CLOUD_VISION_CREDENTIALS_JSON}
+      # Google Cloud Vision credentials (file path - fallback)
       - GOOGLE_APPLICATION_CREDENTIALS=/app/credentials.json
       # Groq API key for LLM extraction (FREE and FAST)
       - GROQ_API_KEY=${GROQ_API_KEY}
