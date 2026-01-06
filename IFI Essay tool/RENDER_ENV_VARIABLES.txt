@@ -1,0 +1,34 @@
+RENDER ENVIRONMENT VARIABLES - COPY THESE VALUES
+==================================================
+
+Go to: https://dashboard.render.com
+Select your service → Environment tab → Add Environment Variable
+
+─────────────────────────────────────────────────────────────────────
+
+VARIABLE 1: Google Cloud Vision Credentials
+─────────────────────────────────────────────────────────────────────
+Key: GOOGLE_CLOUD_VISION_CREDENTIALS_JSON
+
+Value: (Copy the entire JSON string from COPY_THIS_EXACT_STRING.txt)
+       Starts with: {"type":"service_account"
+       Ends with: "universe_domain":"googleapis.com"}
+
+─────────────────────────────────────────────────────────────────────
+
+VARIABLE 2: Groq API Key
+─────────────────────────────────────────────────────────────────────
+Key: GROQ_API_KEY
+
+Value: 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
+
+─────────────────────────────────────────────────────────────────────
+
+QUICK STEPS:
+1. Add Variable 1 (Google Cloud Vision) - paste entire JSON string
+2. Add Variable 2 (Groq API Key) - paste the key above
+3. Save both variables
+4. Redeploy your service
+
+Done! ✅
+

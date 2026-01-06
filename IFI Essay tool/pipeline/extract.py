@@ -6,23 +6,23 @@ and multi-line form layouts gracefully.
 
 import re
 import unicodedata
-from typing import Optional
+from typing import Optional, Union
 
 
 # Bilingual label aliases (English + Spanish)
 STUDENT_NAME_ALIASES = [
-    "student's name", "student name", "students name", "name",
-    "nombre del estudiante", "estudiante", "nombre"
+    "student's name", "student name", "students name", "name", "student:",
+    "nombre del estudiante", "estudiante", "nombre", "nombre:", "estudiante:"
 ]
 
 SCHOOL_ALIASES = [
-    "school", "school name",
-    "escuela"
+    "school", "school name", "school:",
+    "escuela", "escuela:", "nombre de la escuela"
 ]
 
 GRADE_ALIASES = [
-    "grade", "grade level",
-    "grado"
+    "grade", "grade level", "grade:",
+    "grado", "grado:"
 ]
 
 FATHER_FIGURE_ALIASES = [
@@ -202,16 +202,83 @@ def extract_value_near_label(
                     return value
                 
                 # Strategy 2: Value after alias on same line (no colon)
-                # Remove the alias and see if there's a value left
+                # Handle patterns like:
+                # - "Student: Nombre del Estudiante Andrick Vargas-Hernandezade / Grado"
+                # - "Student's Name Jordan Altman"
+                # - "Nombre del Estudiante: Maria Garcia"
+                import re
+                
+                # Try to find the alias (case-insensitive)
+                alias_pattern = re.compile(re.escape(alias), re.IGNORECASE)
+                match = alias_pattern.search(line)
+                
+                if match:
+                    # Extract text after the alias match
+                    start_pos = match.end()
+                    original_after = line[start_pos:].strip()
+                    
+                    # Remove common separators and additional labels
+                    # Handle cases like "Nombre del Estudiante Andrick..." where we need to skip the Spanish label
+                    original_after = original_after.lstrip(':/-').strip()
+                    
+                    # If there's another label after the first one (e.g., "Nombre del Estudiante" after "Student:"),
+                    # skip it and get what comes after
+                    for other_alias in label_aliases:
+                        if other_alias != alias:
+                            other_alias_pattern = re.compile(re.escape(other_alias), re.IGNORECASE)
+                            other_match = other_alias_pattern.search(original_after)
+                            if other_match:
+                                # Skip the second label and get what's after it
+                                original_after = original_after[other_match.end():].strip()
+                                original_after = original_after.lstrip(':/-').strip()
+                                break
+                    
+                    # Remove trailing separators like "/ Grado" or "/ Grade"
+                    # Split by "/" and take the first part (the name)
+                    if '/' in original_after:
+                        parts = original_after.split('/')
+                        original_after = parts[0].strip()
+                    
+                    # Remove common trailing words that aren't part of the name
+                    # Remove words like "Grado", "Grade", etc.
+                    trailing_words = ['grado', 'grade', 'escuela', 'school']
+                    words = original_after.split()
+                    filtered_words = []
+                    for word in words:
+                        word_lower = word.lower().rstrip('.,:;')
+                        if word_lower not in trailing_words:
+                            filtered_words.append(word)
+                        else:
+                            break  # Stop at first trailing word
+                    original_after = ' '.join(filtered_words).strip()
+                    
+                    if original_after and is_valid_value_candidate(original_after, max_length):
+                        return original_after
+                
+                # Fallback: Remove the alias from normalized line and check if value remains
                 line_after_alias = line_norm.replace(alias_norm, '', 1).strip()
                 line_after_alias = line_after_alias.lstrip(':/-').strip()
                 if line_after_alias and is_valid_value_candidate(line_after_alias, max_length):
-                    # Find the corresponding text in original line (preserves case)
-                    # This is approximate but good enough
-                    original_after = line.split(alias, 1)[-1].strip()
-                    original_after = original_after.lstrip(':/-').strip()
-                    if original_after and is_valid_value_candidate(original_after, max_length):
-                        return original_after
+                    # Try to find the original case version by searching for alias variants
+                    for alias_variant in label_aliases:
+                        alias_variant_norm = normalize_text(alias_variant)
+                        if alias_variant_norm in line_norm:
+                            # Find position in normalized line
+                            norm_idx = line_norm.find(alias_variant_norm)
+                            if norm_idx >= 0:
+                                # Try to find corresponding position in original line
+                                # This is approximate but works for most cases
+                                # Find where the alias ends in the original line
+                                # by looking for the alias text (case-insensitive)
+                                variant_pattern = re.compile(re.escape(alias_variant), re.IGNORECASE)
+                                variant_match = variant_pattern.search(line)
+                                if variant_match:
+                                    original_after = line[variant_match.end():].strip()
+                                    original_after = original_after.lstrip(':/-').strip()
+                                    if original_after and is_valid_value_candidate(original_after, max_length):
+                                        return original_after
+                    # Last resort: return normalized version (will be lowercase but better than nothing)
+                    return line_after_alias
                 
                 # Strategy 3: Check previous 1-2 lines for value (form may have value above label)
                 for j in range(1, 3):
@@ -235,26 +302,35 @@ def extract_value_near_label(
     return None
 
 
-def parse_grade(text: Optional[str]) -> Optional[int]:
+def parse_grade(text: Optional[str]) -> Optional[Union[int, str]]:
     """
     Parse grade from text, handling various formats.
     
     Formats supported:
-    - "8", "2"
-    - "2nd", "3rd", "4th"
-    - "2nd grade", "grado 2"
-    - OCR noise like "Grade / Grado 8"
+    - "8", "2" -> integer
+    - "2nd", "3rd", "4th" -> integer
+    - "2nd grade", "grado 2" -> integer
+    - "Kindergarten", "K", "Kinder" -> "K"
+    - OCR noise like "Grade / Grado 8" -> integer
     
     Args:
         text: Text potentially containing grade
         
     Returns:
-        Grade as integer (1-12), or None
+        Grade as integer (1-12), string ("K", "Kindergarten"), or None
     """
     if not text:
         return None
     
     text = text.strip()
+    text_upper = text.upper()
+    
+    # Check for kindergarten variants first
+    kindergarten_variants = ['K', 'KINDER', 'KINDERGARTEN', 'KINDERGARTEN']
+    for variant in kindergarten_variants:
+        if variant in text_upper:
+            # Return "K" as standardized kindergarten value
+            return "K"
     
     # Extract first 1-2 digit number
     numbers = re.findall(r'\b(\d{1,2})\b', text)
@@ -267,10 +343,15 @@ def parse_grade(text: Optional[str]) -> Optional[int]:
         except ValueError:
             continue
     
+    # If no number found but text looks like a grade description, return as-is
+    # This handles cases like "Pre-K", "Pre-Kindergarten", etc.
+    if len(text) < 30 and any(word in text_upper for word in ['GRADE', 'GRADO', 'K', 'PRE']):
+        return text.strip()
+    
     return None
 
 
-def find_grade_fallback(lines: list[str]) -> Optional[int]:
+def find_grade_fallback(lines: list[str]) -> Optional[Union[int, str]]:
     """
     Fallback grade search - look for standalone digit in contact block.
     Searches near grade labels first, then scans entire contact block.
@@ -380,6 +461,14 @@ def extract_fields_rules(contact_block: str, return_debug: bool = False) -> dict
     # Extract grade
     grade_text = extract_value_near_label(lines, GRADE_ALIASES, max_length=30)
     grade = parse_grade(grade_text)
+    
+    # If grade_text contains text like "Kindergarten" but parse_grade didn't catch it,
+    # preserve the original text
+    if grade is None and grade_text:
+        grade_text_upper = grade_text.upper()
+        if any(word in grade_text_upper for word in ["KINDER", "PRE", "GRADE", "K"]):
+            # Keep the original text as grade
+            grade = grade_text.strip()
     
     # Fallback: scan for standalone grade number if not found
     if grade is None:

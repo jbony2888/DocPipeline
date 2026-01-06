@@ -69,17 +69,45 @@ git push -u origin main
 
 ### Step 4: Set Environment Variables
 
-In the Render dashboard, go to **Environment** section and add:
+**Important:** Render uses the dashboard for environment variables, NOT the YAML file directly. The `render.yaml` file is for Infrastructure as Code, but secrets should be set in the dashboard.
 
-#### Required Variables:
+#### Method 1: Use Helper Script (Easiest)
 
-1. **GOOGLE_CLOUD_VISION_CREDENTIALS_JSON**
-   - Value: Your entire Google Cloud service account JSON (as single-line string)
-   - Example: `{"type":"service_account","project_id":"..."}`
+```bash
+# Prepare your Google credentials for Render
+python scripts/prepare_render_env.py /path/to/your/google-credentials.json
+```
 
-2. **GROQ_API_KEY**
-   - Value: Your Groq API key
-   - Example: `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`
+This will:
+- Format your JSON correctly (single-line)
+- Print instructions
+- Save formatted JSON to `render_google_creds.txt` for easy copy/paste
+
+#### Method 2: Manual Setup in Render Dashboard
+
+1. **Go to Render Dashboard**: https://dashboard.render.com
+2. **Select your service**: `ifi-essay-gateway`
+3. **Click**: "Environment" tab
+4. **Click**: "Add Environment Variable" for each:
+
+**Variable 1:**
+   - **Key**: `GOOGLE_CLOUD_VISION_CREDENTIALS_JSON`
+   - **Value**: Your entire Google Cloud JSON as single-line string
+   - **How to format**: 
+     ```bash
+     # Option A: Use the helper script
+     python scripts/prepare_render_env.py your-credentials.json
+     
+     # Option B: Manual (Mac/Linux)
+     cat your-credentials.json | jq -c
+     
+     # Option C: Manual (convert multi-line to single-line)
+     # Remove all newlines, keep \n in private_key values
+     ```
+
+**Variable 2:**
+   - **Key**: `GROQ_API_KEY`
+   - **Value**: `gsk_your_actual_groq_key_here`
 
 #### Optional Variables (Default values will be used if not set):
 

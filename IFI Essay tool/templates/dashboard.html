@@ -1,0 +1,513 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - IFI Essay Gateway{% endblock %}
+
+{% block content %}
+<div class="mb-4">
+    <h1 class="h2">📝 IFI Essay Gateway</h1>
+    <p class="text-muted">Clearing the way so every fatherhood story is heard.</p>
+    <p>Welcome to IFI Essay Gateway. This tool helps teachers organize essay entries, so more time can be spent reading students' stories about what their fathers and father‑figures mean to them. It automatically gathers basic information from the official entry forms and sorts essays by grade level, while keeping each student's words exactly as they wrote them.</p>
+</div>
+
+
+<div class="card">
+    <div class="card-header">
+        <h3 class="h5 mb-0">1️⃣ Upload Entry Forms</h3>
+    </div>
+    <div class="card-body">
+        <form method="POST" action="{{ url_for('upload') }}" enctype="multipart/form-data">
+            <div class="mb-3">
+                <label class="form-label"><strong>📤 Upload Mode:</strong></label>
+                <div class="btn-group w-100" role="group">
+                    <input type="radio" class="btn-check" name="upload_mode" id="single" value="single">
+                    <label class="btn btn-outline-primary" for="single">Single Entry</label>
+                    
+                    <input type="radio" class="btn-check" name="upload_mode" id="multiple" value="multiple" checked>
+                    <label class="btn btn-outline-primary" for="multiple">Multiple Entries</label>
+                </div>
+            </div>
+
+            <div class="mb-3">
+                <label for="files" class="form-label">Choose entry form(s)</label>
+                <input type="file" class="form-control" id="files" name="files" 
+                       accept=".png,.jpg,.jpeg,.pdf" multiple>
+                <div class="form-text">Upload IFI essay contest entry form(s) (PNG, JPG, or PDF)</div>
+            </div>
+            
+            <!-- Selected Files List -->
+            <div id="selectedFilesList" class="mb-3" style="display: none;">
+                <label class="form-label"><strong>Selected Files:</strong></label>
+                <div id="filesList" class="list-group">
+                    <!-- Files will be added here dynamically -->
+                </div>
+            </div>
+
+            <button type="submit" class="btn btn-primary btn-lg" id="processBtn">
+                <i class="bi bi-upload"></i> <span id="btnText">Process Entries</span>
+                <span id="btnSpinner" class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
+            </button>
+        </form>
+        
+        <!-- Loading Overlay -->
+        <div id="loadingOverlay" class="d-none" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 9999; display: flex; align-items: center; justify-content: center;">
+            <div class="card" style="max-width: 600px; margin: 20px; background: white;">
+                <div class="card-body text-center p-5">
+                    <div class="spinner-border text-primary mb-3" role="status" style="width: 3rem; height: 3rem;">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <h5 class="card-title">Processing Submissions</h5>
+                    <p class="card-text" id="loadingMessage">Please wait while we process your files...</p>
+                    <div class="progress mt-3" style="height: 30px;">
+                        <div class="progress-bar progress-bar-striped progress-bar-animated" 
+                             role="progressbar" 
+                             style="width: 0%" 
+                             id="progressBar"
+                             aria-valuenow="0" 
+                             aria-valuemin="0" 
+                             aria-valuemax="100">
+                            <span id="progressText">0%</span>
+                        </div>
+                    </div>
+                    <div class="mt-3">
+                        <small class="text-muted">
+                            <span id="completedCount">0</span> of <span id="totalCount">0</span> files processed
+                        </small>
+                    </div>
+                    <div class="mt-2">
+                        <small class="text-info" id="timeEstimate">Estimating time...</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% if session.upload_results %}
+<div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h3 class="h5 mb-0">📊 Processing Results</h3>
+        <form method="POST" action="{{ url_for('clear_results') }}" style="display: inline;">
+            <button type="submit" class="btn btn-sm btn-outline-secondary">
+                <i class="bi bi-x-circle"></i> Dismiss
+            </button>
+        </form>
+    </div>
+    <div class="card-body">
+        {% for result in session.upload_results %}
+        <div class="alert alert-{{ 'success' if result.status == 'success' else 'danger' }}">
+            <strong>{{ result.filename }}</strong>
+            {% if result.status == 'success' %}
+                <br>✅ Successfully processed (ID: {{ result.submission_id }})
+            {% else %}
+                <br>❌ Error: {{ result.error }}
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+<div class="row">
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-body text-center">
+                <h3 class="h2">{{ db_stats.total_count }}</h3>
+                <p class="text-muted mb-0">Total Records</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-body text-center">
+                <h3 class="h2 text-success">{{ db_stats.clean_count }}</h3>
+                <p class="text-muted mb-0">Clean Records</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-body text-center">
+                <h3 class="h2 text-warning">{{ db_stats.needs_review_count }}</h3>
+                <p class="text-muted mb-0">Needs Review</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="mt-4 text-center text-muted small">
+    <p>💡 IFI Essay Gateway is an internal intake and review assistant that helps manage thousands of student essays submitted each year for the Illinois Fatherhood Initiative's fatherhood essay contest.</p>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const form = document.querySelector('form[action="{{ url_for('upload') }}"]');
+    const processBtn = document.getElementById('processBtn');
+    const btnText = document.getElementById('btnText');
+    const btnSpinner = document.getElementById('btnSpinner');
+    const loadingOverlay = document.getElementById('loadingOverlay');
+    const loadingMessage = document.getElementById('loadingMessage');
+    const progressBar = document.getElementById('progressBar');
+    const progressText = document.getElementById('progressText');
+    const completedCount = document.getElementById('completedCount');
+    const totalCount = document.getElementById('totalCount');
+    const timeEstimate = document.getElementById('timeEstimate');
+    const filesInput = document.getElementById('files');
+    const selectedFilesList = document.getElementById('selectedFilesList');
+    const filesList = document.getElementById('filesList');
+    
+    if (!filesInput) {
+        console.error('File input element not found!');
+    }
+    if (!selectedFilesList) {
+        console.error('Selected files list element not found!');
+    }
+    if (!filesList) {
+        console.error('Files list element not found!');
+    }
+    
+    let pollInterval = null;
+    let startTime = null;
+    let selectedFiles = []; // Array to store File objects
+    
+    // Function to update the selected files display
+    function updateFilesList() {
+        console.log('updateFilesList called. selectedFiles.length:', selectedFiles.length);
+        
+        if (selectedFiles.length === 0) {
+            selectedFilesList.style.display = 'none';
+            filesList.innerHTML = '';
+            processBtn.disabled = true;
+        } else {
+            selectedFilesList.style.display = 'block';
+            filesList.innerHTML = '';
+            processBtn.disabled = false;
+            
+            selectedFiles.forEach((file, index) => {
+                const fileItem = document.createElement('div');
+                fileItem.className = 'list-group-item d-flex justify-content-between align-items-center';
+                
+                // Determine icon based on file extension
+                const ext = file.name.split('.').pop().toLowerCase();
+                let iconClass = 'bi-file-pdf text-danger';
+                if (['png', 'jpg', 'jpeg'].includes(ext)) {
+                    iconClass = 'bi-file-image text-primary';
+                }
+                
+                fileItem.innerHTML = `
+                    <div class="d-flex align-items-center">
+                        <i class="bi ${iconClass} me-2"></i>
+                        <span>${file.name}</span>
+                        <small class="text-muted ms-2">(${(file.size / 1024).toFixed(1)} KB)</small>
+                    </div>
+                    <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeFile(${index})">
+                        <i class="bi bi-x-circle"></i> Remove
+                    </button>
+                `;
+                filesList.appendChild(fileItem);
+            });
+            
+            console.log('Files list updated. Displayed', selectedFiles.length, 'files');
+        }
+    }
+    
+    // Function to remove a file from the selection
+    window.removeFile = function(index) {
+        console.log('Removing file at index:', index);
+        if (index >= 0 && index < selectedFiles.length) {
+            selectedFiles.splice(index, 1);
+            console.log('Remaining files:', selectedFiles.length);
+            updateFilesList();
+        }
+    };
+    
+    // Handle file input change
+    if (filesInput) {
+        filesInput.addEventListener('change', function(e) {
+            console.log('File input change event fired!');
+            console.log('Event target:', e.target);
+            console.log('Files:', e.target.files);
+            console.log('Files length:', e.target.files ? e.target.files.length : 0);
+            
+            if (!e.target.files || e.target.files.length === 0) {
+                console.log('No files selected or user cancelled');
+                return; // User cancelled file selection
+            }
+            
+            const newFiles = Array.from(e.target.files);
+            console.log('New files array:', newFiles);
+            console.log('New files count:', newFiles.length);
+            
+            // Check upload mode - default to 'multiple' if not found
+            const uploadModeRadio = document.querySelector('input[name="upload_mode"]:checked');
+            const uploadMode = uploadModeRadio ? uploadModeRadio.value : 'multiple';
+            console.log('Upload mode:', uploadMode);
+            
+            if (uploadMode === 'single') {
+                // Single mode: replace existing files with the new selection
+                selectedFiles = newFiles.slice(0, 1); // Only take the first file
+                console.log('Single mode: selected', selectedFiles.length, 'file');
+                console.log('Selected file:', selectedFiles[0] ? selectedFiles[0].name : 'none');
+            } else {
+                // Multiple mode: add new files to existing selection (avoid duplicates)
+                let addedCount = 0;
+                newFiles.forEach((newFile, idx) => {
+                    console.log(`Processing file ${idx + 1}:`, newFile.name, newFile.size, 'bytes');
+                    // Check if file already exists (by name and size)
+                    const exists = selectedFiles.some(f => 
+                        f.name === newFile.name && 
+                        f.size === newFile.size &&
+                        f.lastModified === newFile.lastModified
+                    );
+                    if (!exists) {
+                        selectedFiles.push(newFile);
+                        addedCount++;
+                        console.log('Added file:', newFile.name);
+                    } else {
+                        console.log('Skipped duplicate:', newFile.name);
+                    }
+                });
+                console.log('Multiple mode: added', addedCount, 'new files. Total:', selectedFiles.length);
+            }
+            
+            // Clear the file input to allow selecting the same files again if needed
+            // We'll use selectedFiles array for submission, not the input
+            this.value = '';
+            
+            // Update the display
+            console.log('Calling updateFilesList with', selectedFiles.length, 'files');
+            updateFilesList();
+        });
+        
+        console.log('File input change listener attached');
+    } else {
+        console.error('Cannot attach file input listener - filesInput is null');
+    }
+    
+    // Handle upload mode change
+    document.querySelectorAll('input[name="upload_mode"]').forEach(radio => {
+        radio.addEventListener('change', function(e) {
+            const mode = e.target.value;
+            
+            if (mode === 'single' && selectedFiles.length > 1) {
+                // Switch to single mode: keep only the first file
+                selectedFiles = selectedFiles.slice(0, 1);
+                
+                // Update the file input
+                const dataTransfer = new DataTransfer();
+                if (selectedFiles.length > 0) {
+                    dataTransfer.items.add(selectedFiles[0]);
+                }
+                filesInput.files = dataTransfer.files;
+                
+                updateFilesList();
+            }
+            // If switching to multiple mode, no need to change anything
+        });
+    });
+    
+    function formatTime(seconds) {
+        if (seconds < 60) {
+            return `${Math.ceil(seconds)} seconds`;
+        } else {
+            const mins = Math.floor(seconds / 60);
+            const secs = Math.ceil(seconds % 60);
+            return `${mins}m ${secs}s`;
+        }
+    }
+    
+    function pollProgress() {
+        fetch('/api/batch_status')
+            .then(r => r.json())
+            .then(data => {
+                const { total, completed, failed, pending, estimated_remaining_seconds } = data;
+                
+                if (total === 0) {
+                    if (pollInterval) {
+                        clearInterval(pollInterval);
+                        pollInterval = null;
+                    }
+                    return;
+                }
+                
+                // Update counts
+                if (totalCount) totalCount.textContent = total;
+                if (completedCount) completedCount.textContent = completed + failed;
+                
+                // Update progress bar
+                const percent = Math.round(((completed + failed) / total) * 100);
+                if (progressBar) {
+                    progressBar.style.width = percent + '%';
+                    progressBar.setAttribute('aria-valuenow', percent);
+                    if (progressText) progressText.textContent = percent + '%';
+                }
+                
+                // Update message
+                if (pending > 0 && loadingMessage) {
+                    loadingMessage.textContent = `Processing ${pending} file(s) remaining...`;
+                    if (timeEstimate) {
+                        timeEstimate.textContent = `Estimated time remaining: ${formatTime(estimated_remaining_seconds)}`;
+                    }
+                } else if (loadingMessage && (completed + failed) === total && total > 0) {
+                    // All jobs completed
+                    loadingMessage.textContent = `Processing complete! ${completed} succeeded, ${failed} failed.`;
+                    if (timeEstimate) timeEstimate.textContent = '';
+                    
+                    if (pollInterval) {
+                        clearInterval(pollInterval);
+                        pollInterval = null;
+                    }
+                    
+                    // Show success notification immediately
+                    const message = failed > 0 
+                        ? `✅ Processing complete! ${completed} succeeded, ${failed} failed.`
+                        : `✅ Successfully processed ${completed} file(s)!`;
+                    
+                    // Show notification
+                    if (typeof showToastModal === 'function') {
+                        showToastModal(message, 'success', false); // Don't auto-hide so user can see it
+                    } else {
+                        console.log('Notification:', message);
+                    }
+                    
+                    // Hide loading overlay after a short delay
+                    setTimeout(() => {
+                        if (loadingOverlay) {
+                            loadingOverlay.classList.add('d-none');
+                            loadingOverlay.style.display = 'none';
+                        }
+                        
+                        // Clear selected files
+                        selectedFiles = [];
+                        updateFilesList();
+                        if (filesInput) filesInput.value = '';
+                        
+                        // Re-enable button
+                        if (processBtn) {
+                            processBtn.disabled = false;
+                            if (btnText) btnText.textContent = 'Process Entries';
+                            if (btnSpinner) btnSpinner.classList.add('d-none');
+                        }
+                        
+                        // Clear session job tracking
+                        fetch('/api/clear_jobs', { method: 'POST' })
+                            .catch(err => console.error('Error clearing jobs:', err));
+                    }, 2000);
+                }
+            })
+            .catch(error => {
+                console.error('Error polling progress:', error);
+            });
+    }
+    
+    // Initialize: check if file input has files on page load
+    // Reset selectedFiles on page load to start fresh
+    selectedFiles = [];
+    updateFilesList();
+    
+    // Ensure multiple mode is the default
+    const multipleRadio = document.getElementById('multiple');
+    if (multipleRadio && !multipleRadio.checked) {
+        multipleRadio.checked = true;
+    }
+    
+    if (form) {
+        form.addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            if (selectedFiles.length === 0) {
+                showToastModal('Please select at least one file to upload', 'error');
+                return;
+            }
+            
+            // Disable button and show spinner
+            processBtn.disabled = true;
+            btnText.textContent = 'Uploading...';
+            btnSpinner.classList.remove('d-none');
+            
+            // Show loading overlay
+            loadingOverlay.classList.remove('d-none');
+            loadingOverlay.style.display = 'flex';
+            startTime = Date.now();
+            
+            // Create FormData with selected files
+            const formData = new FormData();
+            const uploadMode = document.querySelector('input[name="upload_mode"]:checked')?.value || 'multiple';
+            formData.append('upload_mode', uploadMode);
+            
+            // Add all selected files
+            selectedFiles.forEach(file => {
+                formData.append('files', file);
+            });
+            
+            console.log(`Uploading ${selectedFiles.length} file(s) in ${uploadMode} mode`);
+            
+            // Submit via AJAX
+            fetch('{{ url_for("upload") }}', {
+                method: 'POST',
+                body: formData
+            })
+            .then(r => {
+                if (!r.ok) {
+                    return r.json().then(data => {
+                        throw new Error(data.error || `HTTP ${r.status}: ${r.statusText}`);
+                    });
+                }
+                return r.json();
+            })
+            .then(data => {
+                if (data.success) {
+                    // Update UI
+                    if (totalCount) totalCount.textContent = data.total;
+                    if (completedCount) completedCount.textContent = '0';
+                    if (loadingMessage) loadingMessage.textContent = `Processing ${data.total} file(s)...`;
+                    if (progressBar) {
+                        progressBar.style.width = '0%';
+                        if (progressText) progressText.textContent = '0%';
+                    }
+                    
+                    // Show warnings if some files failed
+                    if (data.errors && data.errors.length > 0) {
+                        console.warn('Some files failed to enqueue:', data.errors);
+                    }
+                    
+                    // Start polling for progress
+                    pollProgress();
+                    pollInterval = setInterval(pollProgress, 2000);
+                } else {
+                    showToastModal('Error: ' + (data.error || 'Failed to start processing'), 'error');
+                    loadingOverlay.classList.add('d-none');
+                    processBtn.disabled = false;
+                    btnText.textContent = 'Process Entries';
+                    btnSpinner.classList.add('d-none');
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                showToastModal('Error uploading files: ' + error.message, 'error');
+                loadingOverlay.classList.add('d-none');
+                processBtn.disabled = false;
+                btnText.textContent = 'Process Entries';
+                btnSpinner.classList.add('d-none');
+            });
+        });
+    }
+    
+    // Check if there are jobs in progress on page load
+    pollProgress();
+    pollInterval = setInterval(pollProgress, 2000);
+    
+    // Hide loading overlay if page loads with results (means processing completed)
+    {% if session.upload_results %}
+    if (loadingOverlay) {
+        loadingOverlay.classList.add('d-none');
+    }
+    if (pollInterval) {
+        clearInterval(pollInterval);
+    }
+    {% endif %}
+});
+</script>
+{% endblock %}
+

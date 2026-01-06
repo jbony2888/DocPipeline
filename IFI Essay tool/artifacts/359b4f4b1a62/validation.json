@@ -2,8 +2,9 @@
   "is_valid": false,
   "needs_review": true,
   "issues": [
+    "MISSING_STUDENT_NAME",
     "MISSING_SCHOOL_NAME",
     "MISSING_GRADE"
   ],
-  "review_reason_codes": "MISSING_SCHOOL_NAME;MISSING_GRADE"
+  "review_reason_codes": "MISSING_STUDENT_NAME;MISSING_SCHOOL_NAME;MISSING_GRADE"
 }

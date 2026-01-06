@@ -19,6 +19,9 @@ credentials/
 .env
 *.pem
 *.key
+env.yaml
+.env.local
+.env.production
 
 # IDE
 .vscode/
@@ -33,4 +36,14 @@ Thumbs.db
 
 # Keep .streamlit/ config for deployment
 !.streamlit/config.toml
+
+# Streamlit Cloud - don't commit secrets
+.streamlit/secrets.toml
+
+# Data directories (will recreate on deployment)
+data/
+*.db
+
+# Render helper output (contains formatted credentials)
+render_google_creds.txt
 

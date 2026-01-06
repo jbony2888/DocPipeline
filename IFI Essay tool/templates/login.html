@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+
+{% block title %}Login - IFI Essay Gateway{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="row justify-content-center">
+        <div class="col-md-6 col-lg-5">
+            <div class="card">
+                <div class="card-body p-5">
+                    <div class="text-center mb-4">
+                        <h1 class="h3 mb-3">🔐 IFI Essay Gateway</h1>
+                        <p class="text-muted">Sign in with a secure link sent to your email</p>
+                    </div>
+
+                    {% if email_sent %}
+                    <div class="alert alert-success">
+                        <h5 class="alert-heading">✅ Login link sent!</h5>
+                        <p>Check your email at <strong>{{ email }}</strong> and click the secure login link.</p>
+                        <hr>
+                        <p class="mb-0 small">
+                            <strong>First time?</strong> Your account will be created automatically when you click the link.<br>
+                            <strong>Didn't receive the email?</strong> Check your spam folder or wait a few minutes.
+                        </p>
+                    </div>
+                    {% else %}
+                    <div class="alert alert-info">
+                        <i class="bi bi-info-circle"></i> <strong>No password needed!</strong> Enter your email address below. We'll send you a secure login link.
+                    </div>
+
+                    <form method="POST" action="{{ url_for('login') }}">
+                        <div class="mb-3">
+                            <label for="email" class="form-label">📧 Email Address</label>
+                            <input type="email" class="form-control form-control-lg" id="email" name="email" 
+                                   placeholder="your.email@example.com" required autofocus>
+                            <div class="form-text">Enter your email address to receive a secure login link</div>
+                        </div>
+                        <button type="submit" class="btn btn-primary btn-lg w-100">
+                            <i class="bi bi-envelope"></i> Send Login Link
+                        </button>
+                    </form>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+

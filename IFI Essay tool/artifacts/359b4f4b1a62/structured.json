@@ -1,5 +1,5 @@
 {
-  "student_name": "Jordan Altman",
+  "student_name": null,
   "school_name": null,
   "grade": null,
   "teacher_name": null,
@@ -8,27 +8,26 @@
   "phone": "7732510354",
   "email": "jnaltman@cps.edu",
   "_ifi_metadata": {
-    "doc_type": "IFI_OFFICIAL_FORM_FILLED",
+    "doc_type": "UNKNOWN",
     "is_blank_template": false,
     "language": "English",
-    "student_name": "Jordan Altman",
+    "student_name": null,
     "school_name": null,
     "grade": null,
     "father_figure_name": null,
     "father_figure_type": null,
-    "essay_text": "My father is special to me. He is caring, helpful, supportive, inspirational, and much more. He never gives up on his dreams and inspires me to keep moving forward. He always finds a way to solve problems and never gives up. I don't know what I would do without him. One thing that really inspires me about him is how hard he works. He always works towards his dreams and goals. He almost never misses a day of work and is always on time. He doesn't slack off or play around, and is always serious about his job. He works at night, and even day sometimes. He works hard to support his family, and is always supportive. He is also a very caring person. He always cares for others, even if he doesn't know them. Whenever someone is down, he always tries to cheer them up. He cares for the physical, and mental well being of others. I can always rely on him when I need help or I am down. My father is always there for me. whether it be something serious or a little as help with homework. I can always count on him when I need help. If I need him to fix something, he is there to help me. He is always there for me and helpful. In conclusion, my father is who inspires me in life. He is always there for me and my family. He works hard to take care of us, and doesn't fail to make me happy. I can always rely on him when I need him. I don't know what I would do without him.",
-    "parent_reaction_text": "I am very proud of my sons work, and can't wait to see what he will make in the future.",
+    "essay_text": "Illinois\nFatherhood 2022 IFI Fatherhood Essay Contest\nInitiative\nJordan Altman\nStudent's Name\n\"What My Father or an Important Father-Figure* Means to Me\"\nMy father is special to me. He is caring, helpful, supportive, inspirational, and much more. He never\ngives up on his dreams and inspires me to keep moving forward. He always finds a way to solve\nproblems and never gives up. I don't know what I would do without him.\nOne thing that really inspires me about him is how hard he works. He always works towards his\ndreams and goals. He almost never misses a day of work and is always on time. He doesn't slack off\nor play around, and is always serious about his job. He works at night, and even day sometimes. He\nworks hard to support his family, and is always supportive.\nHe is also a very caring person. He always cares for others, even if he doesn't know them.\nWhenever someone is down, he always tries to cheer them up. He cares for the physical, and mental\nwell being of others. I can always rely on him when I need help or I am down.\nMy father is always there for me. whether it be something serious or a little as help with homework. I\ncan always count on him when I need help. If I need him to fix something, he is there to help me. He is\nalways there for me and helpful.\nIn conclusion, my father is who inspires me in life. He is always there for me and my family.\nHe works hard to take care of us, and doesn't fail to make me happy. I can always rely on him when I\nneed him. I don't know what I would do without him.\nFather/Father-Figure reaction to this essay:\nI am very proud of my sons work, and can't wait to see what he will make in the future.\n3000 Character Maximum\n2000 Character Maximum\nBy providing a response and your email, IFI can provide information about various activities and resources.\nFather/Father-Figure Name\nEmail jnaltman@cps.edu\nPhone: 7732510354\n*A Father-Figure can be a stepdad, grandfather, uncle, pastor, or coach. Can even be a mom, stepmom, grandmother, or aunt if there are no influential males in your life.",
+    "parent_reaction_text": null,
     "topic": "Father",
     "is_off_prompt": false,
     "notes": [
-      "No school or grade information present",
-      "No father figure name or type explicitly stated"
+      "Fallback extraction - no LLM available"
     ],
-    "extraction_method": "llm_ifi",
-    "model": "llama-3.3-70b-versatile (groq)"
+    "extraction_method": "fallback",
+    "model": "none"
   },
-  "word_count": 274,
-  "char_count": 1372,
+  "word_count": 378,
+  "char_count": 2050,
   "paragraph_count": 1,
   "essay_source": "llm_extraction"
 }
