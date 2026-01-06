@@ -28,7 +28,8 @@ from pipeline.supabase_db import (
     get_stats as get_db_stats
 )
 from pipeline.validate import can_approve_record
-from pipeline.batch_defaults import create_upload_batch, get_batch_with_submissions, apply_batch_defaults
+# Removed batch_defaults - using simple bulk edit instead
+# from pipeline.batch_defaults import create_upload_batch, get_batch_with_submissions, apply_batch_defaults
 from auth.supabase_client import get_supabase_client, get_user_id
 from jobs.pg_queue import enqueue_submission, get_job_status, get_queue_status
 from supabase import create_client
@@ -302,11 +303,6 @@ def upload():
     if not files or files[0].filename == "":
         return jsonify({"success": False, "error": "Please select at least one file"}), 400
     
-    # Create an upload batch for this upload session
-    upload_batch_id = create_upload_batch(owner_user_id=user_id, access_token=access_token)
-    if not upload_batch_id:
-        return jsonify({"success": False, "error": "Failed to create upload batch"}), 500
-    
     ocr_provider = "google"
     job_ids = []
     errors = []
@@ -321,8 +317,7 @@ def upload():
                     filename=file.filename,
                     owner_user_id=user_id,
                     access_token=access_token,
-                    ocr_provider=ocr_provider,
-                    upload_batch_id=upload_batch_id  # Pass batch ID to job
+                    ocr_provider=ocr_provider
                 )
                 job_ids.append({
                     "filename": file.filename,
@@ -340,16 +335,14 @@ def upload():
             "error": "Failed to enqueue any files. " + ("Errors: " + "; ".join(errors) if errors else "Check connection.")
         }), 500
     
-    # Store job IDs and batch ID in session for progress tracking
+    # Store job IDs in session for progress tracking
     session["processing_jobs"] = job_ids
-    session["upload_batch_id"] = upload_batch_id  # Store batch ID for later use
     session["total_files"] = len(job_ids)
     session["processed_count"] = 0
     
     return jsonify({
         "success": True,
         "job_ids": job_ids,
-        "upload_batch_id": upload_batch_id,  # Return batch ID to frontend
         "total": len(job_ids),
         "errors": errors if errors else None
     })
