@@ -211,3 +211,5 @@ Once authentication is working:
 3. Test logout functionality
 4. Test session persistence (refresh page, should stay logged in)
 
+
+

@@ -287,3 +287,5 @@ Use this checklist to verify Scope 1 functionality:
 - **Manual Review Required**: All records require manual review and approval before being marked as "clean"
 - **Deterministic Processing**: Re-processing the same file will generate the same submission_id and reuse the same artifact directory
 
+
+

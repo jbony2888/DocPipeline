@@ -154,3 +154,5 @@ Technical details are still:
 - Database still stores all technical data (for support/debugging)
 - Server-side logging unchanged (technical details logged but not displayed)
 
+
+

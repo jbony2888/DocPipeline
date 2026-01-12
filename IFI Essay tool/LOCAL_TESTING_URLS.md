@@ -122,3 +122,5 @@ http://localhost:5000
 - Verify you're authenticated (check session)
 - Check Supabase logs for RLS policy violations
 
+
+

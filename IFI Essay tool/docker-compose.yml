@@ -25,6 +25,8 @@ services:
       # Supabase Authentication
       - SUPABASE_URL=${SUPABASE_URL}
       - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+      # Supabase Service Role Key (required for job enqueueing to bypass RLS)
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
       # Flask configuration
       - FLASK_SECRET_KEY=${FLASK_SECRET_KEY:-change-me-in-production}
       - FLASK_PORT=5000

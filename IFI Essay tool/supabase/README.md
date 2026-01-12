@@ -143,3 +143,5 @@ After setting up the database:
   3. Import into Supabase PostgreSQL
   4. Update application code to use Supabase client instead of SQLite
 
+
+

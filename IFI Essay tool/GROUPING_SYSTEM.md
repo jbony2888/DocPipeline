@@ -146,3 +146,5 @@ python tests/test_grouping.py
 - ✅ **Case-Insensitive**: Handles variations in school name capitalization
 - ✅ **Computed at Read-Time**: No need for separate batch tables
 
+
+

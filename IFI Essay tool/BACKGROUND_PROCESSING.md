@@ -115,3 +115,5 @@ print(f"Queue length: {len(job_queue)}")
 - Verify `/api/batch_status` endpoint returns data
 - Check session has `processing_jobs` stored
 
+
+

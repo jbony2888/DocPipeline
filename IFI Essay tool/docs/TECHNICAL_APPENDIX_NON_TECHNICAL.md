@@ -128,3 +128,5 @@ The IFI Essay Gateway uses AI to assist in processing handwritten essay submissi
 **Audience:** Non-technical stakeholders, funders, board members  
 **Related:** See `CONFIDENCE_SCORE_EXPLANATION.md` for technical details
 
+
+

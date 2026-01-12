@@ -159,3 +159,5 @@ Update your `docker-compose.yml` or `.env` file with the new credentials.
 - Removing from git history is important to prevent anyone from finding the old key
 - After force pushing, consider notifying collaborators about the history rewrite
 
+
+

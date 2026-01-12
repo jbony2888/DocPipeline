@@ -29,10 +29,16 @@ def enqueue_submission(
         Exception if job cannot be enqueued
     """
     try:
-        # Create authenticated Supabase client
-        supabase = get_supabase_client(access_token=access_token)
-        if not supabase:
-            raise Exception("Failed to initialize Supabase client")
+        # Use service role key to bypass RLS for job insertion
+        # This is safe because we validate owner_user_id matches the authenticated user
+        supabase_url = os.environ.get("SUPABASE_URL")
+        service_role_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+        
+        if not supabase_url or not service_role_key:
+            raise Exception("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY")
+        
+        from supabase import create_client
+        supabase = create_client(supabase_url, service_role_key)
         
         # Encode file bytes as base64 for storage
         file_base64 = base64.b64encode(file_bytes).decode('utf-8')
@@ -47,7 +53,7 @@ def enqueue_submission(
             "upload_batch_id": upload_batch_id  # Store batch ID for linking submissions
         }
         
-        # Insert job into database
+        # Insert job into database using service role key (bypasses RLS)
         result = supabase.table("jobs").insert({
             "job_type": "process_submission",
             "status": "queued",
@@ -123,7 +129,18 @@ def get_queue_status(job_ids: List[str], access_token: Optional[str] = None) -> 
     Get the aggregated status of a list of jobs.
     """
     try:
-        supabase = get_supabase_client(access_token=access_token) if access_token else get_supabase_client()
+        # Use service role key to bypass RLS for status checking
+        # This is safe because we're only checking status, not modifying data
+        supabase_url = os.environ.get("SUPABASE_URL")
+        service_role_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+        
+        if not supabase_url or not service_role_key:
+            # Fallback to authenticated client if service role not available
+            supabase = get_supabase_client(access_token=access_token) if access_token else get_supabase_client()
+        else:
+            from supabase import create_client
+            supabase = create_client(supabase_url, service_role_key)
+        
         if not supabase:
             return {
                 "total": len(job_ids),

@@ -317,8 +317,11 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
     
+    // Track if we've already shown success for current batch
+    let successShownForBatch = false;
+    
     function pollProgress() {
-        fetch('/api/batch_status')
+        return fetch('/api/batch_status')
             .then(r => r.json())
             .then(data => {
                 const { total, completed, failed, pending, estimated_remaining_seconds } = data;
@@ -359,16 +362,21 @@ document.addEventListener('DOMContentLoaded', function() {
                         pollInterval = null;
                     }
                     
-                    // Show success notification immediately
-                    const message = failed > 0 
-                        ? `✅ Processing complete! ${completed} succeeded, ${failed} failed.`
-                        : `✅ Successfully processed ${completed} file(s)!`;
-                    
-                    // Show notification
-                    if (typeof showToastModal === 'function') {
-                        showToastModal(message, 'success', false); // Don't auto-hide so user can see it
-                    } else {
-                        console.log('Notification:', message);
+                    // Only show success notification if we haven't shown it for this batch yet
+                    if (!successShownForBatch) {
+                        successShownForBatch = true;
+                        
+                        // Show success notification immediately
+                        const message = failed > 0 
+                            ? `✅ Processing complete! ${completed} succeeded, ${failed} failed.`
+                            : `✅ Successfully processed ${completed} file(s)!`;
+                        
+                        // Show notification
+                        if (typeof showToastModal === 'function') {
+                            showToastModal(message, 'success', false); // Don't auto-hide so user can see it
+                        } else {
+                            console.log('Notification:', message);
+                        }
                     }
                     
                     // Hide loading overlay after a short delay
@@ -393,6 +401,11 @@ document.addEventListener('DOMContentLoaded', function() {
                         // Clear session job tracking
                         fetch('/api/clear_jobs', { method: 'POST' })
                             .catch(err => console.error('Error clearing jobs:', err));
+                        
+                        // Redirect to review page after processing completes
+                        setTimeout(() => {
+                            window.location.href = '/review?mode=needs_review';
+                        }, 1500); // Give user time to see the success message
                     }, 2000);
                 }
             })
@@ -472,6 +485,12 @@ document.addEventListener('DOMContentLoaded', function() {
                         console.warn('Some files failed to enqueue:', data.errors);
                     }
                     
+                    // Reset success flag for new batch
+                    successShownForBatch = false;
+                    
+                    // Reset success flag for new batch
+                    successShownForBatch = false;
+                    
                     // Start polling for progress
                     pollProgress();
                     pollInterval = setInterval(pollProgress, 2000);
@@ -494,9 +513,25 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
     
-    // Check if there are jobs in progress on page load
-    pollProgress();
-    pollInterval = setInterval(pollProgress, 2000);
+    // Clear old completed jobs on page load to prevent showing old success modals
+    fetch('/api/batch_status')
+        .then(r => r.json())
+        .then(data => {
+            const { total, pending, in_progress, completed, failed } = data;
+            // If there are jobs but they're all completed, clear them immediately
+            if (total > 0 && (completed + failed) === total && (pending === 0 && in_progress === 0)) {
+                fetch('/api/clear_jobs', { method: 'POST' })
+                    .catch(err => console.error('Error clearing old jobs:', err));
+            } else if (total > 0 && (pending > 0 || in_progress > 0)) {
+                // Only start polling if there are active jobs
+                pollProgress();
+                pollInterval = setInterval(pollProgress, 2000);
+            }
+        })
+        .catch(err => {
+            // If error, don't start polling
+            console.log('No active jobs to poll');
+        });
     
     // Hide loading overlay if page loads with results (means processing completed)
     {% if session.upload_results %}

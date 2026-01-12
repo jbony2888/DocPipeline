@@ -13,6 +13,13 @@ import csv
 import re
 from typing import Optional, List, Dict, Any
 
+# Load environment variables from .env file (for local development)
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # dotenv not installed, assume env vars are set another way
+
 from pipeline.supabase_storage import ingest_upload_supabase, get_file_url, download_file, BUCKET_NAME
 from pipeline.runner import process_submission
 from pipeline.csv_writer import append_to_csv
@@ -506,6 +513,7 @@ def record_detail(submission_id):
         
         # Auto-reassignment: If record now has school_name and grade, check if it can be auto-approved
         # This happens when a record that was missing school/grade gets those fields filled in
+        auto_approve = False
         if updates.get("school_name") and updates.get("grade"):
             # Check if record can now be approved (has all required fields)
             can_approve, missing_fields = can_approve_record({
@@ -517,14 +525,17 @@ def record_detail(submission_id):
             # If record was in needs_review and now has all required fields, auto-approve it
             if can_approve and record.get("needs_review", True):
                 updates["needs_review"] = False
-                flash("✅ Record updated and automatically moved to approved batch!", "success")
+                auto_approve = True
             elif not can_approve:
                 # Still missing fields, keep in needs_review
                 updates["needs_review"] = True
         
         access_token = session.get("supabase_access_token")
         if update_db_record(submission_id, updates, owner_user_id=user_id, access_token=access_token):
-            if "needs_review" not in updates:  # Only show this if we didn't auto-approve
+            # Only show success message after update succeeds
+            if auto_approve:
+                flash("✅ Record updated and automatically moved to approved batch!", "success")
+            else:
                 flash("✅ Record updated successfully!", "success")
         else:
             flash("❌ Failed to update record.", "error")
@@ -955,8 +966,33 @@ def batch_status():
     if not require_auth():
         return jsonify({"error": "Unauthorized"}), 401
     
+    user_id = session.get("user_id")
     job_ids_in_session = session.get("processing_jobs", [])
-    if not job_ids_in_session:
+    
+    # Extract job IDs from session
+    job_ids = [job_info.get("job_id") for job_info in job_ids_in_session if job_info.get("job_id")]
+    
+    # If no job IDs in session, try to get recent jobs for this user from database
+    if not job_ids and user_id:
+        try:
+            from supabase import create_client
+            supabase_url = os.environ.get("SUPABASE_URL")
+            service_role_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+            if supabase_url and service_role_key:
+                supabase = create_client(supabase_url, service_role_key)
+                # Get recent jobs for this user (last 10, ordered by created_at desc)
+                result = supabase.table("jobs").select("id, status, created_at, job_data").order("created_at", desc=True).limit(10).execute()
+                if result.data:
+                    # Filter jobs for this user and get IDs
+                    user_jobs = [job for job in result.data if job.get("job_data", {}).get("owner_user_id") == user_id]
+                    job_ids = [job["id"] for job in user_jobs[:5]]  # Get up to 5 most recent
+                    # Update session with found job IDs
+                    if job_ids:
+                        session["processing_jobs"] = [{"job_id": jid} for jid in job_ids]
+        except Exception as e:
+            print(f"Error fetching jobs from database: {e}")
+    
+    if not job_ids:
         return jsonify({
             "total": 0,
             "completed": 0,
@@ -966,23 +1002,11 @@ def batch_status():
             "estimated_remaining_seconds": 0
         })
     
-    # Extract job IDs
-    job_ids = [job_info.get("job_id") for job_info in job_ids_in_session if job_info.get("job_id")]
-    
     # Get aggregated status using PostgreSQL queue
     access_token = session.get("supabase_access_token")
     status = get_queue_status(job_ids, access_token=access_token)
     
     return jsonify(status)
-    
-    return jsonify({
-        "total": total,
-        "completed": completed,
-        "failed": failed,
-        "pending": pending,
-        "estimated_remaining_seconds": estimated_remaining,
-        "jobs": jobs_status
-    })
 
 
 if __name__ == "__main__":

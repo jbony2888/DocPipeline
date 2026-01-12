@@ -12,3 +12,5 @@ google-auth
 python-dotenv
 PyMuPDF
 flask-cors
+pytest
+pytest-mock

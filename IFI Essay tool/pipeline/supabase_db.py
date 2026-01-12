@@ -151,15 +151,19 @@ def get_record_by_id(submission_id: str, owner_user_id: Optional[str] = None, ac
 def update_record(submission_id: str, updates: Dict, owner_user_id: Optional[str] = None, access_token: Optional[str] = None) -> bool:
     """Update a submission record."""
     try:
-        # Use authenticated client if access_token provided (required for RLS)
-        supabase = get_supabase_client(access_token=access_token) if access_token else get_supabase_client()
+        # Get Supabase client (always uses anon key as base)
+        supabase = get_supabase_client()
+        
+        if not supabase:
+            print("❌ Error: Could not initialize Supabase client")
+            return False
         
         # Set authenticated session if access token provided (required for RLS)
         if access_token:
             try:
                 supabase.auth.set_session(
                     access_token=access_token,
-                    refresh_token=""
+                    refresh_token=""  # Refresh token not needed for database operations
                 )
             except Exception as e:
                 print(f"⚠️ Warning: Could not set session: {e}")
@@ -173,7 +177,13 @@ def update_record(submission_id: str, updates: Dict, owner_user_id: Optional[str
             query = query.eq("owner_user_id", owner_user_id)
         
         result = query.execute()
-        return True
+        
+        if result.data:
+            print(f"✅ Updated record {submission_id} in Supabase")
+            return True
+        else:
+            print(f"⚠️ Warning: Update query returned no data for {submission_id}")
+            return False
     except Exception as e:
         print(f"❌ Error updating record in Supabase: {e}")
         import traceback

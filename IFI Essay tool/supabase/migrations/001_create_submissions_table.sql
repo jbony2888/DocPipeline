@@ -86,3 +86,5 @@ GRANT ALL ON public.submissions TO authenticated;
 -- Add comment to table
 COMMENT ON TABLE public.submissions IS 'Stores essay submission records, scoped to individual teachers via owner_user_id';
 
+
+

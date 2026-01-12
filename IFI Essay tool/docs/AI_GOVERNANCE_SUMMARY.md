@@ -129,3 +129,5 @@ The IFI Essay Gateway uses AI technology (OCR and LLM) to extract information fr
 **For Questions:** Contact technical administrator  
 **Related Documents:** `CONFIDENCE_SCORE_EXPLANATION.md` (technical details)
 
+
+

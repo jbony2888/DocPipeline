@@ -108,3 +108,5 @@ If you prefer to manually create users instead of auto-registration:
 
 **Note**: If you disable auto-signup, users will see an error when trying to use magic links without an existing account.
 
+
+

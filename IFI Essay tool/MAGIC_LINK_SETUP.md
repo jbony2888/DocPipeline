@@ -82,3 +82,5 @@ You can customize the magic link email template:
 - Links contain secure tokens that are validated by Supabase
 - Sessions are managed securely by Supabase Auth
 
+
+
