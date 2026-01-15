@@ -38,7 +38,7 @@ from pipeline.validate import can_approve_record
 # Removed batch_defaults - using simple bulk edit instead
 # from pipeline.batch_defaults import create_upload_batch, get_batch_with_submissions, apply_batch_defaults
 from auth.supabase_client import get_supabase_client, get_user_id
-from jobs.pg_queue import enqueue_submission, get_job_status, get_queue_status
+from jobs.queue import enqueue_submission, get_job_status, get_queue_status
 from supabase import create_client
 
 app = Flask(__name__)
@@ -899,9 +899,30 @@ def serve_pdf(file_path):
     return f"File not found: {file_path}", 404
 
 
+@app.route("/jobs/<job_id>")
+def job_detail(job_id):
+    """View job status page."""
+    if not require_auth():
+        return redirect(url_for("login"))
+    
+    access_token = session.get("supabase_access_token")
+    user_id = session.get("user_id")
+    
+    # Get job status
+    status = get_job_status(job_id, access_token=access_token)
+    
+    # Verify user owns this job (if possible to check)
+    # RQ doesn't store user_id in job metadata easily, so we'll allow access
+    # In production, you might want to store user_id in job metadata
+    
+    return render_template("job_status.html",
+                         job_id=job_id,
+                         job_status=status)
+
+
 @app.route("/api/job_status/<job_id>")
 def job_status(job_id):
-    """Get the status of a processing job."""
+    """Get the status of a processing job (API endpoint)."""
     if not require_auth():
         return jsonify({"error": "Unauthorized"}), 401
     
@@ -962,36 +983,17 @@ def apply_defaults(upload_batch_id: str):
 
 @app.route("/api/batch_status")
 def batch_status():
-    """Get status of all jobs in current batch."""
+    """Get status of all jobs in current batch using Redis/RQ."""
     if not require_auth():
         return jsonify({"error": "Unauthorized"}), 401
     
     user_id = session.get("user_id")
     job_ids_in_session = session.get("processing_jobs", [])
     
-    # Extract job IDs from session
+    # Extract job IDs from session (from Redis/RQ)
     job_ids = [job_info.get("job_id") for job_info in job_ids_in_session if job_info.get("job_id")]
     
-    # If no job IDs in session, try to get recent jobs for this user from database
-    if not job_ids and user_id:
-        try:
-            from supabase import create_client
-            supabase_url = os.environ.get("SUPABASE_URL")
-            service_role_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
-            if supabase_url and service_role_key:
-                supabase = create_client(supabase_url, service_role_key)
-                # Get recent jobs for this user (last 10, ordered by created_at desc)
-                result = supabase.table("jobs").select("id, status, created_at, job_data").order("created_at", desc=True).limit(10).execute()
-                if result.data:
-                    # Filter jobs for this user and get IDs
-                    user_jobs = [job for job in result.data if job.get("job_data", {}).get("owner_user_id") == user_id]
-                    job_ids = [job["id"] for job in user_jobs[:5]]  # Get up to 5 most recent
-                    # Update session with found job IDs
-                    if job_ids:
-                        session["processing_jobs"] = [{"job_id": jid} for jid in job_ids]
-        except Exception as e:
-            print(f"Error fetching jobs from database: {e}")
-    
+    # If no job IDs in session, return empty status (no fallback to PostgreSQL)
     if not job_ids:
         return jsonify({
             "total": 0,
@@ -1002,11 +1004,109 @@ def batch_status():
             "estimated_remaining_seconds": 0
         })
     
-    # Get aggregated status using PostgreSQL queue
+    # Get aggregated status using Redis/RQ queue
     access_token = session.get("supabase_access_token")
     status = get_queue_status(job_ids, access_token=access_token)
     
     return jsonify(status)
+
+
+@app.route("/api/worker_status")
+def worker_status():
+    """Diagnostic endpoint to check worker status and recent jobs."""
+    if not require_auth():
+        return jsonify({"error": "Unauthorized"}), 401
+    
+    try:
+        from supabase import create_client
+        supabase_url = os.environ.get("SUPABASE_URL")
+        service_role_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+        
+        if not service_role_key:
+            return jsonify({
+                "worker_configured": False,
+                "error": "SUPABASE_SERVICE_ROLE_KEY not set in environment"
+            }), 500
+        
+        if not supabase_url:
+            return jsonify({
+                "worker_configured": False,
+                "error": "SUPABASE_URL not set in environment"
+            }), 500
+        
+        supabase = create_client(supabase_url, service_role_key)
+        
+        # Get recent jobs (last 10)
+        result = supabase.table("jobs").select(
+            "id, status, created_at, started_at, finished_at, error_message, job_data"
+        ).order("created_at", desc=True).limit(10).execute()
+        
+        jobs = result.data if result.data else []
+        
+        # Count by status
+        status_counts = {}
+        for job in jobs:
+            status = job.get("status", "unknown")
+            status_counts[status] = status_counts.get(status, 0) + 1
+        
+        # Check if any jobs are stuck (queued for more than 2 minutes)
+        from datetime import datetime, timezone, timedelta
+        now = datetime.now(timezone.utc)
+        stuck_threshold = timedelta(minutes=2)
+        
+        stuck_jobs = []
+        for job in jobs:
+            if job.get("status") == "queued":
+                created_at_str = job.get("created_at")
+                if created_at_str:
+                    try:
+                        created_at = datetime.fromisoformat(created_at_str.replace('Z', '+00:00'))
+                        if now - created_at > stuck_threshold:
+                            stuck_jobs.append({
+                                "id": job.get("id"),
+                                "created_at": created_at_str,
+                                "filename": job.get("job_data", {}).get("filename", "unknown")
+                            })
+                    except:
+                        pass
+        
+        # Get oldest stuck job
+        oldest_stuck = stuck_jobs[0] if stuck_jobs else None
+        
+        # Get user's recent jobs
+        user_id = session.get("user_id")
+        user_jobs = []
+        if user_id:
+            user_jobs = [j for j in jobs if j.get("job_data", {}).get("owner_user_id") == user_id]
+        
+        return jsonify({
+            "worker_configured": True,
+            "service_role_key_set": bool(service_role_key),
+            "total_recent_jobs": len(jobs),
+            "user_jobs_count": len(user_jobs),
+            "status_counts": status_counts,
+            "stuck_jobs_count": len(stuck_jobs),
+            "oldest_stuck_job": oldest_stuck,
+            "user_recent_jobs": [
+                {
+                    "id": j.get("id"),
+                    "status": j.get("status"),
+                    "filename": j.get("job_data", {}).get("filename", "unknown"),
+                    "created_at": j.get("created_at"),
+                    "started_at": j.get("started_at"),
+                    "finished_at": j.get("finished_at"),
+                    "error": j.get("error_message")
+                }
+                for j in user_jobs[:5]
+            ]
+        })
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "worker_configured": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
 
 
 if __name__ == "__main__":

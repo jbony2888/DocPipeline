@@ -1,6 +1,18 @@
 services:
+  # Redis for job queue
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+
   # Main Flask application
   flask-app:
+    depends_on:
+      - redis
     build:
       context: .
       dockerfile: Dockerfile.flask
@@ -30,15 +42,19 @@ services:
       # Flask configuration
       - FLASK_SECRET_KEY=${FLASK_SECRET_KEY:-change-me-in-production}
       - FLASK_PORT=5000
+      # Redis connection
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
     restart: unless-stopped
 
   # Background worker for processing submissions
-  # Uses PostgreSQL (Supabase) for job queue - no Redis needed!
+  # Uses Redis/RQ for job queue
   worker:
+    depends_on:
+      - redis
     build:
       context: .
       dockerfile: Dockerfile.flask
-    command: python worker.py
+    command: python worker_rq.py
     volumes:
       # Mount artifacts and outputs for persistence
       - ./artifacts:/app/artifacts
@@ -62,7 +78,12 @@ services:
       - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
       # Worker ID (optional, defaults to worker-<pid>)
       - WORKER_ID=${WORKER_ID:-worker-1}
+      # Redis connection
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
     restart: unless-stopped
+
+volumes:
+  redis_data:
 
 networks:
   default:
