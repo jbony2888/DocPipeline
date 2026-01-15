@@ -10,7 +10,7 @@ Add these in Render Dashboard → Your Web Service → Environment:
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_ANON_KEY=your-anon-key
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
-REDIS_URL=redis://default:gC0fR91qy9li41WfFjBjvMJIHSL4lBaV@redis-11474.c44.us-east-1-2.ec2.cloud.redislabs.com:11474/0
+REDIS_URL=redis://default:YOUR_PASSWORD@YOUR_REDIS_HOST:PORT/0
 GOOGLE_CLOUD_VISION_CREDENTIALS_JSON={"type":"service_account",...}
 GROQ_API_KEY=gsk_your-key-here
 FLASK_SECRET_KEY=generate-random-32-char-hex
@@ -26,7 +26,7 @@ Add these in Render Dashboard → Your Worker Service → Environment:
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_ANON_KEY=your-anon-key
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
-REDIS_URL=redis://default:gC0fR91qy9li41WfFjBjvMJIHSL4lBaV@redis-11474.c44.us-east-1-2.ec2.cloud.redislabs.com:11474/0
+REDIS_URL=redis://default:YOUR_PASSWORD@YOUR_REDIS_HOST:PORT/0
 GOOGLE_CLOUD_VISION_CREDENTIALS_JSON={"type":"service_account",...}
 GROQ_API_KEY=gsk_your-key-here
 FLASK_SECRET_KEY=same-as-web-service
@@ -36,11 +36,13 @@ WORKER_ID=worker-1
 
 ## Your Redis Cloud URL
 
-```
-redis://default:gC0fR91qy9li41WfFjBjvMJIHSL4lBaV@redis-11474.c44.us-east-1-2.ec2.cloud.redislabs.com:11474/0
-```
+**Get this from your Redis Cloud dashboard:**
+1. Go to your Redis Cloud dashboard
+2. Select your database
+3. Copy the connection URL
+4. Format: `redis://default:YOUR_PASSWORD@YOUR_REDIS_HOST:PORT/0`
 
-**Copy this EXACT value to `REDIS_URL` in both Web Service and Worker Service.**
+**Set this value in `REDIS_URL` for both Web Service and Worker Service on Render.**
 
 ## Build & Start Commands
 

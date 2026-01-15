@@ -33,7 +33,7 @@ You need **3 services** on Render:
    ```
    Example:
    ```
-   redis://default:gC0fR91qy9li41WfFjBjvMJIHSL4lBaV@redis-11474.c44.us-east-1-2.ec2.cloud.redislabs.com:11474/0
+   redis://default:YOUR_PASSWORD@YOUR_REDIS_HOST:PORT/0
    ```
 
 ### Option B: Upstash Redis (Free Tier)
@@ -83,7 +83,7 @@ SUPABASE_ANON_KEY=your-anon-key-here
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key-here
 
 # Redis Configuration (Required)
-REDIS_URL=redis://default:YOUR_PASSWORD@redis-11474.c44.us-east-1-2.ec2.cloud.redislabs.com:11474/0
+REDIS_URL=redis://default:YOUR_PASSWORD@YOUR_REDIS_HOST:PORT/0
 
 # Google Cloud Vision (Required)
 GOOGLE_CLOUD_VISION_CREDENTIALS_JSON={"type":"service_account","project_id":"...","private_key":"...","client_email":"..."}
@@ -143,7 +143,7 @@ WORKER_ID=worker-1
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_ANON_KEY=your-anon-key-here
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key-here
-REDIS_URL=redis://default:YOUR_PASSWORD@redis-11474.c44.us-east-1-2.ec2.cloud.redislabs.com:11474/0
+REDIS_URL=redis://default:YOUR_PASSWORD@YOUR_REDIS_HOST:PORT/0
 GOOGLE_CLOUD_VISION_CREDENTIALS_JSON={"type":"service_account",...}
 GROQ_API_KEY=gsk_your-groq-key-here
 FLASK_SECRET_KEY=same-as-web-service
@@ -283,15 +283,18 @@ Worker logs should show:
 
 ---
 
-## Your Current Redis Cloud URL
+## Get Your Redis Cloud URL
 
-Based on your local `.env`:
+**From Redis Cloud Dashboard:**
+1. Go to https://redis.com/ (or your Redis Cloud dashboard)
+2. Select your database
+3. Navigate to "Configuration" or "Connection Details"
+4. Copy the connection URL
+5. Format: `redis://default:YOUR_PASSWORD@YOUR_REDIS_HOST:PORT/0`
 
-```
-REDIS_URL=redis://default:gC0fR91qy9li41WfFjBjvMJIHSL4lBaV@redis-11474.c44.us-east-1-2.ec2.cloud.redislabs.com:11474/0
-```
+**⚠️ Never commit your Redis password to git!**
 
-**Use this EXACT value in Render for both Web Service and Worker Service.**
+**Set this value in `REDIS_URL` for both Web Service and Worker Service on Render.**
 
 ---
 
