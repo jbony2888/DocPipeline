@@ -6,6 +6,7 @@ This service handles the OAuth callback and redirects back to Streamlit with ses
 from flask import Flask, request, redirect, session
 import os
 from supabase import create_client, Client
+from auth.supabase_client import normalize_supabase_url
 import secrets
 import hashlib
 import time
@@ -20,7 +21,7 @@ app.config['SESSION_COOKIE_SECURE'] = False  # Set to True in production with HT
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 
 # Get Supabase credentials
-SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_URL = normalize_supabase_url(os.environ.get("SUPABASE_URL"))
 SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY")
 STREAMLIT_URL = os.environ.get("STREAMLIT_URL", "http://localhost:8501")
 
@@ -210,4 +211,3 @@ if __name__ == '__main__':
     print(f"🚀 Flask auth callback service starting on http://0.0.0.0:{port}")
     print(f"📧 Magic links should redirect to: http://localhost:{port}/auth/callback")
     app.run(host='0.0.0.0', port=port, debug=True)
-

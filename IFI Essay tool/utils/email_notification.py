@@ -267,3 +267,5 @@ def get_user_email_from_token(access_token: str) -> Optional[str]:
         print(f"⚠️ Could not extract email from token: {e}")
         return None
 
+
+

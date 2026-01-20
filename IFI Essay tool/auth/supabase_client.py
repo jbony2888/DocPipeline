@@ -4,7 +4,17 @@ Supabase client initialization and authentication helpers.
 
 import os
 from supabase import create_client, Client
+from yarl import URL
 from typing import Optional
+
+
+def normalize_supabase_url(url: Optional[str]) -> Optional[str]:
+    """Ensure Supabase URL ends with a trailing slash to satisfy storage client."""
+    if not url:
+        return None
+    normalized = url if url.endswith("/") else f"{url}/"
+    os.environ["SUPABASE_URL"] = normalized
+    return normalized
 
 
 def get_supabase_client(access_token: Optional[str] = None) -> Optional[Client]:
@@ -23,7 +33,7 @@ def get_supabase_client(access_token: Optional[str] = None) -> Optional[Client]:
     Returns:
         Supabase client instance, or None if credentials are missing
     """
-    supabase_url = os.environ.get("SUPABASE_URL")
+    supabase_url = normalize_supabase_url(os.environ.get("SUPABASE_URL"))
     
     if not supabase_url:
         return None
@@ -39,7 +49,15 @@ def get_supabase_client(access_token: Optional[str] = None) -> Optional[Client]:
             if not supabase_key:
                 return None
             supabase: Client = create_client(supabase_url, supabase_key)
-        
+
+        # Ensure storage_url ends with a slash to avoid storage3 warnings.
+        try:
+            storage_url = str(supabase.storage_url)
+            if not storage_url.endswith("/"):
+                supabase.storage_url = URL(f"{storage_url}/")
+        except Exception:
+            pass
+
         return supabase
     except Exception as e:
         print(f"Error initializing Supabase client: {e}")
@@ -64,4 +82,3 @@ def get_user_id(supabase_client: Client) -> Optional[str]:
     except Exception as e:
         # Not authenticated or session expired
         return None
-

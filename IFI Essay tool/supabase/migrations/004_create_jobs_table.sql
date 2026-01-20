@@ -79,3 +79,5 @@ COMMENT ON COLUMN jobs.progress IS 'Progress percentage (0-100)';
 
 
 
+
+

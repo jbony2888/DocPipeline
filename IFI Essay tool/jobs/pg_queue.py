@@ -8,7 +8,7 @@ import json
 import base64
 from typing import Dict, Any, Optional, List
 from datetime import datetime, timezone
-from auth.supabase_client import get_supabase_client
+from auth.supabase_client import get_supabase_client, normalize_supabase_url
 
 
 def enqueue_submission(
@@ -31,7 +31,7 @@ def enqueue_submission(
     try:
         # Use service role key to bypass RLS for job insertion
         # This is safe because we validate owner_user_id matches the authenticated user
-        supabase_url = os.environ.get("SUPABASE_URL")
+        supabase_url = normalize_supabase_url(os.environ.get("SUPABASE_URL"))
         service_role_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
         
         if not supabase_url or not service_role_key:
@@ -131,7 +131,7 @@ def get_queue_status(job_ids: List[str], access_token: Optional[str] = None) -> 
     try:
         # Use service role key to bypass RLS for status checking
         # This is safe because we're only checking status, not modifying data
-        supabase_url = os.environ.get("SUPABASE_URL")
+        supabase_url = normalize_supabase_url(os.environ.get("SUPABASE_URL"))
         service_role_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
         
         if not supabase_url or not service_role_key:
@@ -242,7 +242,7 @@ def get_next_job(service_role_key: Optional[str] = None) -> Optional[Dict[str, A
         # Use service role key for worker to bypass RLS
         if service_role_key:
             # Create client with service role key
-            supabase_url = os.environ.get("SUPABASE_URL")
+            supabase_url = normalize_supabase_url(os.environ.get("SUPABASE_URL"))
             if not supabase_url:
                 return None
             
@@ -282,7 +282,7 @@ def update_job_status(
     """
     try:
         if service_role_key:
-            supabase_url = os.environ.get("SUPABASE_URL")
+            supabase_url = normalize_supabase_url(os.environ.get("SUPABASE_URL"))
             if not supabase_url:
                 return False
             from supabase import create_client
@@ -318,4 +318,3 @@ def update_job_status(
     except Exception as e:
         print(f"Error updating job status: {e}")
         return False
-

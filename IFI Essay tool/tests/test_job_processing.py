@@ -233,3 +233,5 @@ class TestBatchStatusAPI:
         data = json.loads(response.data)
         assert data['total'] == 2
 
+
+

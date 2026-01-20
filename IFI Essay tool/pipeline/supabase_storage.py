@@ -10,6 +10,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import Dict, Optional
 from auth.supabase_client import get_supabase_client
+from storage3.exceptions import StorageApiError
 
 
 BUCKET_NAME = "essay-submissions"
@@ -172,6 +173,14 @@ def download_file(file_path: str, access_token: Optional[str] = None) -> Optiona
         
         result = supabase.storage.from_(BUCKET_NAME).download(file_path)
         return result
+    except StorageApiError as e:
+        if getattr(e, "code", None) == "not_found" or str(e).lower().find("not_found") >= 0:
+            print(f"⚠️ File not found in Supabase Storage: {file_path}")
+            return None
+        print(f"❌ Error downloading file from Supabase Storage: {e}")
+        import traceback
+        print(traceback.format_exc())
+        return None
     except Exception as e:
         print(f"❌ Error downloading file from Supabase Storage: {e}")
         import traceback
@@ -230,4 +239,3 @@ def get_file_url(file_path: str, access_token: Optional[str] = None) -> Optional
     except Exception as e:
         print(f"❌ Error getting file URL from Supabase Storage: {e}")
         return None
-

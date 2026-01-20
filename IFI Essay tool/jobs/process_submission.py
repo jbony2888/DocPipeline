@@ -61,7 +61,7 @@ def process_submission_job(
             record.artifact_dir = ingest_data["artifact_dir"]
             
             # Save to Supabase database
-            save_success = save_db_record(
+            save_result = save_db_record(
                 record, 
                 filename=filename, 
                 owner_user_id=owner_user_id, 
@@ -69,8 +69,13 @@ def process_submission_job(
                 upload_batch_id=upload_batch_id
             )
             
-            if not save_success:
+            if not save_result.get("success", False):
                 raise Exception("Failed to save record to database")
+            
+            # Get duplicate info from save_result (already checked in save_record)
+            is_update = save_result.get("is_update", False)
+            previous_owner = save_result.get("previous_owner_user_id")
+            is_own_duplicate = (previous_owner == owner_user_id) if previous_owner else False
             
             # Convert Pydantic model to dict
             record_dict = record.model_dump() if hasattr(record, 'model_dump') else record.dict()
@@ -80,7 +85,10 @@ def process_submission_job(
                 "filename": filename,
                 "submission_id": ingest_data["submission_id"],
                 "record": record_dict,
-                "storage_url": ingest_data.get("storage_url")
+                "storage_url": ingest_data.get("storage_url"),
+                "is_duplicate": is_update,
+                "is_own_duplicate": is_own_duplicate,
+                "was_update": is_update
             }
             
             # Send email notification on success
