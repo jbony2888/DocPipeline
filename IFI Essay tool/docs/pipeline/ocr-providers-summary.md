@@ -47,7 +47,7 @@ cd /Users/jerrybony/Documents/GitHub/DocPipeline/essayflow
 - ✅ Offline processing needed
 - ✅ **DEFAULT CHOICE for most users**
 
-📚 **Full Documentation:** `EASYOCR_GUIDE.md`
+📚 **Full Documentation:** `easyocr-guide.md`
 
 ---
 
@@ -364,5 +364,4 @@ export GOOGLE_APPLICATION_CREDENTIALS="/path/to/key.json"
 
 **Last Updated:** 2025-12-23  
 **Status:** ✅ All three providers production-ready
-
 
