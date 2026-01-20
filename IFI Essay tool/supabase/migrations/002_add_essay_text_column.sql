@@ -7,3 +7,7 @@ ADD COLUMN IF NOT EXISTS essay_text TEXT;
 -- Add comment
 COMMENT ON COLUMN public.submissions.essay_text IS 'The full text content of the student essay';
 
+
+
+
+

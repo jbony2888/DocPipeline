@@ -79,6 +79,29 @@
                 </div>
             </div>
         </div>
+
+        <!-- Duplicate Scan Modal -->
+        <div class="modal fade" id="duplicateModal" tabindex="-1" aria-labelledby="duplicateModalLabel" aria-hidden="true">
+            <div class="modal-dialog modal-lg modal-dialog-centered">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title" id="duplicateModalLabel">Duplicates Detected</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <p class="text-muted mb-3" id="duplicateSummary"></p>
+                        <div class="list-group" id="duplicateList"></div>
+                        <div class="form-text mt-2">
+                            By default, duplicate files are skipped. Check any duplicate you want to reprocess.
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-outline-secondary" id="duplicateCancelBtn" data-bs-dismiss="modal">Cancel</button>
+                        <button type="button" class="btn btn-primary" id="duplicateConfirmBtn">Upload Selected</button>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 </div>
 
@@ -156,6 +179,12 @@ document.addEventListener('DOMContentLoaded', function() {
     const filesInput = document.getElementById('files');
     const selectedFilesList = document.getElementById('selectedFilesList');
     const filesList = document.getElementById('filesList');
+    const duplicateModalEl = document.getElementById('duplicateModal');
+    const duplicateList = document.getElementById('duplicateList');
+    const duplicateSummary = document.getElementById('duplicateSummary');
+    const duplicateConfirmBtn = document.getElementById('duplicateConfirmBtn');
+    const duplicateCancelBtn = document.getElementById('duplicateCancelBtn');
+    const duplicateModal = duplicateModalEl ? new bootstrap.Modal(duplicateModalEl) : null;
     
     if (!filesInput) {
         console.error('File input element not found!');
@@ -170,6 +199,7 @@ document.addEventListener('DOMContentLoaded', function() {
     let pollInterval = null;
     let startTime = null;
     let selectedFiles = []; // Array to store File objects
+    let lastScanResults = [];
     
     // Function to update the selected files display
     function updateFilesList() {
@@ -317,8 +347,186 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
     
+    // Track if we've already shown success for current batch
+    let successShownForBatch = false;
+
+    function resetSubmitButton() {
+        if (processBtn) processBtn.disabled = false;
+        if (btnText) btnText.textContent = 'Process Entries';
+        if (btnSpinner) btnSpinner.classList.add('d-none');
+    }
+
+    function startUpload(filesToUpload) {
+        if (!filesToUpload || filesToUpload.length === 0) {
+            showToastModal('No files selected to upload.', 'warning');
+            resetSubmitButton();
+            return;
+        }
+
+        // Show loading overlay
+        loadingOverlay.classList.remove('d-none');
+        loadingOverlay.style.display = 'flex';
+        startTime = Date.now();
+
+        // Create FormData with selected files
+        const formData = new FormData();
+        const uploadMode = document.querySelector('input[name="upload_mode"]:checked')?.value || 'multiple';
+        formData.append('upload_mode', uploadMode);
+
+        filesToUpload.forEach(file => {
+            formData.append('files', file);
+        });
+
+        console.log(`Uploading ${filesToUpload.length} file(s) in ${uploadMode} mode`);
+
+        fetch('{{ url_for("upload") }}', {
+            method: 'POST',
+            body: formData
+        })
+        .then(r => {
+            if (!r.ok) {
+                return r.json().then(data => {
+                    throw new Error(data.error || `HTTP ${r.status}: ${r.statusText}`);
+                });
+            }
+            return r.json();
+        })
+        .then(data => {
+            if (data.success) {
+                // Check for duplicate files (in case user forced reprocess)
+                const duplicateFiles = data.job_ids?.filter(job => job.is_duplicate) || [];
+                const ownDuplicates = duplicateFiles.filter(job => job.is_own_duplicate);
+                const otherDuplicates = duplicateFiles.filter(job => !job.is_own_duplicate);
+
+                if (duplicateFiles.length > 0) {
+                    let duplicateMessage = '';
+                    if (ownDuplicates.length > 0 && otherDuplicates.length > 0) {
+                        duplicateMessage = `⚠️ ${ownDuplicates.length} file(s) you already uploaded and ${otherDuplicates.length} duplicate file(s) detected. They will update existing records.`;
+                    } else if (ownDuplicates.length > 0) {
+                        duplicateMessage = `⚠️ ${ownDuplicates.length} duplicate file(s) detected. You already uploaded ${ownDuplicates.length === 1 ? 'this essay' : 'these essays'}. It will update the existing record(s).`;
+                    } else if (otherDuplicates.length > 0) {
+                        duplicateMessage = `⚠️ ${otherDuplicates.length} duplicate file(s) detected. This essay was already uploaded by someone else. It will update the existing record(s).`;
+                    }
+
+                    if (duplicateMessage && typeof showToastModal === 'function') {
+                        showToastModal(duplicateMessage, 'warning', false);
+                    } else if (duplicateMessage) {
+                        console.warn(duplicateMessage);
+                    }
+                }
+
+                if (totalCount) totalCount.textContent = data.total;
+                if (completedCount) completedCount.textContent = '0';
+                if (loadingMessage) loadingMessage.textContent = `Processing ${data.total} file(s)...`;
+                if (progressBar) {
+                    progressBar.style.width = '0%';
+                    if (progressText) progressText.textContent = '0%';
+                }
+
+                if (data.errors && data.errors.length > 0) {
+                    console.warn('Some files failed to enqueue:', data.errors);
+                }
+
+                successShownForBatch = false;
+                pollProgress();
+                pollInterval = setInterval(pollProgress, 2000);
+            } else {
+                showToastModal('Error: ' + (data.error || 'Failed to start processing'), 'error');
+                loadingOverlay.classList.add('d-none');
+                resetSubmitButton();
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            showToastModal('Error uploading files: ' + error.message, 'error');
+            loadingOverlay.classList.add('d-none');
+            resetSubmitButton();
+        });
+    }
+
+    function scanDuplicates(filesToScan) {
+        const formData = new FormData();
+        filesToScan.forEach(file => {
+            formData.append('files', file);
+        });
+
+        return fetch('{{ url_for("scan_duplicates") }}', {
+            method: 'POST',
+            body: formData
+        }).then(r => {
+            if (!r.ok) {
+                return r.json().then(data => {
+                    throw new Error(data.error || `HTTP ${r.status}: ${r.statusText}`);
+                });
+            }
+            return r.json();
+        });
+    }
+
+    function showDuplicateModal(duplicateResults, onConfirm) {
+        if (!duplicateModal || !duplicateList) {
+            onConfirm(selectedFiles);
+            return;
+        }
+
+        duplicateList.innerHTML = '';
+        const ownDupes = duplicateResults.filter(r => r.is_own_duplicate).length;
+        const otherDupes = duplicateResults.length - ownDupes;
+        const summaryParts = [];
+        if (ownDupes > 0) summaryParts.push(`${ownDupes} already uploaded by you`);
+        if (otherDupes > 0) summaryParts.push(`${otherDupes} uploaded by another user`);
+        duplicateSummary.textContent = `Found ${duplicateResults.length} duplicate file(s): ${summaryParts.join(', ')}.`;
+
+        duplicateResults.forEach(result => {
+            const row = document.createElement('div');
+            row.className = 'list-group-item d-flex justify-content-between align-items-start';
+            const badgeClass = result.is_own_duplicate ? 'bg-warning text-dark' : 'bg-danger';
+            const badgeText = result.is_own_duplicate ? 'Your duplicate' : 'Other user';
+            const existingName = result.existing_filename ? ` (existing: ${result.existing_filename})` : '';
+
+            row.innerHTML = `
+                <div class="me-auto">
+                    <div class="fw-semibold">${result.filename}${existingName}</div>
+                    <span class="badge ${badgeClass}">${badgeText}</span>
+                </div>
+                <div class="form-check">
+                    <input class="form-check-input duplicate-keep-checkbox" type="checkbox" data-index="${result.index}" id="dup-keep-${result.index}">
+                    <label class="form-check-label" for="dup-keep-${result.index}">Reprocess</label>
+                </div>
+            `;
+            duplicateList.appendChild(row);
+        });
+
+        if (duplicateCancelBtn) {
+            duplicateCancelBtn.onclick = () => {
+                resetSubmitButton();
+            };
+        }
+
+        if (duplicateConfirmBtn) {
+            const newConfirmBtn = duplicateConfirmBtn.cloneNode(true);
+            duplicateConfirmBtn.parentNode.replaceChild(newConfirmBtn, duplicateConfirmBtn);
+
+            newConfirmBtn.addEventListener('click', function() {
+                const keepIndexes = new Set(
+                    Array.from(document.querySelectorAll('.duplicate-keep-checkbox:checked'))
+                        .map(cb => Number(cb.dataset.index))
+                );
+                const duplicateIndexes = new Set(duplicateResults.map(r => r.index));
+                const filesToUpload = selectedFiles.filter((file, idx) => {
+                    return !duplicateIndexes.has(idx) || keepIndexes.has(idx);
+                });
+
+                duplicateModal.hide();
+                onConfirm(filesToUpload);
+            });
+        }
+
+        duplicateModal.show();
+    }
+    
     function pollProgress() {
-        fetch('/api/batch_status')
+        return fetch('/api/batch_status')
             .then(r => r.json())
             .then(data => {
                 const { total, completed, failed, pending, estimated_remaining_seconds } = data;
@@ -359,16 +567,21 @@ document.addEventListener('DOMContentLoaded', function() {
                         pollInterval = null;
                     }
                     
-                    // Show success notification immediately
-                    const message = failed > 0 
-                        ? `✅ Processing complete! ${completed} succeeded, ${failed} failed.`
-                        : `✅ Successfully processed ${completed} file(s)!`;
-                    
-                    // Show notification
-                    if (typeof showToastModal === 'function') {
-                        showToastModal(message, 'success', false); // Don't auto-hide so user can see it
-                    } else {
-                        console.log('Notification:', message);
+                    // Only show success notification if we haven't shown it for this batch yet
+                    if (!successShownForBatch) {
+                        successShownForBatch = true;
+                        
+                        // Show success notification immediately
+                        const message = failed > 0 
+                            ? `✅ Processing complete! ${completed} succeeded, ${failed} failed.`
+                            : `✅ Successfully processed ${completed} file(s)!`;
+                        
+                        // Show notification
+                        if (typeof showToastModal === 'function') {
+                            showToastModal(message, 'success', false); // Don't auto-hide so user can see it
+                        } else {
+                            console.log('Notification:', message);
+                        }
                     }
                     
                     // Hide loading overlay after a short delay
@@ -393,6 +606,11 @@ document.addEventListener('DOMContentLoaded', function() {
                         // Clear session job tracking
                         fetch('/api/clear_jobs', { method: 'POST' })
                             .catch(err => console.error('Error clearing jobs:', err));
+                        
+                        // Redirect to review page after processing completes
+                        setTimeout(() => {
+                            window.location.href = '/review?mode=needs_review';
+                        }, 1500); // Give user time to see the success message
                     }, 2000);
                 }
             })
@@ -423,80 +641,61 @@ document.addEventListener('DOMContentLoaded', function() {
             
             // Disable button and show spinner
             processBtn.disabled = true;
-            btnText.textContent = 'Uploading...';
+            btnText.textContent = 'Scanning...';
             btnSpinner.classList.remove('d-none');
-            
-            // Show loading overlay
-            loadingOverlay.classList.remove('d-none');
-            loadingOverlay.style.display = 'flex';
-            startTime = Date.now();
-            
-            // Create FormData with selected files
-            const formData = new FormData();
-            const uploadMode = document.querySelector('input[name="upload_mode"]:checked')?.value || 'multiple';
-            formData.append('upload_mode', uploadMode);
-            
-            // Add all selected files
-            selectedFiles.forEach(file => {
-                formData.append('files', file);
-            });
-            
-            console.log(`Uploading ${selectedFiles.length} file(s) in ${uploadMode} mode`);
-            
-            // Submit via AJAX
-            fetch('{{ url_for("upload") }}', {
-                method: 'POST',
-                body: formData
-            })
-            .then(r => {
-                if (!r.ok) {
-                    return r.json().then(data => {
-                        throw new Error(data.error || `HTTP ${r.status}: ${r.statusText}`);
-                    });
-                }
-                return r.json();
-            })
-            .then(data => {
-                if (data.success) {
-                    // Update UI
-                    if (totalCount) totalCount.textContent = data.total;
-                    if (completedCount) completedCount.textContent = '0';
-                    if (loadingMessage) loadingMessage.textContent = `Processing ${data.total} file(s)...`;
-                    if (progressBar) {
-                        progressBar.style.width = '0%';
-                        if (progressText) progressText.textContent = '0%';
+
+            scanDuplicates(selectedFiles)
+                .then(data => {
+                    if (!data.success) {
+                        throw new Error(data.error || 'Failed to scan duplicates');
                     }
-                    
-                    // Show warnings if some files failed
+
+                    lastScanResults = data.results || [];
+                    const duplicateResults = lastScanResults.filter(r => r.is_duplicate);
+
                     if (data.errors && data.errors.length > 0) {
-                        console.warn('Some files failed to enqueue:', data.errors);
+                        console.warn('Scan warnings:', data.errors);
                     }
-                    
-                    // Start polling for progress
-                    pollProgress();
-                    pollInterval = setInterval(pollProgress, 2000);
-                } else {
-                    showToastModal('Error: ' + (data.error || 'Failed to start processing'), 'error');
-                    loadingOverlay.classList.add('d-none');
-                    processBtn.disabled = false;
-                    btnText.textContent = 'Process Entries';
-                    btnSpinner.classList.add('d-none');
-                }
-            })
-            .catch(error => {
-                console.error('Error:', error);
-                showToastModal('Error uploading files: ' + error.message, 'error');
-                loadingOverlay.classList.add('d-none');
-                processBtn.disabled = false;
-                btnText.textContent = 'Process Entries';
-                btnSpinner.classList.add('d-none');
-            });
+
+                    if (duplicateResults.length === 0) {
+                        btnText.textContent = 'Uploading...';
+                        startUpload(selectedFiles);
+                        return;
+                    }
+
+                    btnText.textContent = 'Upload Selected';
+                    showDuplicateModal(duplicateResults, (filesToUpload) => {
+                        btnText.textContent = 'Uploading...';
+                        startUpload(filesToUpload);
+                    });
+                })
+                .catch(error => {
+                    console.error('Error scanning duplicates:', error);
+                    showToastModal('Error scanning files: ' + error.message, 'error');
+                    resetSubmitButton();
+                });
         });
     }
     
-    // Check if there are jobs in progress on page load
-    pollProgress();
-    pollInterval = setInterval(pollProgress, 2000);
+    // Clear old completed jobs on page load to prevent showing old success modals
+    fetch('/api/batch_status')
+        .then(r => r.json())
+        .then(data => {
+            const { total, pending, in_progress, completed, failed } = data;
+            // If there are jobs but they're all completed, clear them immediately
+            if (total > 0 && (completed + failed) === total && (pending === 0 && in_progress === 0)) {
+                fetch('/api/clear_jobs', { method: 'POST' })
+                    .catch(err => console.error('Error clearing old jobs:', err));
+            } else if (total > 0 && (pending > 0 || in_progress > 0)) {
+                // Only start polling if there are active jobs
+                pollProgress();
+                pollInterval = setInterval(pollProgress, 2000);
+            }
+        })
+        .catch(err => {
+            // If error, don't start polling
+            console.log('No active jobs to poll');
+        });
     
     // Hide loading overlay if page loads with results (means processing completed)
     {% if session.upload_results %}
@@ -510,4 +709,3 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 </script>
 {% endblock %}
-

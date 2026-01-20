@@ -4,44 +4,60 @@ Supabase client initialization and authentication helpers.
 
 import os
 from supabase import create_client, Client
+from yarl import URL
 from typing import Optional
+
+
+def normalize_supabase_url(url: Optional[str]) -> Optional[str]:
+    """Ensure Supabase URL ends with a trailing slash to satisfy storage client."""
+    if not url:
+        return None
+    normalized = url if url.endswith("/") else f"{url}/"
+    os.environ["SUPABASE_URL"] = normalized
+    return normalized
 
 
 def get_supabase_client(access_token: Optional[str] = None) -> Optional[Client]:
     """
     Initialize and return Supabase client from environment variables.
-    If access_token is provided, initializes an authenticated client.
+    If access_token is provided, uses it directly as the auth token for RLS.
     
     Requires:
         - SUPABASE_URL: Your Supabase project URL
-        - SUPABASE_ANON_KEY: Your Supabase anonymous key
+        - SUPABASE_ANON_KEY: Your Supabase anonymous key (fallback if no access_token)
     
     Args:
-        access_token: Optional access token for authenticated requests
+        access_token: Optional access token (JWT) for authenticated requests.
+                     When provided, this is used directly as the auth token.
     
     Returns:
         Supabase client instance, or None if credentials are missing
     """
-    supabase_url = os.environ.get("SUPABASE_URL")
-    supabase_key = os.environ.get("SUPABASE_ANON_KEY")
+    supabase_url = normalize_supabase_url(os.environ.get("SUPABASE_URL"))
     
-    if not supabase_url or not supabase_key:
+    if not supabase_url:
         return None
     
     try:
-        supabase: Client = create_client(supabase_url, supabase_key)
-        
-        # Set authenticated session if access token provided
+        # If access_token is provided, use it directly as the auth key
+        # The access_token is a JWT that contains user info for RLS
         if access_token:
-            try:
-                supabase.auth.set_session(
-                    access_token=access_token,
-                    refresh_token=""  # Refresh token not needed for database operations
-                )
-            except Exception as e:
-                print(f"Warning: Could not set session with access token: {e}")
-                # Continue anyway - client still works, just not authenticated
-        
+            supabase: Client = create_client(supabase_url, access_token)
+        else:
+            # Fallback to anon key for unauthenticated requests
+            supabase_key = os.environ.get("SUPABASE_ANON_KEY")
+            if not supabase_key:
+                return None
+            supabase: Client = create_client(supabase_url, supabase_key)
+
+        # Ensure storage_url ends with a slash to avoid storage3 warnings.
+        try:
+            storage_url = str(supabase.storage_url)
+            if not storage_url.endswith("/"):
+                supabase.storage_url = URL(f"{storage_url}/")
+        except Exception:
+            pass
+
         return supabase
     except Exception as e:
         print(f"Error initializing Supabase client: {e}")
@@ -66,4 +82,3 @@ def get_user_id(supabase_client: Client) -> Optional[str]:
     except Exception as e:
         # Not authenticated or session expired
         return None
-

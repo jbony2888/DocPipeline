@@ -31,6 +31,29 @@ services:
       - key: GROQ_API_KEY
         sync: false  # Set manually in Render dashboard
       
+      # Required: Redis Configuration (for background job queue)
+      # Format: redis://default:PASSWORD@HOST:PORT/0
+      - key: REDIS_URL
+        sync: false  # Set manually in Render dashboard
+      
+      # Required: Application URL (for email links)
+      - key: APP_URL
+        sync: false  # Set manually in Render dashboard (e.g., https://your-app.onrender.com)
+      
+      # Optional: Email Configuration
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: SMTP_USE_TLS
+        sync: false
+      - key: FROM_EMAIL
+        sync: false
+      
       # Optional: Worker Configuration
       - key: WORKER_ID
         value: worker-1

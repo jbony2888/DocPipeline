@@ -13,3 +13,7 @@ ALTER COLUMN grade TYPE TEXT USING
 -- Add a comment explaining the format
 COMMENT ON COLUMN submissions.grade IS 'Grade level: integer (1-12) or text (K, Kindergarten, Pre-K, etc.)';
 
+
+
+
+

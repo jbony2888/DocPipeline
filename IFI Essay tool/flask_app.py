@@ -12,6 +12,16 @@ import io
 import csv
 import re
 from typing import Optional, List, Dict, Any
+import logging
+import time
+import redis
+
+# Load environment variables from .env file (for local development)
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # dotenv not installed, assume env vars are set another way
 
 from pipeline.supabase_storage import ingest_upload_supabase, get_file_url, download_file, BUCKET_NAME
 from pipeline.runner import process_submission
@@ -31,11 +41,12 @@ from pipeline.validate import can_approve_record
 # Removed batch_defaults - using simple bulk edit instead
 # from pipeline.batch_defaults import create_upload_batch, get_batch_with_submissions, apply_batch_defaults
 from auth.supabase_client import get_supabase_client, get_user_id
-from jobs.pg_queue import enqueue_submission, get_job_status, get_queue_status
+from jobs.queue import enqueue_submission, get_job_status, get_queue_status
 from supabase import create_client
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", os.urandom(32))
+app.logger.setLevel(logging.INFO)
 
 # Configuration
 UPLOAD_FOLDER = "artifacts"
@@ -48,6 +59,81 @@ Path("outputs").mkdir(exist_ok=True)
 
 # Initialize Supabase database
 init_database()
+
+DB_STATS_TTL_SECONDS = 60
+_db_stats_cache: Dict[str, Dict[str, Any]] = {}
+_redis_client: Optional[redis.Redis] = None
+
+def log_timing(message: str) -> None:
+    """Log timing info through the app logger with a safe fallback."""
+    print(message, flush=True)
+    try:
+        app.logger.info(message)
+    except Exception:
+        pass
+
+
+def get_redis_client() -> Optional[redis.Redis]:
+    """Return a shared Redis client for caching, or None if unavailable."""
+    global _redis_client
+    if _redis_client is not None:
+        return _redis_client
+
+    redis_url = os.environ.get("REDIS_URL")
+    if not redis_url:
+        return None
+
+    try:
+        client = redis.Redis.from_url(redis_url, decode_responses=True)
+        client.ping()
+        _redis_client = client
+        return client
+    except Exception as e:
+        print(f"⚠️ Warning: Redis cache unavailable: {e}", flush=True)
+        return None
+
+
+def get_cached_db_stats(user_id: Optional[str], access_token: Optional[str], refresh_token: Optional[str]) -> Dict[str, int]:
+    """Return cached stats for a user within TTL to avoid repeated count queries."""
+    if not user_id:
+        return get_db_stats(owner_user_id=user_id, access_token=access_token, refresh_token=refresh_token)
+
+    cache_key = f"db_stats:{user_id}"
+    redis_client = get_redis_client()
+    if redis_client:
+        try:
+            cached_value = redis_client.get(cache_key)
+            if cached_value:
+                return json.loads(cached_value)
+        except Exception as e:
+            print(f"⚠️ Warning: Redis cache read failed: {e}", flush=True)
+
+    now = time.time()
+    cached = _db_stats_cache.get(user_id)
+    if cached and (now - cached["ts"]) < DB_STATS_TTL_SECONDS:
+        return cached["stats"]
+
+    stats = get_db_stats(owner_user_id=user_id, access_token=access_token, refresh_token=refresh_token)
+    _db_stats_cache[user_id] = {"ts": now, "stats": stats}
+    if redis_client:
+        try:
+            redis_client.setex(cache_key, DB_STATS_TTL_SECONDS, json.dumps(stats))
+        except Exception as e:
+            print(f"⚠️ Warning: Redis cache write failed: {e}", flush=True)
+    return stats
+
+
+def invalidate_db_stats_cache(user_id: Optional[str]) -> None:
+    """Remove cached stats for a user (both local and Redis)."""
+    if not user_id:
+        return
+    _db_stats_cache.pop(user_id, None)
+    redis_client = get_redis_client()
+    if redis_client:
+        try:
+            redis_client.delete(f"db_stats:{user_id}")
+        except Exception as e:
+            print(f"⚠️ Warning: Redis cache delete failed: {e}", flush=True)
 
 
 def format_review_reasons(reason_codes: str) -> str:
@@ -79,18 +165,9 @@ def get_pdf_path(artifact_dir: str, access_token: Optional[str] = None) -> Optio
     """Get the Supabase Storage path to the original PDF file."""
     if not artifact_dir:
         return None
-    
+
     # artifact_dir is like "user_id/submission_id"
-    # Try common extensions - return the first one that likely exists
-    # We'll let serve_pdf handle the actual file existence check
-    for ext in [".pdf", ".png", ".jpg", ".jpeg"]:
-        file_path = f"{artifact_dir}/original{ext}"
-        # Try to get URL with access token for RLS
-        url = get_file_url(file_path, access_token=access_token)
-        if url:
-            return file_path
-    
-    # If no URL found, still return the PDF path as fallback (most common)
+    # serve_pdf will try alternate extensions on demand.
     return f"{artifact_dir}/original.pdf"
 
 
@@ -113,7 +190,10 @@ def index():
     
     user_id = session.get("user_id")
     access_token = session.get("supabase_access_token")
-    db_stats = get_db_stats(owner_user_id=user_id, access_token=access_token)
+    refresh_token = session.get("supabase_refresh_token")
+    stats_start = time.perf_counter()
+    db_stats = get_cached_db_stats(user_id, access_token, refresh_token)
+    log_timing(f"⏱️ index db_stats: {(time.perf_counter() - stats_start):.3f}s")
     
     return render_template("dashboard.html",
                          user_email=session.get("user_email"),
@@ -307,11 +387,30 @@ def upload():
     job_ids = []
     errors = []
     
+    # Check for duplicates before enqueueing
+    from pipeline.ingest import ingest_upload
+    from pipeline.supabase_db import check_duplicate_submission
+    
     # Enqueue all files for background processing
     for file in files:
         if file and allowed_file(file.filename):
             try:
                 file_bytes = file.read()
+                
+                # Quick check: compute submission_id to detect duplicates before processing
+                import hashlib
+                sha256_hash = hashlib.sha256(file_bytes).hexdigest()
+                submission_id = sha256_hash[:12]
+                
+                # Check if duplicate
+                refresh_token = session.get("supabase_refresh_token")
+                duplicate_info = check_duplicate_submission(
+                    submission_id=submission_id,
+                    current_user_id=user_id,
+                    access_token=access_token,
+                    refresh_token=refresh_token
+                )
+                
                 job_id = enqueue_submission(
                     file_bytes=file_bytes,
                     filename=file.filename,
@@ -321,7 +420,9 @@ def upload():
                 )
                 job_ids.append({
                     "filename": file.filename,
-                    "job_id": job_id
+                    "job_id": job_id,
+                    "is_duplicate": duplicate_info.get("is_duplicate", False),
+                    "is_own_duplicate": duplicate_info.get("is_own_duplicate", False)
                 })
             except Exception as e:
                 errors.append(f"{file.filename}: {str(e)}")
@@ -348,86 +449,179 @@ def upload():
     })
 
 
+@app.route("/api/scan_duplicates", methods=["POST"])
+def scan_duplicates():
+    """Scan uploaded files for duplicate submissions without enqueueing."""
+    if not require_auth():
+        return jsonify({"success": False, "error": "Not authenticated"}), 401
+
+    user_id = session.get("user_id")
+    access_token = session.get("supabase_access_token")
+
+    if "files" not in request.files:
+        return jsonify({"success": False, "error": "No files selected"}), 400
+
+    files = request.files.getlist("files")
+    if not files or files[0].filename == "":
+        return jsonify({"success": False, "error": "Please select at least one file"}), 400
+
+    results = []
+    errors = []
+
+    from pipeline.supabase_db import check_duplicate_submission
+    import hashlib
+
+    for idx, file in enumerate(files):
+        if file and allowed_file(file.filename):
+            try:
+                file_bytes = file.read()
+                sha256_hash = hashlib.sha256(file_bytes).hexdigest()
+                submission_id = sha256_hash[:12]
+
+                refresh_token = session.get("supabase_refresh_token")
+                duplicate_info = check_duplicate_submission(
+                    submission_id=submission_id,
+                    current_user_id=user_id,
+                    access_token=access_token,
+                    refresh_token=refresh_token
+                )
+                results.append({
+                    "index": idx,
+                    "filename": file.filename,
+                    "submission_id": submission_id,
+                    "is_duplicate": duplicate_info.get("is_duplicate", False),
+                    "is_own_duplicate": duplicate_info.get("is_own_duplicate", False),
+                    "existing_filename": duplicate_info.get("existing_filename")
+                })
+            except Exception as e:
+                errors.append(f"{file.filename}: {str(e)}")
+        else:
+            errors.append(f"{file.filename}: Invalid file type")
+
+    if not results:
+        return jsonify({"success": False, "error": "No valid files to scan.", "errors": errors}), 400
+
+    return jsonify({
+        "success": True,
+        "results": results,
+        "errors": errors if errors else None
+    })
+
+
 @app.route("/review")
 def review():
     """Review and approval workflow page with School→Grade grouping."""
     if not require_auth():
         return redirect(url_for("login"))
     
+    route_start = time.perf_counter()
     user_id = session.get("user_id")
     access_token = session.get("supabase_access_token")
+    refresh_token = session.get("supabase_refresh_token")
     review_mode = request.args.get("mode", "needs_review")
     
     # Get current batch ID from session (if available), or find most recent batch with submissions needing review
     upload_batch_id = session.get("upload_batch_id")
     batch_info = None
     
-    # If no batch in session, try to find the most recent batch with submissions needing review
-    if not upload_batch_id and review_mode == "needs_review":
-        # Get all records needing review
-        needs_review_records = get_db_records(needs_review=True, owner_user_id=user_id, access_token=access_token)
-        # Find batches that have submissions needing review
-        batch_ids = set()
-        for record in needs_review_records:
-            if record.get("upload_batch_id"):
-                batch_ids.add(record["upload_batch_id"])
-        
-        # Get the most recent batch
-        if batch_ids:
-            try:
-                supabase = get_supabase_client(access_token=access_token)
-                if supabase and access_token:
-                    try:
-                        supabase.auth.set_session(access_token=access_token, refresh_token="")
-                    except:
-                        pass
-                
-                # Get the most recent batch from the list
-                batches_result = supabase.table("upload_batches").select("*").eq("owner_user_id", user_id).in_("id", list(batch_ids)).order("created_at", desc=True).limit(1).execute()
-                
-                if batches_result.data and len(batches_result.data) > 0:
-                    upload_batch_id = str(batches_result.data[0]["id"])
-                    batch_info = get_batch_with_submissions(upload_batch_id, owner_user_id=user_id, access_token=access_token)
-            except Exception as e:
-                print(f"⚠️ Warning: Could not fetch batch: {e}")
-                import traceback
-                traceback.print_exc()
-    
-    # If we have a batch_id from session, get its info
-    if upload_batch_id and not batch_info:
-        batch_info = get_batch_with_submissions(upload_batch_id, owner_user_id=user_id, access_token=access_token)
-    
-    # Get all records (both needs_review and approved)
-    all_records = get_db_records(needs_review=None, owner_user_id=user_id, access_token=access_token)
-    
-    # Group records
-    grouped = group_records(all_records)
-    
     if review_mode == "needs_review":
-        records = grouped["needs_review"]
-        # Add pdf_url (direct Supabase Storage URL) to each record
-        for record in records:
-            pdf_path = get_pdf_path(record.get("artifact_dir", ""), access_token=access_token)
-            record["pdf_url"] = get_file_url(pdf_path, access_token=access_token) if pdf_path else None
+        needs_review_fields = [
+            "submission_id",
+            "student_name",
+            "school_name",
+            "grade",
+            "teacher_name",
+            "city_or_location",
+            "father_figure_name",
+            "phone",
+            "email",
+            "word_count",
+            "review_reason_codes",
+            "artifact_dir"
+        ]
+        if not upload_batch_id:
+            needs_review_fields.append("upload_batch_id")
+
+        records_start = time.perf_counter()
+        records = get_db_records(
+            needs_review=True,
+            owner_user_id=user_id,
+            access_token=access_token,
+            refresh_token=refresh_token,
+            select_fields=needs_review_fields
+        )
+        log_timing(f"⏱️ review needs_review records: {(time.perf_counter() - records_start):.3f}s ({len(records)} rows)")
+
+        # If no batch in session, try to find the most recent batch with submissions needing review
+        if not upload_batch_id:
+            batch_lookup_start = time.perf_counter()
+            batch_ids = {r.get("upload_batch_id") for r in records if r.get("upload_batch_id")}
+            log_timing(f"⏱️ review needs_review batch lookup: {(time.perf_counter() - batch_lookup_start):.3f}s ({len(batch_ids)} batches)")
+
+            if batch_ids:
+                try:
+                    supabase = get_supabase_client(access_token=access_token)
+                    if supabase and access_token:
+                        try:
+                            supabase.auth.set_session(access_token=access_token, refresh_token="")
+                        except:
+                            pass
+
+                    batch_fetch_start = time.perf_counter()
+                    batches_result = supabase.table("upload_batches").select("*").eq("owner_user_id", user_id).in_("id", list(batch_ids)).order("created_at", desc=True).limit(1).execute()
+                    log_timing(f"⏱️ review upload_batches query: {(time.perf_counter() - batch_fetch_start):.3f}s")
+
+                    if batches_result.data and len(batches_result.data) > 0:
+                        upload_batch_id = str(batches_result.data[0]["id"])
+                        batch_info_start = time.perf_counter()
+                        batch_info = get_batch_with_submissions(upload_batch_id, owner_user_id=user_id, access_token=access_token)
+                        log_timing(f"⏱️ review batch_info fetch: {(time.perf_counter() - batch_info_start):.3f}s")
+                except Exception as e:
+                    print(f"⚠️ Warning: Could not fetch batch: {e}")
+                    import traceback
+                    traceback.print_exc()
+
+        # If we have a batch_id from session, get its info
+        if upload_batch_id and not batch_info:
+            batch_info = get_batch_with_submissions(upload_batch_id, owner_user_id=user_id, access_token=access_token)
+
         action_label = "Approve"
         schools_data = None
     else:
         # For approved records, show grouped by school and grade
+        approved_start = time.perf_counter()
+        approved_records = get_db_records(
+            needs_review=False,
+            owner_user_id=user_id,
+            access_token=access_token,
+            refresh_token=refresh_token,
+            select_fields=[
+                "submission_id",
+                "student_name",
+                "school_name",
+                "grade",
+                "father_figure_name",
+                "word_count",
+                "artifact_dir"
+            ]
+        )
+        log_timing(f"⏱️ review approved records: {(time.perf_counter() - approved_start):.3f}s ({len(approved_records)} rows)")
+        group_start = time.perf_counter()
+        grouped = group_records(approved_records)
+        log_timing(f"⏱️ review group_records: {(time.perf_counter() - group_start):.3f}s")
         records = []  # Not used when showing grouped view
-        # Sort schools_data for consistent display
         schools_data = dict(sorted(grouped["schools"].items()))
-        # Sort grades within each school and add pdf_url to each record
+        # Sort grades within each school
         for school_name in schools_data:
             schools_data[school_name] = dict(sorted(schools_data[school_name].items(), 
                                                    key=lambda x: (str(x[0]).isdigit(), str(x[0]).lower())))
-            # Add pdf_url (direct Supabase Storage URL) to each record in each grade
-            for grade in schools_data[school_name]:
-                for record in schools_data[school_name][grade]:
-                    pdf_path = get_pdf_path(record.get("artifact_dir", ""), access_token=access_token)
-                    record["pdf_url"] = get_file_url(pdf_path, access_token=access_token) if pdf_path else None
         action_label = "Send for Review"
     
-    db_stats = get_db_stats(owner_user_id=user_id, access_token=access_token)
+    refresh_token = session.get("supabase_refresh_token")
+    stats_start = time.perf_counter()
+    db_stats = get_cached_db_stats(user_id, access_token, refresh_token)
+    log_timing(f"⏱️ review db_stats: {(time.perf_counter() - stats_start):.3f}s")
+    log_timing(f"⏱️ review total: {(time.perf_counter() - route_start):.3f}s (mode={review_mode})")
     
     return render_template("review.html",
                          records=records,
@@ -450,7 +644,8 @@ def record_detail(submission_id):
     
     user_id = session.get("user_id")
     access_token = session.get("supabase_access_token")
-    record = get_record_by_id(submission_id, owner_user_id=user_id, access_token=access_token)
+    refresh_token = session.get("supabase_refresh_token")
+    record = get_record_by_id(submission_id, owner_user_id=user_id, access_token=access_token, refresh_token=refresh_token)
     
     if not record:
         flash("Record not found.", "error")
@@ -506,6 +701,7 @@ def record_detail(submission_id):
         
         # Auto-reassignment: If record now has school_name and grade, check if it can be auto-approved
         # This happens when a record that was missing school/grade gets those fields filled in
+        auto_approve = False
         if updates.get("school_name") and updates.get("grade"):
             # Check if record can now be approved (has all required fields)
             can_approve, missing_fields = can_approve_record({
@@ -517,14 +713,18 @@ def record_detail(submission_id):
             # If record was in needs_review and now has all required fields, auto-approve it
             if can_approve and record.get("needs_review", True):
                 updates["needs_review"] = False
-                flash("✅ Record updated and automatically moved to approved batch!", "success")
+                auto_approve = True
             elif not can_approve:
                 # Still missing fields, keep in needs_review
                 updates["needs_review"] = True
         
         access_token = session.get("supabase_access_token")
-        if update_db_record(submission_id, updates, owner_user_id=user_id, access_token=access_token):
-            if "needs_review" not in updates:  # Only show this if we didn't auto-approve
+        refresh_token = session.get("supabase_refresh_token")
+        if update_db_record(submission_id, updates, owner_user_id=user_id, access_token=access_token, refresh_token=refresh_token):
+            # Only show success message after update succeeds
+            if auto_approve:
+                flash("✅ Record updated and automatically moved to approved batch!", "success")
+            else:
                 flash("✅ Record updated successfully!", "success")
         else:
             flash("❌ Failed to update record.", "error")
@@ -533,12 +733,10 @@ def record_detail(submission_id):
     
     access_token = session.get("supabase_access_token")
     pdf_path = get_pdf_path(record.get("artifact_dir", ""), access_token=access_token)
-    pdf_url = get_file_url(pdf_path, access_token=access_token) if pdf_path else None
     
     return render_template("record_detail.html",
                          record=record,
                          pdf_path=pdf_path,
-                         pdf_url=pdf_url,
                          format_review_reasons=format_review_reasons)
 
 
@@ -550,7 +748,8 @@ def approve_record(submission_id):
     
     user_id = session.get("user_id")
     access_token = session.get("supabase_access_token")
-    record = get_record_by_id(submission_id, owner_user_id=user_id, access_token=access_token)
+    refresh_token = session.get("supabase_refresh_token")
+    record = get_record_by_id(submission_id, owner_user_id=user_id, access_token=access_token, refresh_token=refresh_token)
     
     if not record:
         return jsonify({"success": False, "error": "Record not found"}), 404
@@ -569,7 +768,9 @@ def approve_record(submission_id):
             "error": f"Missing required fields: {missing_fields_str}"
         }), 400
     
-    if update_db_record(submission_id, {"needs_review": False}, owner_user_id=user_id, access_token=access_token):
+    refresh_token = session.get("supabase_refresh_token")
+    if update_db_record(submission_id, {"needs_review": False}, owner_user_id=user_id, access_token=access_token, refresh_token=refresh_token):
+        invalidate_db_stats_cache(user_id)
         return jsonify({"success": True})
     else:
         return jsonify({"success": False, "error": "Failed to update record"}), 500
@@ -584,7 +785,9 @@ def send_for_review(submission_id):
     user_id = session.get("user_id")
     access_token = session.get("supabase_access_token")
     
-    if update_db_record(submission_id, {"needs_review": True}, owner_user_id=user_id, access_token=access_token):
+    refresh_token = session.get("supabase_refresh_token")
+    if update_db_record(submission_id, {"needs_review": True}, owner_user_id=user_id, access_token=access_token, refresh_token=refresh_token):
+        invalidate_db_stats_cache(user_id)
         return jsonify({"success": True})
     else:
         return jsonify({"success": False, "error": "Failed to update record"}), 500
@@ -637,7 +840,8 @@ def bulk_update_records():
                     updates["grade"] = grade  # Keep as text if no number found
         
         try:
-            if update_db_record(submission_id, updates, owner_user_id=user_id, access_token=access_token):
+            refresh_token = session.get("supabase_refresh_token")
+            if update_db_record(submission_id, updates, owner_user_id=user_id, access_token=access_token, refresh_token=refresh_token):
                 updated_count += 1
             else:
                 errors.append(f"Failed to update {submission_id}")
@@ -651,7 +855,8 @@ def bulk_update_records():
             "errors": errors,
             "message": f"Updated {updated_count} records with errors."
         }), 500
-    
+
+    invalidate_db_stats_cache(user_id)
     return jsonify({
         "success": True,
         "updated_count": updated_count,
@@ -668,7 +873,9 @@ def delete_record(submission_id):
     user_id = session.get("user_id")
     access_token = session.get("supabase_access_token")
     
-    if delete_db_record(submission_id, owner_user_id=user_id, access_token=access_token):
+    refresh_token = session.get("supabase_refresh_token")
+    if delete_db_record(submission_id, owner_user_id=user_id, access_token=access_token, refresh_token=refresh_token):
+        invalidate_db_stats_cache(user_id)
         return jsonify({"success": True})
     else:
         return jsonify({"success": False, "error": "Failed to delete record"}), 500
@@ -888,9 +1095,30 @@ def serve_pdf(file_path):
     return f"File not found: {file_path}", 404
 
 
+@app.route("/jobs/<job_id>")
+def job_detail(job_id):
+    """View job status page."""
+    if not require_auth():
+        return redirect(url_for("login"))
+    
+    access_token = session.get("supabase_access_token")
+    user_id = session.get("user_id")
+    
+    # Get job status
+    status = get_job_status(job_id, access_token=access_token)
+    
+    # Verify user owns this job (if possible to check)
+    # RQ doesn't store user_id in job metadata easily, so we'll allow access
+    # In production, you might want to store user_id in job metadata
+    
+    return render_template("job_status.html",
+                         job_id=job_id,
+                         job_status=status)
+
+
 @app.route("/api/job_status/<job_id>")
 def job_status(job_id):
-    """Get the status of a processing job."""
+    """Get the status of a processing job (API endpoint)."""
     if not require_auth():
         return jsonify({"error": "Unauthorized"}), 401
     
@@ -951,12 +1179,18 @@ def apply_defaults(upload_batch_id: str):
 
 @app.route("/api/batch_status")
 def batch_status():
-    """Get status of all jobs in current batch."""
+    """Get status of all jobs in current batch using Redis/RQ."""
     if not require_auth():
         return jsonify({"error": "Unauthorized"}), 401
     
+    user_id = session.get("user_id")
     job_ids_in_session = session.get("processing_jobs", [])
-    if not job_ids_in_session:
+    
+    # Extract job IDs from session (from Redis/RQ)
+    job_ids = [job_info.get("job_id") for job_info in job_ids_in_session if job_info.get("job_id")]
+    
+    # If no job IDs in session, return empty status (no fallback to PostgreSQL)
+    if not job_ids:
         return jsonify({
             "total": 0,
             "completed": 0,
@@ -966,27 +1200,112 @@ def batch_status():
             "estimated_remaining_seconds": 0
         })
     
-    # Extract job IDs
-    job_ids = [job_info.get("job_id") for job_info in job_ids_in_session if job_info.get("job_id")]
-    
-    # Get aggregated status using PostgreSQL queue
+    # Get aggregated status using Redis/RQ queue
     access_token = session.get("supabase_access_token")
     status = get_queue_status(job_ids, access_token=access_token)
     
     return jsonify(status)
+
+
+@app.route("/api/worker_status")
+def worker_status():
+    """Diagnostic endpoint to check worker status and recent jobs."""
+    if not require_auth():
+        return jsonify({"error": "Unauthorized"}), 401
     
-    return jsonify({
-        "total": total,
-        "completed": completed,
-        "failed": failed,
-        "pending": pending,
-        "estimated_remaining_seconds": estimated_remaining,
-        "jobs": jobs_status
-    })
+    try:
+        from supabase import create_client
+        supabase_url = os.environ.get("SUPABASE_URL")
+        service_role_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+        
+        if not service_role_key:
+            return jsonify({
+                "worker_configured": False,
+                "error": "SUPABASE_SERVICE_ROLE_KEY not set in environment"
+            }), 500
+        
+        if not supabase_url:
+            return jsonify({
+                "worker_configured": False,
+                "error": "SUPABASE_URL not set in environment"
+            }), 500
+        
+        supabase = create_client(supabase_url, service_role_key)
+        
+        # Get recent jobs (last 10)
+        result = supabase.table("jobs").select(
+            "id, status, created_at, started_at, finished_at, error_message, job_data"
+        ).order("created_at", desc=True).limit(10).execute()
+        
+        jobs = result.data if result.data else []
+        
+        # Count by status
+        status_counts = {}
+        for job in jobs:
+            status = job.get("status", "unknown")
+            status_counts[status] = status_counts.get(status, 0) + 1
+        
+        # Check if any jobs are stuck (queued for more than 2 minutes)
+        from datetime import datetime, timezone, timedelta
+        now = datetime.now(timezone.utc)
+        stuck_threshold = timedelta(minutes=2)
+        
+        stuck_jobs = []
+        for job in jobs:
+            if job.get("status") == "queued":
+                created_at_str = job.get("created_at")
+                if created_at_str:
+                    try:
+                        created_at = datetime.fromisoformat(created_at_str.replace('Z', '+00:00'))
+                        if now - created_at > stuck_threshold:
+                            stuck_jobs.append({
+                                "id": job.get("id"),
+                                "created_at": created_at_str,
+                                "filename": job.get("job_data", {}).get("filename", "unknown")
+                            })
+                    except:
+                        pass
+        
+        # Get oldest stuck job
+        oldest_stuck = stuck_jobs[0] if stuck_jobs else None
+        
+        # Get user's recent jobs
+        user_id = session.get("user_id")
+        user_jobs = []
+        if user_id:
+            user_jobs = [j for j in jobs if j.get("job_data", {}).get("owner_user_id") == user_id]
+        
+        return jsonify({
+            "worker_configured": True,
+            "service_role_key_set": bool(service_role_key),
+            "total_recent_jobs": len(jobs),
+            "user_jobs_count": len(user_jobs),
+            "status_counts": status_counts,
+            "stuck_jobs_count": len(stuck_jobs),
+            "oldest_stuck_job": oldest_stuck,
+            "user_recent_jobs": [
+                {
+                    "id": j.get("id"),
+                    "status": j.get("status"),
+                    "filename": j.get("job_data", {}).get("filename", "unknown"),
+                    "created_at": j.get("created_at"),
+                    "started_at": j.get("started_at"),
+                    "finished_at": j.get("finished_at"),
+                    "error": j.get("error_message")
+                }
+                for j in user_jobs[:5]
+            ]
+        })
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "worker_configured": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
 
 
 if __name__ == "__main__":
     # Render sets PORT environment variable, fallback to FLASK_PORT or 5000
     port = int(os.environ.get("PORT", os.environ.get("FLASK_PORT", 5000)))
     app.run(host="0.0.0.0", port=port, debug=False)  # debug=False for production
-

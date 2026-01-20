@@ -86,3 +86,7 @@ COMMENT ON COLUMN public.submissions.school_source IS 'Source of school_name: ex
 COMMENT ON COLUMN public.submissions.grade_source IS 'Source of grade: extracted, batch_default, or manual';
 COMMENT ON COLUMN public.submissions.teacher_source IS 'Source of teacher_name: extracted, batch_default, or manual';
 
+
+
+
+

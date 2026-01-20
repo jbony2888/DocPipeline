@@ -298,8 +298,9 @@
                                         <td>{{ record.father_figure_name or 'N/A' }}</td>
                                         <td>{{ record.word_count or 0 }}</td>
                                         <td>
-                                            {% if record.pdf_url %}
-                                            <a href="{{ record.pdf_url }}" 
+                                            {% set pdf_path = get_pdf_path(record.get('artifact_dir', '')) %}
+                                            {% if pdf_path %}
+                                            <a href="{{ url_for('serve_pdf', file_path=pdf_path) }}" 
                                                target="_blank" 
                                                class="btn btn-outline-primary btn-sm">
                                                 <i class="bi bi-file-pdf"></i> View PDF
@@ -588,4 +589,3 @@ function deleteRecord(submissionId) {
 }
 </script>
 {% endblock %}
-

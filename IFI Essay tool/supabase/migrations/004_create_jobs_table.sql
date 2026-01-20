@@ -77,3 +77,7 @@ COMMENT ON COLUMN jobs.job_data IS 'JSONB containing job parameters (file_bytes 
 COMMENT ON COLUMN jobs.result IS 'JSONB containing job result when finished';
 COMMENT ON COLUMN jobs.progress IS 'Progress percentage (0-100)';
 
+
+
+
+
