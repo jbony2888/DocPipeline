@@ -11,7 +11,7 @@
     <div class="col-md-4">
         <div class="card">
             <div class="card-body text-center">
-                <h3 class="h2">{{ db_stats.total_count }}</h3>
+                <h3 class="h2" id="dbStatsTotal">{{ db_stats.total_count }}</h3>
                 <p class="text-muted mb-0">📊 Total Records</p>
             </div>
         </div>
@@ -19,7 +19,7 @@
     <div class="col-md-4">
         <div class="card">
             <div class="card-body text-center">
-                <h3 class="h2 text-success">{{ db_stats.clean_count }}</h3>
+                <h3 class="h2 text-success" id="dbStatsClean">{{ db_stats.clean_count }}</h3>
                 <p class="text-muted mb-0">✅ Clean Records</p>
             </div>
         </div>
@@ -27,7 +27,7 @@
     <div class="col-md-4">
         <div class="card">
             <div class="card-body text-center">
-                <h3 class="h2 text-warning">{{ db_stats.needs_review_count }}</h3>
+                <h3 class="h2 text-warning" id="dbStatsNeedsReview">{{ db_stats.needs_review_count }}</h3>
                 <p class="text-muted mb-0">⚠️ Needs Review</p>
             </div>
         </div>

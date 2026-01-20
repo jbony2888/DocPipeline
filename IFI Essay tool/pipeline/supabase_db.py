@@ -82,18 +82,10 @@ def check_duplicate_submission(submission_id: str, current_user_id: str, access_
 def save_record(record: SubmissionRecord, filename: str, owner_user_id: str, access_token: Optional[str] = None, upload_batch_id: Optional[str] = None) -> Dict[str, Any]:
     """Save a submission record to Supabase."""
     try:
-        # Get Supabase client and set authenticated session if token provided
-        supabase = get_supabase_client()
-        
-        # Set authenticated session if access token provided (required for RLS)
-        if access_token:
-            try:
-                supabase.auth.set_session(
-                    access_token=access_token,
-                    refresh_token=""  # Refresh token not needed for database operations
-                )
-            except Exception as e:
-                print(f"⚠️ Warning: Could not set session: {e}")
+        # Prefer an authenticated client when possible (RLS relies on auth.uid()).
+        supabase = get_supabase_client(access_token=access_token) if access_token else get_supabase_client()
+        if not supabase:
+            raise Exception("Could not initialize Supabase client")
         
         # Convert Pydantic model to dict
         record_dict = record.model_dump() if hasattr(record, 'model_dump') else record.dict()
@@ -161,25 +153,12 @@ def get_records(
 ) -> List[Dict]:
     """Get submission records from Supabase."""
     try:
-        # Create client with anon key, then set session for RLS
-        supabase = get_supabase_client()
+        # Prefer an authenticated client when possible (RLS relies on auth.uid()).
+        supabase = get_supabase_client(access_token=access_token) if access_token else get_supabase_client()
         
         if not supabase:
             print("❌ Error: Could not initialize Supabase client")
             return []
-        
-        # Set authenticated session if access token provided (required for RLS)
-        if access_token:
-            try:
-                # Use refresh_token if provided, otherwise use empty string
-                refresh = refresh_token if refresh_token else ""
-                supabase.auth.set_session(
-                    access_token=access_token,
-                    refresh_token=refresh
-                )
-            except Exception as e:
-                print(f"⚠️ Warning: Could not set session for get_records: {e}")
-                # Continue without session, RLS will block but won't crash
         
         select_expr = "*"
         if select_fields:
@@ -220,34 +199,12 @@ def get_records(
 def get_record_by_id(submission_id: str, owner_user_id: Optional[str] = None, access_token: Optional[str] = None, refresh_token: Optional[str] = None) -> Optional[Dict]:
     """Get a single record by submission_id."""
     try:
-        # Create client with anon key, then set session for RLS
-        supabase = get_supabase_client()
+        # Prefer an authenticated client when possible (RLS relies on auth.uid()).
+        supabase = get_supabase_client(access_token=access_token) if access_token else get_supabase_client()
         
         if not supabase:
             print("❌ Error: Could not initialize Supabase client")
             return None
-        
-        # Set authenticated session if access token provided (required for RLS)
-        if access_token:
-            try:
-                refresh = refresh_token if refresh_token else ""
-                supabase.auth.set_session(
-                    access_token=access_token,
-                    refresh_token=refresh
-                )
-            except Exception as e:
-                print(f"⚠️ Warning: Could not set session for get_record_by_id: {e}")
-                # Continue without session, RLS will block but won't crash
-        
-        # Set authenticated session if access token provided (required for RLS)
-        if access_token:
-            try:
-                supabase.auth.set_session(
-                    access_token=access_token,
-                    refresh_token=""
-                )
-            except Exception as e:
-                print(f"⚠️ Warning: Could not set session: {e}")
         
         query = supabase.table("submissions").select("*").eq("submission_id", submission_id)
         
@@ -267,24 +224,12 @@ def get_record_by_id(submission_id: str, owner_user_id: Optional[str] = None, ac
 def update_record(submission_id: str, updates: Dict, owner_user_id: Optional[str] = None, access_token: Optional[str] = None, refresh_token: Optional[str] = None) -> bool:
     """Update a submission record."""
     try:
-        # Create client with anon key, then set session for RLS
-        supabase = get_supabase_client()
+        # Prefer an authenticated client when possible (RLS relies on auth.uid()).
+        supabase = get_supabase_client(access_token=access_token) if access_token else get_supabase_client()
         
         if not supabase:
             print("❌ Error: Could not initialize Supabase client")
             return False
-        
-        # Set authenticated session if access token provided (required for RLS)
-        if access_token:
-            try:
-                refresh = refresh_token if refresh_token else ""
-                supabase.auth.set_session(
-                    access_token=access_token,
-                    refresh_token=refresh
-                )
-            except Exception as e:
-                print(f"⚠️ Warning: Could not set session for update_record: {e}")
-                # Continue without session, RLS will block but won't crash
         
         # Add updated_at timestamp
         updates["updated_at"] = datetime.now().isoformat()
@@ -312,24 +257,12 @@ def update_record(submission_id: str, updates: Dict, owner_user_id: Optional[str
 def delete_record(submission_id: str, owner_user_id: Optional[str] = None, access_token: Optional[str] = None, refresh_token: Optional[str] = None) -> bool:
     """Delete a submission record."""
     try:
-        # Create client with anon key, then set session for RLS
-        supabase = get_supabase_client()
+        # Prefer an authenticated client when possible (RLS relies on auth.uid()).
+        supabase = get_supabase_client(access_token=access_token) if access_token else get_supabase_client()
         
         if not supabase:
             print("❌ Error: Could not initialize Supabase client")
             return False
-        
-        # Set authenticated session if access token provided (required for RLS)
-        if access_token:
-            try:
-                refresh = refresh_token if refresh_token else ""
-                supabase.auth.set_session(
-                    access_token=access_token,
-                    refresh_token=refresh
-                )
-            except Exception as e:
-                print(f"⚠️ Warning: Could not set session for delete_record: {e}")
-                # Continue without session, RLS will block but won't crash
         
         query = supabase.table("submissions").delete().eq("submission_id", submission_id)
         
@@ -346,21 +279,12 @@ def delete_record(submission_id: str, owner_user_id: Optional[str] = None, acces
 def get_stats(owner_user_id: Optional[str] = None, access_token: Optional[str] = None, refresh_token: Optional[str] = None) -> Dict:
     """Get statistics about submissions."""
     try:
-        supabase = get_supabase_client()
+        # Prefer an authenticated client when possible (RLS relies on auth.uid()).
+        supabase = get_supabase_client(access_token=access_token) if access_token else get_supabase_client()
 
         if not supabase:
             print("❌ Error: Could not initialize Supabase client")
             return {"total_count": 0, "clean_count": 0, "needs_review_count": 0}
-
-        if access_token:
-            try:
-                refresh = refresh_token if refresh_token else ""
-                supabase.auth.set_session(
-                    access_token=access_token,
-                    refresh_token=refresh
-                )
-            except Exception as e:
-                print(f"⚠️ Warning: Could not set session for get_stats: {e}")
 
         def _count_for(needs_review_value: Optional[bool] = None) -> int:
             query = supabase.table("submissions").select("submission_id", count="exact", head=True)

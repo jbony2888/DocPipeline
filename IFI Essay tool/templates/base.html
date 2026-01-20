@@ -215,7 +215,24 @@
             }
         }
     </script>
+    <script>
+        // Keep stats "instant" by rendering immediately, then refreshing asynchronously.
+        document.addEventListener('DOMContentLoaded', function() {
+            const totalEl = document.getElementById('dbStatsTotal');
+            const cleanEl = document.getElementById('dbStatsClean');
+            const needsReviewEl = document.getElementById('dbStatsNeedsReview');
+            if (!totalEl && !cleanEl && !needsReviewEl) return;
+
+            fetch('/api/db_stats?fresh=1', { headers: { 'Accept': 'application/json' }})
+                .then(r => r.ok ? r.json() : Promise.reject(r))
+                .then(stats => {
+                    if (totalEl && stats.total_count !== undefined) totalEl.textContent = stats.total_count;
+                    if (cleanEl && stats.clean_count !== undefined) cleanEl.textContent = stats.clean_count;
+                    if (needsReviewEl && stats.needs_review_count !== undefined) needsReviewEl.textContent = stats.needs_review_count;
+                })
+                .catch(() => {});
+        });
+    </script>
     {% block extra_js %}{% endblock %}
 </body>
 </html>
-

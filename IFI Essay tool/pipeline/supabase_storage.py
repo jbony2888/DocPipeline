@@ -38,20 +38,8 @@ def upload_file(
             - error: Error message if failed
     """
     try:
-        # Get Supabase client and set authenticated session if token provided
-        supabase = get_supabase_client()
-        
-        # Set authenticated session if access token provided
-        if access_token:
-            try:
-                # Set the session to use the authenticated user's token
-                supabase.auth.set_session(
-                    access_token=access_token,
-                    refresh_token=""  # Refresh token not needed for storage operations
-                )
-            except Exception as e:
-                print(f"⚠️ Warning: Could not set session: {e}")
-                # Continue anyway - might still work with anon key if bucket is public
+        # Create client and apply bearer token (if provided) for storage RLS.
+        supabase = get_supabase_client(access_token=access_token)
         
         # Upload to storage
         result = supabase.storage.from_(BUCKET_NAME).upload(
@@ -156,20 +144,8 @@ def download_file(file_path: str, access_token: Optional[str] = None) -> Optiona
         File bytes or None if error
     """
     try:
-        # Get Supabase client and set authenticated session if token provided
-        supabase = get_supabase_client()
-        
-        # Set authenticated session if access token provided
-        if access_token:
-            try:
-                # Set the session to use the authenticated user's token
-                supabase.auth.set_session(
-                    access_token=access_token,
-                    refresh_token=""  # Refresh token not needed for storage operations
-                )
-            except Exception as e:
-                print(f"⚠️ Warning: Could not set session: {e}")
-                # Continue anyway - might still work with anon key if bucket is public
+        # Create client and apply bearer token (if provided) for storage RLS.
+        supabase = get_supabase_client(access_token=access_token)
         
         result = supabase.storage.from_(BUCKET_NAME).download(file_path)
         return result
@@ -219,20 +195,8 @@ def get_file_url(file_path: str, access_token: Optional[str] = None) -> Optional
         Public URL or None if error
     """
     try:
-        # Get Supabase client and set authenticated session if token provided
-        supabase = get_supabase_client()
-        
-        # Set authenticated session if access token provided
-        if access_token:
-            try:
-                # Set the session to use the authenticated user's token
-                supabase.auth.set_session(
-                    access_token=access_token,
-                    refresh_token=""  # Refresh token not needed for storage operations
-                )
-            except Exception as e:
-                print(f"⚠️ Warning: Could not set session: {e}")
-                # Continue anyway - might still work with anon key if bucket is public
+        # Create client and apply bearer token (if provided) for storage RLS.
+        supabase = get_supabase_client(access_token=access_token)
         
         result = supabase.storage.from_(BUCKET_NAME).get_public_url(file_path)
         return result
