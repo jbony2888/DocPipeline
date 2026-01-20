@@ -96,7 +96,7 @@ def get_redis_client() -> Optional[redis.Redis]:
 def get_cached_db_stats(user_id: Optional[str], access_token: Optional[str], refresh_token: Optional[str]) -> Dict[str, int]:
     """Return cached stats for a user within TTL to avoid repeated count queries."""
     if not user_id:
-        return get_db_stats(owner_user_id=user_id, access_token=access_token, refresh_token=refresh_token)
+        return {"total_count": 0, "clean_count": 0, "needs_review_count": 0}
 
     cache_key = f"db_stats:{user_id}"
     redis_client = get_redis_client()
@@ -121,6 +121,30 @@ def get_cached_db_stats(user_id: Optional[str], access_token: Optional[str], ref
         except Exception as e:
             print(f"⚠️ Warning: Redis cache write failed: {e}", flush=True)
     return stats
+
+
+def get_cached_db_stats_cached_only(user_id: Optional[str]) -> Dict[str, int]:
+    """
+    Return cached stats without doing any Supabase queries.
+    This keeps page renders instant; the UI can refresh stats asynchronously.
+    """
+    if not user_id:
+        return {"total_count": 0, "clean_count": 0, "needs_review_count": 0}
+
+    cached = _db_stats_cache.get(user_id)
+    if cached and isinstance(cached.get("stats"), dict):
+        return cached["stats"]
+
+    redis_client = get_redis_client()
+    if redis_client:
+        try:
+            cached_value = redis_client.get(f"db_stats:{user_id}")
+            if cached_value:
+                return json.loads(cached_value)
+        except Exception as e:
+            print(f"⚠️ Warning: Redis cache read failed: {e}", flush=True)
+
+    return {"total_count": 0, "clean_count": 0, "needs_review_count": 0}
 
 
 def invalidate_db_stats_cache(user_id: Optional[str]) -> None:
@@ -189,11 +213,7 @@ def index():
         return redirect(url_for("login"))
     
     user_id = session.get("user_id")
-    access_token = session.get("supabase_access_token")
-    refresh_token = session.get("supabase_refresh_token")
-    stats_start = time.perf_counter()
-    db_stats = get_cached_db_stats(user_id, access_token, refresh_token)
-    log_timing(f"⏱️ index db_stats: {(time.perf_counter() - stats_start):.3f}s")
+    db_stats = get_cached_db_stats_cached_only(user_id)
     
     return render_template("dashboard.html",
                          user_email=session.get("user_email"),
@@ -617,10 +637,7 @@ def review():
                                                    key=lambda x: (str(x[0]).isdigit(), str(x[0]).lower())))
         action_label = "Send for Review"
     
-    refresh_token = session.get("supabase_refresh_token")
-    stats_start = time.perf_counter()
-    db_stats = get_cached_db_stats(user_id, access_token, refresh_token)
-    log_timing(f"⏱️ review db_stats: {(time.perf_counter() - stats_start):.3f}s")
+    db_stats = get_cached_db_stats_cached_only(user_id)
     log_timing(f"⏱️ review total: {(time.perf_counter() - route_start):.3f}s (mode={review_mode})")
     
     return render_template("review.html",
@@ -634,6 +651,37 @@ def review():
                          schools_data=schools_data,
                          batch_info=batch_info,
                          upload_batch_id=upload_batch_id)
+
+
+@app.route("/api/db_stats")
+def api_db_stats():
+    """Return per-user database stats (optionally bypassing cache)."""
+    if not require_auth():
+        return jsonify({"error": "Unauthorized"}), 401
+
+    user_id = session.get("user_id")
+    access_token = session.get("supabase_access_token")
+    refresh_token = session.get("supabase_refresh_token")
+    fresh = request.args.get("fresh") == "1"
+
+    if not user_id:
+        return jsonify({"total_count": 0, "clean_count": 0, "needs_review_count": 0})
+
+    if not fresh:
+        return jsonify(get_cached_db_stats(user_id, access_token, refresh_token))
+
+    stats = get_db_stats(owner_user_id=user_id, access_token=access_token, refresh_token=refresh_token)
+
+    now = time.time()
+    _db_stats_cache[user_id] = {"ts": now, "stats": stats}
+    redis_client = get_redis_client()
+    if redis_client:
+        try:
+            redis_client.setex(f"db_stats:{user_id}", DB_STATS_TTL_SECONDS, json.dumps(stats))
+        except Exception as e:
+            print(f"⚠️ Warning: Redis cache write failed: {e}", flush=True)
+
+    return jsonify(stats)
 
 
 @app.route("/record/<submission_id>", methods=["GET", "POST"])
