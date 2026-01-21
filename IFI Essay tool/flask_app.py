@@ -1,6 +1,7 @@
 """
 Flask application for IFI Essay Gateway.
 Replaces Streamlit with better redirect handling for Supabase magic links.
+Includes embedded background worker for processing jobs from Redis.
 """
 
 from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, send_file
@@ -14,6 +15,7 @@ import re
 from typing import Optional, List, Dict, Any
 import logging
 import time
+import threading
 import redis
 
 # Load environment variables from .env file (for local development)
@@ -1353,7 +1355,75 @@ def worker_status():
         }), 500
 
 
+# ============================================================================
+# EMBEDDED BACKGROUND WORKER
+# Runs RQ worker in a background thread so no separate worker service is needed
+# ============================================================================
+
+_worker_thread = None
+_worker_started = False
+
+def start_background_worker():
+    """Start the RQ worker in a background thread."""
+    global _worker_thread, _worker_started
+    
+    if _worker_started:
+        return
+    
+    redis_url = os.environ.get("REDIS_URL")
+    if not redis_url:
+        print("⚠️ REDIS_URL not set - background worker disabled")
+        return
+    
+    def run_worker():
+        """Worker thread function."""
+        try:
+            from rq import Worker, Queue
+            from jobs.redis_queue import get_redis_client
+            
+            redis_client = get_redis_client()
+            
+            # Test connection
+            try:
+                redis_client.ping()
+                print("✅ Background worker connected to Redis")
+            except Exception as e:
+                print(f"❌ Background worker failed to connect to Redis: {e}")
+                return
+            
+            # Create queue and worker
+            queue = Queue("submissions", connection=redis_client)
+            worker = Worker([queue], connection=redis_client, name=f"embedded-worker-{os.getpid()}")
+            
+            print("🚀 Background worker started (embedded in Flask app)")
+            print("📊 Listening for jobs on 'submissions' queue...")
+            
+            # Run worker (this blocks the thread, which is fine since it's a daemon thread)
+            worker.work(with_scheduler=False)
+            
+        except Exception as e:
+            print(f"❌ Background worker error: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    # Start worker in daemon thread (will stop when main process stops)
+    _worker_thread = threading.Thread(target=run_worker, daemon=True)
+    _worker_thread.start()
+    _worker_started = True
+    print("✅ Background worker thread started")
+
+
+# Start worker when module loads (for production with gunicorn/uwsgi)
+# Only start if not in debug/reload mode
+if os.environ.get("WERKZEUG_RUN_MAIN") != "true" or os.environ.get("FLASK_DEBUG") != "1":
+    start_background_worker()
+
+
 if __name__ == "__main__":
     # Render sets PORT environment variable, fallback to FLASK_PORT or 5000
     port = int(os.environ.get("PORT", os.environ.get("FLASK_PORT", 5000)))
+    
+    # Start background worker if not already started
+    start_background_worker()
+    
     app.run(host="0.0.0.0", port=port, debug=False)  # debug=False for production
