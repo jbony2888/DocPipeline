@@ -1385,7 +1385,7 @@ def start_background_worker():
     def run_worker():
         """Worker thread function."""
         try:
-            from rq import Worker, Queue
+            from rq import SimpleWorker, Queue  # SimpleWorker doesn't install signal handlers
             from jobs.redis_queue import get_redis_client
             import uuid
             
@@ -1400,9 +1400,11 @@ def start_background_worker():
                 return
             
             # Create queue and worker with unique name
+            # Using SimpleWorker because it doesn't install signal handlers
+            # (signal handlers can only be set from the main thread)
             queue = Queue("submissions", connection=redis_client)
             worker_name = f"embedded-{uuid.uuid4().hex[:8]}"
-            worker = Worker([queue], connection=redis_client, name=worker_name)
+            worker = SimpleWorker([queue], connection=redis_client, name=worker_name)
             
             print(f"🚀 Background worker '{worker_name}' started (embedded in Flask app)")
             print("📊 Listening for jobs on 'submissions' queue...")
