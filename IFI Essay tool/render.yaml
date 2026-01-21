@@ -1,60 +1,52 @@
 services:
+  # Web Service - Flask app
   - type: web
     name: ifi-essay-gateway
-    env: python
+    runtime: python
     region: oregon
-    plan: starter  # $7/month - upgrade to avoid spin-down. Use 'free' for free tier (spins down after 15min idle)
+    plan: starter
+    rootDir: IFI Essay tool
     buildCommand: pip install -r requirements-flask.txt && mkdir -p artifacts outputs data templates static/css static/js
     startCommand: python flask_app.py
     envVars:
-      # Required: Supabase Configuration
       - key: SUPABASE_URL
-        sync: false  # Set manually in Render dashboard
+        sync: false
       - key: SUPABASE_ANON_KEY
-        sync: false  # Set manually in Render dashboard
+        sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
-        sync: false  # Set manually in Render dashboard
-      
-      # Required: Flask Configuration
+        sync: false
       - key: FLASK_SECRET_KEY
-        sync: false  # Set manually in Render dashboard (generate with: python -c "import secrets; print(secrets.token_hex(32))")
-      - key: FLASK_PORT
-        value: $PORT  # Render provides this automatically
-      
-      # Required: Google Cloud Vision credentials (as JSON string)
-      # Set this in Render dashboard: Paste entire service account JSON as a single-line string
+        sync: false
       - key: GOOGLE_CLOUD_VISION_CREDENTIALS_JSON
-        sync: false  # Set manually in Render dashboard
-      
-      # Required: Groq API key for LLM extraction
-      # Set this in Render dashboard
+        sync: false
       - key: GROQ_API_KEY
-        sync: false  # Set manually in Render dashboard
-      
-      # Required: Redis Configuration (for background job queue)
-      # Format: redis://default:PASSWORD@HOST:PORT/0
+        sync: false
       - key: REDIS_URL
-        sync: false  # Set manually in Render dashboard
-      
-      # Required: Application URL (for email links)
+        sync: false
       - key: APP_URL
-        sync: false  # Set manually in Render dashboard (e.g., https://your-app.onrender.com)
-      
-      # Optional: Email Configuration
-      - key: SMTP_HOST
         sync: false
-      - key: SMTP_PORT
-        sync: false
-      - key: SMTP_USER
-        sync: false
-      - key: SMTP_PASS
-        sync: false
-      - key: SMTP_USE_TLS
-        sync: false
-      - key: FROM_EMAIL
-        sync: false
-      
-      # Optional: Worker Configuration
-      - key: WORKER_ID
-        value: worker-1
 
+  # Background Worker - RQ worker for processing jobs
+  - type: worker
+    name: ifi-essay-worker
+    runtime: python
+    region: oregon
+    plan: starter
+    rootDir: IFI Essay tool
+    buildCommand: pip install -r requirements-flask.txt
+    startCommand: python worker_rq.py
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: GOOGLE_CLOUD_VISION_CREDENTIALS_JSON
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: WORKER_ID
+        value: render-worker-1
