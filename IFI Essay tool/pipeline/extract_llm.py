@@ -17,6 +17,7 @@ def _extract_school_name_fallback(contact_block: str) -> Optional[str]:
     """
     Fallback rule-based extraction for school names when LLM fails.
     
+    
     Searches for school name patterns in the contact block:
     - Lines containing school type keywords (Elementary, Middle, High, School, Academy)
     - Lines near "School" or "Escuela" labels (within 5 lines)
