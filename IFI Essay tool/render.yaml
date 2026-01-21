@@ -1,5 +1,6 @@
 services:
-  # Web Service - Flask app
+  # Web Service - Flask app with embedded background worker
+  # No separate worker service needed - saves $7/month!
   - type: web
     name: ifi-essay-gateway
     runtime: python
@@ -25,28 +26,6 @@ services:
         sync: false
       - key: APP_URL
         sync: false
-
-  # Background Worker - RQ worker for processing jobs
-  - type: worker
-    name: ifi-essay-worker
-    runtime: python
-    region: oregon
-    plan: starter
-    rootDir: IFI Essay tool
-    buildCommand: pip install -r requirements-flask.txt
-    startCommand: python worker_rq.py
-    envVars:
-      - key: SUPABASE_URL
-        sync: false
-      - key: SUPABASE_ANON_KEY
-        sync: false
-      - key: SUPABASE_SERVICE_ROLE_KEY
-        sync: false
-      - key: GOOGLE_CLOUD_VISION_CREDENTIALS_JSON
-        sync: false
-      - key: GROQ_API_KEY
-        sync: false
-      - key: REDIS_URL
-        sync: false
-      - key: WORKER_ID
-        value: render-worker-1
+      # Enable embedded background worker (no separate worker service needed)
+      - key: EMBEDDED_WORKER
+        value: "true"

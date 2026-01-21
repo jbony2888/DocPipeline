@@ -1358,6 +1358,7 @@ def worker_status():
 # ============================================================================
 # EMBEDDED BACKGROUND WORKER
 # Runs RQ worker in a background thread so no separate worker service is needed
+# Only enabled when EMBEDDED_WORKER=true (for Render single-service deployment)
 # ============================================================================
 
 _worker_thread = None
@@ -1370,6 +1371,12 @@ def start_background_worker():
     if _worker_started:
         return
     
+    # Only start embedded worker if explicitly enabled
+    # This prevents conflicts with separate worker containers in Docker
+    if os.environ.get("EMBEDDED_WORKER", "").lower() != "true":
+        print("ℹ️ Embedded worker disabled (set EMBEDDED_WORKER=true to enable)")
+        return
+    
     redis_url = os.environ.get("REDIS_URL")
     if not redis_url:
         print("⚠️ REDIS_URL not set - background worker disabled")
@@ -1380,6 +1387,7 @@ def start_background_worker():
         try:
             from rq import Worker, Queue
             from jobs.redis_queue import get_redis_client
+            import uuid
             
             redis_client = get_redis_client()
             
@@ -1391,11 +1399,12 @@ def start_background_worker():
                 print(f"❌ Background worker failed to connect to Redis: {e}")
                 return
             
-            # Create queue and worker
+            # Create queue and worker with unique name
             queue = Queue("submissions", connection=redis_client)
-            worker = Worker([queue], connection=redis_client, name=f"embedded-worker-{os.getpid()}")
+            worker_name = f"embedded-{uuid.uuid4().hex[:8]}"
+            worker = Worker([queue], connection=redis_client, name=worker_name)
             
-            print("🚀 Background worker started (embedded in Flask app)")
+            print(f"🚀 Background worker '{worker_name}' started (embedded in Flask app)")
             print("📊 Listening for jobs on 'submissions' queue...")
             
             # Run worker (this blocks the thread, which is fine since it's a daemon thread)
@@ -1414,8 +1423,8 @@ def start_background_worker():
 
 
 # Start worker when module loads (for production with gunicorn/uwsgi)
-# Only start if not in debug/reload mode
-if os.environ.get("WERKZEUG_RUN_MAIN") != "true" or os.environ.get("FLASK_DEBUG") != "1":
+# Only start if EMBEDDED_WORKER=true
+if os.environ.get("EMBEDDED_WORKER", "").lower() == "true":
     start_background_worker()
 
 
