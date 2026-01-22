@@ -253,9 +253,9 @@ def login():
             
             supabase.auth.sign_in_with_otp({
                 "email": email,
+                "create_user": True,
                 "options": {
-                    "email_redirect_to": redirect_url,
-                    "should_create_user": True
+                    "emailRedirectTo": redirect_url
                 }
             })
             
