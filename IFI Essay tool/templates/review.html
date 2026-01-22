@@ -118,7 +118,7 @@
                                    placeholder="e.g., 5, K, or Kindergarten">
                         </div>
                     </div>
-                    <div class="d-flex gap-2 align-items-center">
+                    <div class="d-flex gap-2 align-items-center flex-wrap">
                         <button type="button" class="btn btn-primary" onclick="applyBulkEdit()">
                             <i class="bi bi-check-circle"></i> Apply to Selected (<span id="selectedCount">0</span>)
                         </button>
@@ -127,6 +127,9 @@
                         </button>
                         <button type="button" class="btn btn-outline-secondary" onclick="deselectAllRecords()">
                             <i class="bi bi-x-square"></i> Deselect All
+                        </button>
+                        <button type="button" class="btn btn-danger" onclick="bulkDeleteRecords()" id="bulkDeleteBtn">
+                            <i class="bi bi-trash"></i> Delete Selected (<span id="deleteCount">0</span>)
                         </button>
                         <span id="bulkEditStatus" class="ms-3"></span>
                     </div>
@@ -350,9 +353,16 @@
 // Bulk edit functionality
 function updateSelectedCount() {
     const checkboxes = document.querySelectorAll('.record-checkbox:checked');
+    const count = checkboxes.length;
+    
     const countEl = document.getElementById('selectedCount');
     if (countEl) {
-        countEl.textContent = checkboxes.length;
+        countEl.textContent = count;
+    }
+    
+    const deleteCountEl = document.getElementById('deleteCount');
+    if (deleteCountEl) {
+        deleteCountEl.textContent = count;
     }
 }
 
@@ -415,6 +425,52 @@ function applyBulkEdit() {
             .catch(error => {
                 console.error('Error during bulk update:', error);
                 showToastModal('Network error during bulk update.', 'error');
+                statusEl.innerHTML = '<span class="text-danger">❌ Network Error!</span>';
+            });
+        }
+    );
+}
+
+function bulkDeleteRecords() {
+    const checkboxes = document.querySelectorAll('.record-checkbox:checked');
+    const selectedIds = Array.from(checkboxes).map(cb => cb.value);
+    const statusEl = document.getElementById('bulkEditStatus');
+
+    if (selectedIds.length === 0) {
+        showToastModal('Please select at least one record to delete.', 'error');
+        return;
+    }
+
+    showConfirmModal(
+        'Delete Selected Records',
+        `⚠️ Are you sure you want to permanently delete ${selectedIds.length} selected record(s)? This action cannot be undone.`,
+        'Delete',
+        'btn-danger',
+        function() {
+            statusEl.innerHTML = '<span class="text-danger"><i class="bi bi-arrow-clockwise spin"></i> Deleting...</span>';
+            fetch('/api/bulk_delete_records', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    selected_ids: selectedIds
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showToastModal(data.message, 'success');
+                    statusEl.innerHTML = '<span class="text-success">✅ Deleted!</span>';
+                    setTimeout(() => location.reload(), 1500);
+                } else {
+                    showToastModal('Error deleting records: ' + (data.error || 'Unknown error'), 'error');
+                    statusEl.innerHTML = '<span class="text-danger">❌ Error!</span>';
+                }
+            })
+            .catch(error => {
+                console.error('Error during bulk delete:', error);
+                showToastModal('Network error during bulk delete.', 'error');
                 statusEl.innerHTML = '<span class="text-danger">❌ Network Error!</span>';
             });
         }

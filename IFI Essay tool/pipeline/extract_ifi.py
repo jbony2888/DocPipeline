@@ -371,7 +371,29 @@ def extract_fields_ifi(contact_block: str, raw_text: str = "",
         '_ifi_metadata': {full IFI extraction result}
     }
     """
-    # Run full IFI extraction
+    # Try unlabeled header format first (for simple essays without form structure)
+    from pipeline.extract_llm import _extract_unlabeled_header_format
+    unlabeled_data = _extract_unlabeled_header_format(raw_text or contact_block)
+    
+    # If unlabeled format found all required fields, use it directly
+    if unlabeled_data and unlabeled_data.get("student_name") and unlabeled_data.get("school_name") and unlabeled_data.get("grade"):
+        logger.info(f"Using unlabeled header format extraction - student: '{unlabeled_data.get('student_name')}', school: '{unlabeled_data.get('school_name')}', grade: '{unlabeled_data.get('grade')}'")
+        return {
+            'student_name': unlabeled_data.get("student_name"),
+            'school_name': unlabeled_data.get("school_name"),
+            'grade': unlabeled_data.get("grade"),
+            'teacher_name': None,
+            'city_or_location': None,
+            'father_figure_name': None,
+            'phone': None,
+            'email': None,
+            '_ifi_metadata': {
+                'extraction_method': 'unlabeled_header_format',
+                'confidence': 'high'
+            }
+        }
+    
+    # Run full IFI extraction for structured forms
     ifi_result = extract_ifi_submission(raw_text, contact_block, None, original_filename)
     
     # Fallback extraction for phone and email (IFI prompt doesn't extract these)
@@ -383,8 +405,23 @@ def extract_fields_ifi(contact_block: str, raw_text: str = "",
         phone = _extract_phone_fallback(contact_block)
         email = _extract_email_fallback(contact_block)
     
-    # Fallback: If LLM didn't extract student_name, try rule-based extraction from contact_block
+    # Fallback: Use unlabeled header data if IFI extraction missed fields
     student_name = ifi_result.get('student_name')
+    school_name = ifi_result.get('school_name')
+    grade = ifi_result.get('grade')
+    
+    if unlabeled_data:
+        if not student_name and unlabeled_data.get("student_name"):
+            student_name = unlabeled_data["student_name"]
+            logger.info(f"Using unlabeled header student_name: {student_name}")
+        if not school_name and unlabeled_data.get("school_name"):
+            school_name = unlabeled_data["school_name"]
+            logger.info(f"Using unlabeled header school_name: {school_name}")
+        if not grade and unlabeled_data.get("grade"):
+            grade = unlabeled_data["grade"]
+            logger.info(f"Using unlabeled header grade: {grade}")
+    
+    # Fallback: If still no student_name, try rule-based extraction from contact_block
     if not student_name and contact_block:
         from pipeline.extract import extract_value_near_label, STUDENT_NAME_ALIASES
         lines = [line.strip() for line in contact_block.split('\n') if line.strip()]
@@ -399,9 +436,9 @@ def extract_fields_ifi(contact_block: str, raw_text: str = "",
     
     # Map to pipeline format
     pipeline_fields = {
-        'student_name': student_name or ifi_result.get('student_name'),
-        'school_name': ifi_result.get('school_name'),
-        'grade': ifi_result.get('grade'),
+        'student_name': student_name,
+        'school_name': school_name,
+        'grade': grade,
         'teacher_name': None,
         'city_or_location': None,
         'father_figure_name': ifi_result.get('father_figure_name'),

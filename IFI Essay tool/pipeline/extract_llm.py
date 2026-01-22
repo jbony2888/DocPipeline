@@ -13,6 +13,83 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _extract_unlabeled_header_format(text: str) -> Optional[dict]:
+    """
+    Extract metadata from essays with unlabeled headers like:
+    Line 1: "Student Name Grade"
+    Line 2: "School Name"
+    Line 3: Essay starts...
+    
+    Example:
+        "Mayra Martinez 6th grade
+        Rachel Carson Elementary
+        When I'm around my dad..."
+    
+    Returns:
+        Dict with student_name, school_name, grade or None if pattern doesn't match
+    """
+    if not text or not text.strip():
+        logger.info("🔍 Unlabeled header extraction: No text provided")
+        return None
+        
+    lines = [l.strip() for l in text.split('\n') if l.strip()]
+    logger.info(f"🔍 Unlabeled header extraction: Found {len(lines)} non-empty lines")
+    
+    if len(lines) < 2:
+        logger.info(f"🔍 Unlabeled header extraction: Not enough lines (need 2+, have {len(lines)})")
+        return None
+    
+    first_line = lines[0]
+    second_line = lines[1]
+    logger.info(f"🔍 Unlabeled header extraction: Line 1: '{first_line[:100]}'")
+    logger.info(f"🔍 Unlabeled header extraction: Line 2: '{second_line[:100]}'")
+    
+    # Pattern 1: "FirstName LastName Grade" or "FirstName MiddleName LastName Grade"
+    # Grade can be: "6th grade", "6th", "grade 6", "Kindergarten", "K", etc.
+    grade_pattern = r'\b(\d{1,2}(?:st|nd|rd|th)?(?:\s+grade)?|grade\s+\d{1,2}|kindergarten|kinder|pre-?k|k)\b'
+    
+    logger.info(f"🔍 Unlabeled header extraction: Searching for grade pattern in line 1")
+    grade_match = re.search(grade_pattern, first_line, re.IGNORECASE)
+    if grade_match:
+        logger.info(f"🔍 Unlabeled header extraction: Found grade match: '{grade_match.group(0)}' at position {grade_match.start()}-{grade_match.end()}")
+        grade_text = grade_match.group(0).strip()
+        # Extract student name (everything before the grade)
+        student_name = first_line[:grade_match.start()].strip()
+        
+        # Check if student name looks valid (2-4 words, properly capitalized)
+        name_words = student_name.split()
+        if 2 <= len(name_words) <= 4 and all(w[0].isupper() for w in name_words if w):
+            # Check if second line looks like a school name
+            school_keywords = ['elementary', 'middle', 'high', 'school', 'academy', 'charter', 'prep', 'center']
+            if any(kw in second_line.lower() for kw in school_keywords) or (len(second_line.split()) >= 2 and second_line[0].isupper()):
+                # Parse grade to standard format
+                grade_parsed = None
+                grade_lower = grade_text.lower()
+                if 'k' in grade_lower or 'kinder' in grade_lower:
+                    grade_parsed = 'K'
+                elif 'pre' in grade_lower:
+                    grade_parsed = 'Pre-K'
+                else:
+                    grade_num = re.search(r'\d{1,2}', grade_text)
+                    if grade_num:
+                        grade_parsed = int(grade_num.group())
+                
+                logger.info(f"✅ Extracted unlabeled header format: student='{student_name}', school='{second_line}', grade='{grade_parsed}'")
+                return {
+                    "student_name": student_name,
+                    "school_name": second_line,
+                    "grade": grade_parsed
+                }
+            else:
+                logger.info(f"🔍 Unlabeled header extraction: Second line doesn't look like a school name")
+        else:
+            logger.info(f"🔍 Unlabeled header extraction: Student name validation failed - words: {len(name_words)}, capitalized check failed")
+    else:
+        logger.info(f"🔍 Unlabeled header extraction: No grade pattern found in first line")
+    
+    return None
+
+
 def _extract_school_name_fallback(contact_block: str) -> Optional[str]:
     """
     Fallback rule-based extraction for school names when LLM fails.
@@ -261,6 +338,9 @@ def extract_fields_llm(contact_block: str, raw_text: str = "", original_filename
             "email": None
         }
     
+    # Try unlabeled header format first (fast, no API calls needed)
+    unlabeled_data = _extract_unlabeled_header_format(raw_text or contact_block)
+    
     try:
         # Use OpenAI if key is available (best accuracy)
         if openai_key:
@@ -450,6 +530,19 @@ Return ONLY valid JSON, no markdown, no explanation."""
             "phone": result.get("phone"),
             "email": result.get("email")
         }
+        
+        # Use unlabeled header data as fallback for missing fields
+        if unlabeled_data:
+            if not normalized.get("student_name") and unlabeled_data.get("student_name"):
+                normalized["student_name"] = unlabeled_data["student_name"]
+                logger.info(f"Using unlabeled header student_name: {unlabeled_data['student_name']}")
+            if not normalized.get("school_name") and unlabeled_data.get("school_name"):
+                normalized["school_name"] = unlabeled_data["school_name"]
+                logger.info(f"Using unlabeled header school_name: {unlabeled_data['school_name']}")
+            if not result.get("grade") and unlabeled_data.get("grade"):
+                # Store raw grade for validation below
+                result["grade"] = unlabeled_data["grade"]
+                logger.info(f"Using unlabeled header grade: {unlabeled_data['grade']}")
         
         # Validate grade is an integer 1-12
         grade_raw = result.get("grade")

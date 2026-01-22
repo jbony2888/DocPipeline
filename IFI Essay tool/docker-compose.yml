@@ -1,3 +1,7 @@
+# Load environment variables from .env file
+# Create a .env file in the same directory as docker-compose.yml
+# with your SMTP credentials and API keys
+
 services:
   # Redis for job queue
   redis:
@@ -44,6 +48,14 @@ services:
       - FLASK_PORT=5000
       # Redis connection
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      # SMTP Email Configuration (IONOS)
+      - SMTP_HOST=${SMTP_HOST:-smtp.ionos.com}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER}
+      - SMTP_PASS=${SMTP_PASS}
+      - FROM_EMAIL=${FROM_EMAIL:-${SMTP_USER}}
+      - SMTP_USE_TLS=${SMTP_USE_TLS:-true}
+      - APP_URL=${APP_URL:-http://localhost:5000}
     restart: unless-stopped
 
   # Background worker for processing submissions
@@ -76,10 +88,18 @@ services:
       - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
       # Supabase Service Role Key (required for worker to bypass RLS)
       - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
-      # Worker ID (optional, defaults to worker-<pid>)
-      - WORKER_ID=${WORKER_ID:-worker-1}
+      # Worker ID (optional, defaults to worker-<pid>-<timestamp>)
+      # - WORKER_ID=${WORKER_ID}
       # Redis connection
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      # SMTP Email Configuration (IONOS)
+      - SMTP_HOST=${SMTP_HOST:-smtp.ionos.com}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER}
+      - SMTP_PASS=${SMTP_PASS}
+      - FROM_EMAIL=${FROM_EMAIL:-${SMTP_USER}}
+      - SMTP_USE_TLS=${SMTP_USE_TLS:-true}
+      - APP_URL=${APP_URL:-http://localhost:5000}
     restart: unless-stopped
 
 volumes:

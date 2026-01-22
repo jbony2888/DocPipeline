@@ -48,35 +48,25 @@
             </button>
         </form>
         
-        <!-- Loading Overlay -->
-        <div id="loadingOverlay" class="d-none" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 9999; display: flex; align-items: center; justify-content: center;">
-            <div class="card" style="max-width: 600px; margin: 20px; background: white;">
-                <div class="card-body text-center p-5">
-                    <div class="spinner-border text-primary mb-3" role="status" style="width: 3rem; height: 3rem;">
-                        <span class="visually-hidden">Loading...</span>
+        <!-- Processing Status (Inline) -->
+        <div id="processingStatus" class="alert alert-info mt-3 d-none" role="alert">
+            <div class="mb-3">
+                <div class="d-flex align-items-center mb-2">
+                    <div id="processingSpinner" class="spinner-border spinner-border-sm me-3" role="status">
+                        <span class="visually-hidden">Processing...</span>
                     </div>
-                    <h5 class="card-title">Processing Submissions</h5>
-                    <p class="card-text" id="loadingMessage">Please wait while we process your files...</p>
-                    <div class="progress mt-3" style="height: 30px;">
-                        <div class="progress-bar progress-bar-striped progress-bar-animated" 
-                             role="progressbar" 
-                             style="width: 0%" 
-                             id="progressBar"
-                             aria-valuenow="0" 
-                             aria-valuemin="0" 
-                             aria-valuemax="100">
-                            <span id="progressText">0%</span>
-                        </div>
-                    </div>
-                    <div class="mt-3">
-                        <small class="text-muted">
-                            <span id="completedCount">0</span> of <span id="totalCount">0</span> files processed
-                        </small>
-                    </div>
-                    <div class="mt-2">
-                        <small class="text-info" id="timeEstimate">Estimating time...</small>
+                    <div id="processingIcon" class="d-none me-3" style="font-size: 1.5rem;">✅</div>
+                    <strong id="processingTitle">⏳ Processing entries...</strong>
+                </div>
+                <div class="progress" style="height: 30px; background-color: #e9ecef;">
+                    <div id="processingProgressBar" class="progress-bar progress-bar-striped progress-bar-animated bg-primary" 
+                         role="progressbar" style="width: 5%; min-width: 50px;" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
+                        <span id="processingProgressText" style="color: white; font-weight: 600;">0%</span>
                     </div>
                 </div>
+                <p class="mb-0 small mt-2" id="processingMessage">
+                    <span id="processingCount">0</span> of <span id="processingTotal">0</span> entries processed
+                </p>
             </div>
         </div>
 
@@ -169,7 +159,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const processBtn = document.getElementById('processBtn');
     const btnText = document.getElementById('btnText');
     const btnSpinner = document.getElementById('btnSpinner');
-    const loadingOverlay = document.getElementById('loadingOverlay');
+    const processingStatus = document.getElementById('processingStatus');
     const loadingMessage = document.getElementById('loadingMessage');
     const progressBar = document.getElementById('progressBar');
     const progressText = document.getElementById('progressText');
@@ -200,6 +190,113 @@ document.addEventListener('DOMContentLoaded', function() {
     let startTime = null;
     let selectedFiles = []; // Array to store File objects
     let lastScanResults = [];
+    
+    // Function to hide processing status
+    window.closeLoadingOverlay = function() {
+        if (processingStatus) {
+            processingStatus.classList.add('d-none');
+        }
+        
+        // Clear selected files
+        selectedFiles = [];
+        updateFilesList();
+        if (filesInput) filesInput.value = '';
+        
+        // Re-enable button
+        resetSubmitButton();
+    };
+    
+    // Check processing progress by polling job status
+    let processingCheckCount = 0;
+    function checkProcessingProgress(jobIds, totalJobs) {
+        processingCheckCount++;
+        
+        // After 60 checks (3 minutes), assume done and refresh
+        if (processingCheckCount > 60) {
+            window.location.reload();
+            return;
+        }
+        
+        // Check job status via API
+        fetch('{{ url_for("check_jobs_status") }}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ job_ids: jobIds })
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (!data.success) {
+                console.error('Job status check failed:', data.error);
+                // Try again
+                setTimeout(() => checkProcessingProgress(jobIds, totalJobs), 3000);
+                return;
+            }
+            
+            const completedCount = data.completed || 0;
+            const percentage = data.percentage || 0;
+            
+            // Update progress UI
+            const progressBar = document.getElementById('processingProgressBar');
+            const progressText = document.getElementById('processingProgressText');
+            const countEl = document.getElementById('processingCount');
+            
+            // Ensure minimum visible width (5% or actual percentage, whichever is higher)
+            const displayWidth = Math.max(5, percentage);
+            
+            if (progressBar) {
+                progressBar.style.width = displayWidth + '%';
+                progressBar.setAttribute('aria-valuenow', percentage);
+                if (displayWidth < 50) {
+                    progressBar.style.minWidth = '50px';
+                } else {
+                    progressBar.style.minWidth = '0';
+                }
+            }
+            if (progressText) progressText.textContent = percentage + '%';
+            if (countEl) countEl.textContent = completedCount;
+            
+            // Check if all jobs are complete
+            if (data.is_complete) {
+                // Processing complete!
+                const spinner = document.getElementById('processingSpinner');
+                const icon = document.getElementById('processingIcon');
+                const title = document.getElementById('processingTitle');
+                const message = document.getElementById('processingMessage');
+                
+                if (spinner) spinner.classList.add('d-none');
+                if (icon) icon.classList.remove('d-none');
+                if (title) title.textContent = '✅ Processing Complete!';
+                if (message) message.innerHTML = `<strong>${completedCount} ${completedCount === 1 ? 'entry' : 'entries'} ready for review!</strong>`;
+                
+                if (progressBar) {
+                    progressBar.style.width = '100%';
+                    progressBar.classList.remove('progress-bar-animated', 'progress-bar-striped');
+                    progressBar.classList.add('bg-success');
+                }
+                
+                // Change alert color to success
+                if (processingStatus) {
+                    processingStatus.classList.remove('alert-info');
+                    processingStatus.classList.add('alert-success');
+                }
+                
+                // Auto-refresh after 2 seconds to show results
+                setTimeout(() => {
+                    window.location.reload();
+                }, 2000);
+            } else {
+                // Still processing, check again in 3 seconds
+                setTimeout(() => checkProcessingProgress(jobIds, totalJobs), 3000);
+            }
+        })
+        .catch(err => {
+            console.error('Error checking job progress:', err);
+            // Keep checking even on error
+            setTimeout(() => checkProcessingProgress(jobIds, totalJobs), 5000);
+        });
+    }
     
     // Function to update the selected files display
     function updateFilesList() {
@@ -364,8 +461,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
 
         // Show loading overlay
-        loadingOverlay.classList.remove('d-none');
-        loadingOverlay.style.display = 'flex';
+        processingStatus.classList.remove('d-none');
         startTime = Date.now();
 
         // Create FormData with selected files
@@ -427,19 +523,26 @@ document.addEventListener('DOMContentLoaded', function() {
                     console.warn('Some files failed to enqueue:', data.errors);
                 }
 
-                successShownForBatch = false;
-                pollProgress();
-                pollInterval = setInterval(pollProgress, 2000);
+                // Set total count and extract job IDs
+                const totalJobs = data.total || 0;
+                const jobIds = (data.job_ids || []).map(j => j.job_id).filter(id => id);
+                const totalEl = document.getElementById('processingTotal');
+                if (totalEl) totalEl.textContent = totalJobs;
+                
+                // Start polling for progress
+                if (totalJobs > 0 && jobIds.length > 0) {
+                    checkProcessingProgress(jobIds, totalJobs);
+                }
             } else {
                 showToastModal('Error: ' + (data.error || 'Failed to start processing'), 'error');
-                loadingOverlay.classList.add('d-none');
+                processingStatus.classList.add('d-none');
                 resetSubmitButton();
             }
         })
         .catch(error => {
             console.error('Error:', error);
             showToastModal('Error uploading files: ' + error.message, 'error');
-            loadingOverlay.classList.add('d-none');
+            processingStatus.classList.add('d-none');
             resetSubmitButton();
         });
     }
@@ -571,24 +674,14 @@ document.addEventListener('DOMContentLoaded', function() {
                     if (!successShownForBatch) {
                         successShownForBatch = true;
                         
-                        // Show success notification immediately
-                        const message = failed > 0 
-                            ? `✅ Processing complete! ${completed} succeeded, ${failed} failed.`
-                            : `✅ Successfully processed ${completed} file(s)!`;
-                        
-                        // Show notification
-                        if (typeof showToastModal === 'function') {
-                            showToastModal(message, 'success', false); // Don't auto-hide so user can see it
-                        } else {
-                            console.log('Notification:', message);
-                        }
+                        // No success modal - users will receive email notification instead
+                        console.log(`Processing complete: ${completed} succeeded, ${failed} failed.`);
                     }
                     
-                    // Hide loading overlay after a short delay
+                    // Hide processing status after a short delay
                     setTimeout(() => {
-                        if (loadingOverlay) {
-                            loadingOverlay.classList.add('d-none');
-                            loadingOverlay.style.display = 'none';
+                        if (processingStatus) {
+                            processingStatus.classList.add('d-none');
                         }
                         
                         // Clear selected files
@@ -697,10 +790,10 @@ document.addEventListener('DOMContentLoaded', function() {
             console.log('No active jobs to poll');
         });
     
-    // Hide loading overlay if page loads with results (means processing completed)
+    // Hide processing status if page loads with results (means processing completed)
     {% if session.upload_results %}
-    if (loadingOverlay) {
-        loadingOverlay.classList.add('d-none');
+    if (processingStatus) {
+        processingStatus.classList.add('d-none');
     }
     if (pollInterval) {
         clearInterval(pollInterval);

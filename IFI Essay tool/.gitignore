@@ -48,4 +48,4 @@ data/
 # Render helper output (contains formatted credentials)
 render_google_creds.txtCOPY_THIS_EXACT_STRING.txt
 render_google_creds.txt
-*.credentials.json
+*.credentials.json.env

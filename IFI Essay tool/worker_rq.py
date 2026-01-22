@@ -21,7 +21,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Worker ID (unique identifier for this worker instance)
-WORKER_ID = os.environ.get("WORKER_ID", f"worker-{os.getpid()}")
+# Include timestamp to avoid conflicts on restart
+import time
+WORKER_ID = os.environ.get("WORKER_ID", f"worker-{os.getpid()}-{int(time.time())}")
 
 logger.info(f"🚀 RQ Worker {WORKER_ID} started")
 logger.info("📊 Using Redis/RQ for job queue")
@@ -44,6 +46,14 @@ def main():
         
         # Create queue
         queue = Queue("submissions", connection=redis_client)
+        
+        # Clean up any stale workers with same name before starting
+        try:
+            from rq.registry import StartedJobRegistry, FinishedJobRegistry, FailedJobRegistry
+            Worker.all(connection=redis_client)  # This cleans up dead workers
+            logger.info("🧹 Cleaned up stale workers")
+        except Exception as e:
+            logger.warning(f"⚠️  Could not clean stale workers: {e}")
         
         # Create and start worker (RQ 2.x doesn't need Connection context manager)
         worker = Worker([queue], connection=redis_client, name=WORKER_ID)

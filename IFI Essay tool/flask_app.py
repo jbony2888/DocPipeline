@@ -224,7 +224,7 @@ def index():
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
-    """Login page with magic link authentication."""
+    """Login page with password or magic link authentication."""
     # Check if already logged in
     if require_auth():
         return redirect(url_for("index"))
@@ -236,46 +236,204 @@ def login():
     
     if request.method == "POST":
         email = request.form.get("email", "").strip()
+        password = request.form.get("password", "").strip()
+        auth_method = request.form.get("auth_method", "password")  # password or magic_link
         
         if not email or "@" not in email:
             flash("Please enter a valid email address.", "error")
             return render_template("login.html")
         
         try:
-            # Get redirect URL - Flask handles the callback
-            # Use full URL including port if specified
-            port = request.environ.get('SERVER_PORT', '')
-            host = request.host
-            if port and port not in ['80', '443']:
-                redirect_url = f"{request.scheme}://{host}/auth/callback"
+            if auth_method == "password" and password:
+                # Password-based authentication
+                response = supabase.auth.sign_in_with_password({
+                    "email": email,
+                    "password": password
+                })
+                
+                if response.user:
+                    # Store session
+                    session["user_id"] = response.user.id
+                    session["user_email"] = response.user.email
+                    session["access_token"] = response.session.access_token if response.session else None
+                    session["refresh_token"] = response.session.refresh_token if response.session else None
+                    
+                    flash(f"✅ Welcome back, {response.user.email}!", "success")
+                    return redirect(url_for("index"))
+                else:
+                    flash("Invalid email or password.", "error")
+                    
             else:
-                redirect_url = f"{request.scheme}://{host}/auth/callback"
-            
-            supabase.auth.sign_in_with_otp({
-                "email": email,
-                "create_user": True,
-                "options": {
-                    "emailRedirectTo": redirect_url
-                }
-            })
-            
-            flash(f"✅ Login link sent! Check your email at {email}", "success")
-            return render_template("login.html", email_sent=True, email=email)
+                # Magic link authentication (OTP)
+                port = request.environ.get('SERVER_PORT', '')
+                host = request.host
+                if port and port not in ['80', '443']:
+                    redirect_url = f"{request.scheme}://{host}/auth/callback"
+                else:
+                    redirect_url = f"{request.scheme}://{host}/auth/callback"
+                
+                supabase.auth.sign_in_with_otp({
+                    "email": email,
+                    "create_user": True,
+                    "options": {
+                        "emailRedirectTo": redirect_url
+                    }
+                })
+                
+                flash(f"✅ Login link sent! Check your email at {email}", "success")
+                return render_template("login.html", email_sent=True, email=email)
+                
         except Exception as e:
             error_msg = str(e)
-            if "signups disabled" in error_msg.lower():
+            if "invalid" in error_msg.lower() or "credentials" in error_msg.lower():
+                flash("Invalid email or password.", "error")
+            elif "signups disabled" in error_msg.lower():
                 flash("Registration is currently disabled. Please contact your administrator.", "error")
             elif "rate limit" in error_msg.lower():
                 flash("Too many requests. Please wait a few minutes.", "error")
             else:
-                flash(f"Error sending login link: {error_msg}", "error")
+                flash(f"Authentication error: {error_msg}", "error")
     
     return render_template("login.html")
+
+
+@app.route("/reset-password", methods=["GET", "POST"])
+def reset_password():
+    """Password reset page - sends reset link via email."""
+    supabase = get_supabase_client()
+    if not supabase:
+        flash("Authentication is not configured.", "error")
+        return render_template("reset_password.html")
+    
+    if request.method == "POST":
+        email = request.form.get("email", "").strip()
+        
+        if not email or "@" not in email:
+            flash("Please enter a valid email address.", "error")
+            return render_template("reset_password.html")
+        
+        try:
+            # Send password reset email
+            redirect_url = f"{request.scheme}://{request.host}/update-password"
+            
+            supabase.auth.reset_password_for_email(
+                email,
+                options={"redirect_to": redirect_url}
+            )
+            
+            flash(f"✅ Password reset link sent to {email}. Check your email!", "success")
+            return render_template("reset_password.html", email_sent=True)
+            
+        except Exception as e:
+            error_msg = str(e)
+            flash(f"Error sending reset link: {error_msg}", "error")
+    
+    return render_template("reset_password.html")
+
+
+@app.route("/update-password", methods=["GET", "POST"])
+def update_password():
+    """Update password page after clicking reset link."""
+    supabase = get_supabase_client()
+    if not supabase:
+        flash("Authentication is not configured.", "error")
+        return redirect(url_for("login"))
+    
+    if request.method == "POST":
+        new_password = request.form.get("password", "").strip()
+        password_confirm = request.form.get("password_confirm", "").strip()
+        
+        if not new_password or len(new_password) < 6:
+            flash("Password must be at least 6 characters long.", "error")
+            return render_template("update_password.html")
+        
+        if new_password != password_confirm:
+            flash("Passwords do not match.", "error")
+            return render_template("update_password.html")
+        
+        try:
+            # Update the password
+            response = supabase.auth.update_user({"password": new_password})
+            
+            if response.user:
+                flash("✅ Password updated successfully! You can now log in.", "success")
+                return redirect(url_for("login"))
+            else:
+                flash("Error updating password. Please try again.", "error")
+                
+        except Exception as e:
+            error_msg = str(e)
+            flash(f"Error updating password: {error_msg}", "error")
+    
+    return render_template("update_password.html")
+
+
+@app.route("/signup", methods=["GET", "POST"])
+def signup():
+    """Signup page for new users."""
+    # Check if already logged in
+    if require_auth():
+        return redirect(url_for("index"))
+    
+    supabase = get_supabase_client()
+    if not supabase:
+        flash("Authentication is not configured. Please set SUPABASE_URL and SUPABASE_ANON_KEY.", "error")
+        return render_template("signup.html")
+    
+    if request.method == "POST":
+        email = request.form.get("email", "").strip()
+        password = request.form.get("password", "").strip()
+        password_confirm = request.form.get("password_confirm", "").strip()
+        
+        if not email or not password:
+            flash("Please enter both email and password.", "error")
+            return render_template("signup.html")
+        
+        if "@" not in email:
+            flash("Please enter a valid email address.", "error")
+            return render_template("signup.html")
+        
+        if len(password) < 6:
+            flash("Password must be at least 6 characters long.", "error")
+            return render_template("signup.html")
+        
+        if password != password_confirm:
+            flash("Passwords do not match.", "error")
+            return render_template("signup.html")
+        
+        try:
+            # Sign up new user
+            response = supabase.auth.sign_up({
+                "email": email,
+                "password": password
+            })
+            
+            if response.user:
+                flash(f"✅ Account created! You can now log in with {email}", "success")
+                return redirect(url_for("login"))
+            else:
+                flash("Error creating account. Please try again.", "error")
+                
+        except Exception as e:
+            error_msg = str(e)
+            if "already registered" in error_msg.lower() or "already exists" in error_msg.lower():
+                flash("An account with this email already exists. Please log in instead.", "error")
+                return redirect(url_for("login"))
+            elif "signups disabled" in error_msg.lower():
+                flash("New signups are currently disabled. Please contact your administrator.", "error")
+            else:
+                flash(f"Error creating account: {error_msg}", "error")
+    
+    return render_template("signup.html")
 
 
 @app.route("/auth/callback")
 def auth_callback():
     """Handle Supabase magic link callback."""
+    print(f"🔑 /auth/callback hit! Args: {request.args}")
+    print(f"🔑 URL: {request.url}")
+    print(f"🔑 Hash: {request.args.get('access_token')}")
+    
     access_token = request.args.get("access_token")
     refresh_token = request.args.get("refresh_token")
     expires_at = request.args.get("expires_at")
@@ -323,20 +481,24 @@ def auth_callback():
     
     # Process authentication
     try:
+        print(f"🔑 Callback received - access_token: {access_token[:20] if access_token else None}...")
         supabase = get_supabase_client()
         # Ensure refresh_token is provided (required by Supabase)
         if not refresh_token:
             refresh_token = ""
         
+        print(f"🔑 Setting session in Supabase...")
         # Set session - Supabase requires both tokens
         session_response = supabase.auth.set_session(
             access_token=access_token,
             refresh_token=refresh_token
         )
         
+        print(f"🔑 Getting user info...")
         user_response = supabase.auth.get_user()
         
         if user_response and user_response.user:
+            print(f"✅ User authenticated: {user_response.user.email}")
             # Store in Flask session
             session["user_id"] = user_response.user.id
             session["user_email"] = user_response.user.email
@@ -344,12 +506,17 @@ def auth_callback():
             if refresh_token:
                 session["supabase_refresh_token"] = refresh_token
             
+            print(f"🔑 Redirecting to dashboard...")
             flash("✅ Login successful!", "success")
             return redirect(url_for("index"))
         else:
+            print(f"❌ No user found in response")
             flash("❌ Authentication failed: Could not retrieve user information.", "error")
             return redirect(url_for("login"))
     except Exception as e:
+        print(f"❌ Auth callback error: {str(e)}")
+        import traceback
+        traceback.print_exc()
         flash(f"❌ Authentication error: {str(e)}", "error")
         return redirect(url_for("login"))
 
@@ -385,6 +552,108 @@ def logout():
     session.clear()
     flash("✅ Logged out successfully!", "success")
     return redirect(url_for("login"))
+
+
+@app.route("/api/jobs/status", methods=["POST"])
+def check_jobs_status():
+    """Check status of multiple jobs and count actual submissions created."""
+    if not require_auth():
+        return jsonify({"success": False, "error": "Not authenticated"}), 401
+    
+    data = request.get_json()
+    job_ids = data.get("job_ids", [])
+    user_id = session.get("user_id")
+    access_token = session.get("supabase_access_token")
+    
+    if not job_ids:
+        return jsonify({"success": False, "error": "No job IDs provided"}), 400
+    
+    from rq import Queue
+    from rq.job import Job
+    from jobs.redis_queue import get_redis_client
+    
+    try:
+        redis_client = get_redis_client()
+        jobs_completed = 0
+        jobs_failed = 0
+        jobs_in_progress = 0
+        total_entries_expected = 0
+        total_entries_created = 0
+        
+        for job_id in job_ids:
+            try:
+                job = Job.fetch(job_id, connection=redis_client)
+                if job.is_finished:
+                    jobs_completed += 1
+                    # Check job result for multi-entry info
+                    result = job.result
+                    if result and isinstance(result, dict):
+                        if result.get("multi_entry"):
+                            # Multi-entry PDF - count actual entries
+                            entries = result.get("total_entries", 1)
+                            total_entries_expected += entries
+                            total_entries_created += entries
+                        else:
+                            # Single entry
+                            total_entries_expected += 1
+                            total_entries_created += 1
+                    else:
+                        total_entries_expected += 1
+                        total_entries_created += 1
+                elif job.is_failed:
+                    jobs_failed += 1
+                    total_entries_expected += 1
+                else:
+                    jobs_in_progress += 1
+                    total_entries_expected += 1
+            except:
+                # Job not found, count by checking database records
+                total_entries_expected += 1
+        
+        # Always get actual record count from database to track multi-entry progress
+        try:
+            # Count recent records created by this user
+            from pipeline.supabase_db import get_supabase_client
+            import datetime
+            
+            supabase = get_supabase_client(access_token=access_token)
+            
+            # Get records created in last 5 minutes
+            five_min_ago = (datetime.datetime.utcnow() - datetime.timedelta(minutes=5)).isoformat()
+            
+            response = supabase.table("submissions").select("submission_id", count="exact").eq("owner_user_id", user_id).gte("created_at", five_min_ago).execute()
+            
+            if response.count is not None:
+                # Use database count as source of truth for entries created
+                actual_db_count = response.count
+                
+                # If jobs are still running, show database count (multi-entry PDFs create records as they process)
+                if jobs_in_progress > 0:
+                    total_entries_created = actual_db_count
+                    # Estimate expected based on completed entries if we have more than expected
+                    if actual_db_count > total_entries_expected:
+                        total_entries_expected = actual_db_count
+                else:
+                    # All jobs done - use final database count
+                    total_entries_created = actual_db_count
+                    total_entries_expected = max(total_entries_expected, actual_db_count)
+        except Exception as e:
+            app.logger.warning(f"Could not get exact record count: {e}")
+        
+        percentage = round((total_entries_created / total_entries_expected) * 100) if total_entries_expected > 0 else 0
+        
+        return jsonify({
+            "success": True,
+            "total": total_entries_expected,
+            "completed": total_entries_created,
+            "failed": jobs_failed,
+            "in_progress": jobs_in_progress,
+            "percentage": percentage,
+            "is_complete": jobs_completed + jobs_failed >= len(job_ids)
+        })
+    except Exception as e:
+        app.logger.error(f"Error checking job status: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
 
 
 @app.route("/upload", methods=["POST"])
@@ -911,6 +1180,53 @@ def bulk_update_records():
         "success": True,
         "updated_count": updated_count,
         "message": f"Successfully updated {updated_count} records."
+    })
+
+
+@app.route("/api/bulk_delete_records", methods=["POST"])
+def bulk_delete_records():
+    """Delete multiple selected records."""
+    if not require_auth():
+        return jsonify({"success": False, "error": "Unauthorized"}), 401
+    
+    user_id = session.get("user_id")
+    access_token = session.get("supabase_access_token")
+    refresh_token = session.get("supabase_refresh_token")
+    
+    data = request.get_json()
+    selected_ids = data.get("selected_ids", [])
+    
+    if not selected_ids:
+        return jsonify({"success": False, "error": "No records selected for deletion."}), 400
+    
+    deleted_count = 0
+    errors = []
+    
+    for submission_id in selected_ids:
+        try:
+            if delete_db_record(submission_id, owner_user_id=user_id, access_token=access_token, refresh_token=refresh_token):
+                deleted_count += 1
+                app.logger.info(f"✅ Deleted record {submission_id} (bulk)")
+            else:
+                errors.append(f"Failed to delete {submission_id}")
+                app.logger.warning(f"⚠️ Failed to delete record {submission_id}")
+        except Exception as e:
+            errors.append(f"Error deleting {submission_id}: {str(e)}")
+            app.logger.error(f"❌ Error deleting record {submission_id}: {e}")
+    
+    if errors:
+        return jsonify({
+            "success": False,
+            "deleted_count": deleted_count,
+            "errors": errors,
+            "message": f"Deleted {deleted_count} records with {len(errors)} errors."
+        }), 500
+
+    invalidate_db_stats_cache(user_id)
+    return jsonify({
+        "success": True,
+        "deleted_count": deleted_count,
+        "message": f"Successfully deleted {deleted_count} records."
     })
 
 
