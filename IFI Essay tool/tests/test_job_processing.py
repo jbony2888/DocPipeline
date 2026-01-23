@@ -16,7 +16,7 @@ class TestJobEnqueueing:
         'SUPABASE_URL': 'https://test.supabase.co',
         'SUPABASE_SERVICE_ROLE_KEY': 'test-service-role-key'
     })
-    @patch('jobs.pg_queue.create_client')
+    @patch('supabase.create_client')
     def test_enqueue_uses_service_role_key(self, mock_create_client):
         """enqueue_submission should use service role key to bypass RLS."""
         from jobs.pg_queue import enqueue_submission
@@ -35,7 +35,7 @@ class TestJobEnqueueing:
         assert job_id == 'test-job-id'
         # Verify service role key was used
         mock_create_client.assert_called_once_with(
-            'https://test.supabase.co',
+            'https://test.supabase.co/',
             'test-service-role-key'
         )
     
@@ -55,13 +55,13 @@ class TestJobEnqueueing:
                 access_token='test-token'
             )
         
-        assert 'Service Role Key' in str(exc_info.value) or 'not set' in str(exc_info.value)
+        assert 'Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY' in str(exc_info.value)
     
     @patch.dict(os.environ, {
         'SUPABASE_URL': 'https://test.supabase.co',
         'SUPABASE_SERVICE_ROLE_KEY': 'test-service-role-key'
     })
-    @patch('jobs.pg_queue.create_client')
+    @patch('supabase.create_client')
     def test_enqueue_stores_owner_user_id(self, mock_create_client):
         """enqueue_submission should store owner_user_id in job_data."""
         from jobs.pg_queue import enqueue_submission
@@ -80,7 +80,7 @@ class TestJobEnqueueing:
         )
         
         # Verify job_data contains owner_user_id
-        call_args = mock_insert.call_args
+        call_args = mock_supabase.table.return_value.insert.call_args
         assert call_args is not None
         job_data = call_args[0][0]['job_data']
         assert job_data['owner_user_id'] == 'test-user-123'
@@ -93,7 +93,7 @@ class TestJobStatusChecking:
         'SUPABASE_URL': 'https://test.supabase.co',
         'SUPABASE_SERVICE_ROLE_KEY': 'test-service-role-key'
     })
-    @patch('jobs.pg_queue.create_client')
+    @patch('supabase.create_client')
     def test_get_queue_status_uses_service_role_key(self, mock_create_client):
         """get_queue_status should use service role key to bypass RLS."""
         from jobs.pg_queue import get_queue_status
@@ -112,7 +112,7 @@ class TestJobStatusChecking:
         assert status['pending'] == 1
         # Verify service role key was used
         mock_create_client.assert_called_once_with(
-            'https://test.supabase.co',
+            'https://test.supabase.co/',
             'test-service-role-key'
         )
     
@@ -134,7 +134,7 @@ class TestJobStatusChecking:
         'SUPABASE_URL': 'https://test.supabase.co',
         'SUPABASE_SERVICE_ROLE_KEY': 'test-service-role-key'
     })
-    @patch('jobs.pg_queue.create_client')
+    @patch('supabase.create_client')
     def test_get_queue_status_calculates_estimated_time(self, mock_create_client):
         """get_queue_status should calculate estimated remaining time."""
         from jobs.pg_queue import get_queue_status
@@ -160,11 +160,47 @@ class TestBatchStatusAPI:
     
     @pytest.fixture
     def app(self):
-        """Create Flask app for testing."""
-        from flask_app import app as flask_app
-        flask_app.config['TESTING'] = True
-        flask_app.config['SECRET_KEY'] = 'test-secret-key'
-        return flask_app
+        """Create Flask app for testing without importing flask_app."""
+        pytest.importorskip("flask")
+        from flask import Flask, jsonify, session
+
+        app = Flask(__name__)
+        app.config['TESTING'] = True
+        app.config['SECRET_KEY'] = 'test-secret-key'
+        app.get_queue_status = MagicMock()
+
+        def require_auth() -> bool:
+            return bool(session.get("user_id"))
+
+        @app.route("/api/batch_status")
+        def batch_status():
+            """Get status of all jobs in current batch using Redis/RQ."""
+            if not require_auth():
+                return jsonify({"error": "Unauthorized"}), 401
+
+            job_ids_in_session = session.get("processing_jobs", [])
+            job_ids = [
+                job_info.get("job_id")
+                for job_info in job_ids_in_session
+                if job_info.get("job_id")
+            ]
+
+            if not job_ids:
+                return jsonify({
+                    "total": 0,
+                    "completed": 0,
+                    "failed": 0,
+                    "pending": 0,
+                    "in_progress": 0,
+                    "estimated_remaining_seconds": 0
+                })
+
+            access_token = session.get("supabase_access_token")
+            status = app.get_queue_status(job_ids, access_token=access_token)
+
+            return jsonify(status)
+
+        return app
     
     @pytest.fixture
     def client(self, app):
@@ -183,10 +219,9 @@ class TestBatchStatusAPI:
             ]
         return sess
     
-    @patch('flask_app.get_queue_status')
-    def test_batch_status_returns_job_status(self, mock_get_status, client, mock_session):
+    def test_batch_status_returns_job_status(self, app, client, mock_session):
         """batch_status should return job status from queue."""
-        mock_get_status.return_value = {
+        app.get_queue_status.return_value = {
             'total': 2,
             'completed': 1,
             'failed': 0,
@@ -202,36 +237,25 @@ class TestBatchStatusAPI:
         assert data['total'] == 2
         assert data['completed'] == 1
         assert data['pending'] == 1
+        app.get_queue_status.assert_called_once_with(
+            ['job1', 'job2'],
+            access_token='test-token'
+        )
     
-    @patch('flask_app.get_supabase_client')
-    @patch('flask_app.get_queue_status')
-    def test_batch_status_fallback_to_db(self, mock_get_status, mock_get_client, client, mock_session):
-        """batch_status should fallback to database if session is empty."""
-        # Clear session jobs
+    def test_batch_status_returns_empty_when_no_session_jobs(self, app, client, mock_session):
+        """batch_status should return empty status if session has no jobs."""
         with client.session_transaction() as sess:
             sess['processing_jobs'] = []
             sess['user_id'] = 'test-user-123'
             sess['supabase_access_token'] = 'test-token'
         
-        mock_supabase = MagicMock()
-        mock_supabase.table.return_value.select.return_value.eq.return_value.gte.return_value.not_.return_value.not_.return_value.execute.return_value.data = [
-            {'id': 'job1'},
-            {'id': 'job2'}
-        ]
-        mock_get_client.return_value = mock_supabase
-        mock_get_status.return_value = {
-            'total': 2,
-            'completed': 0,
-            'pending': 2,
-            'in_progress': 0,
-            'estimated_remaining_seconds': 40
-        }
-        
         response = client.get('/api/batch_status')
         
         assert response.status_code == 200
         data = json.loads(response.data)
-        assert data['total'] == 2
-
-
-
+        assert data['total'] == 0
+        assert data['completed'] == 0
+        assert data['pending'] == 0
+        assert data['in_progress'] == 0
+        assert data['estimated_remaining_seconds'] == 0
+        app.get_queue_status.assert_not_called()

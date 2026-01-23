@@ -110,7 +110,7 @@ If using Google Cloud Vision, you have two options:
 - Set `GOOGLE_APPLICATION_CREDENTIALS=/app/credentials.json`
 
 **Option B: Use environment variable**
-- Set entire JSON content as `GOOGLE_CREDENTIALS_JSON` environment variable
+- Set entire JSON content as `GOOGLE_CLOUD_VISION_CREDENTIALS_JSON` environment variable
 - Modify startup to write it to a file
 
 ## Verification Checklist
