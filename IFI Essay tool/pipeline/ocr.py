@@ -5,9 +5,12 @@ OCR provider abstraction with stub and Google Cloud Vision implementations.
 import io
 import json
 import os
+import logging
 from pathlib import Path
 from typing import Protocol
 from pipeline.schema import OcrResult
+
+logger = logging.getLogger(__name__)
 
 
 class OcrProvider(Protocol):
@@ -137,6 +140,15 @@ class GoogleVisionOcrProvider:
             credentials_json = os.environ.get('GOOGLE_CLOUD_VISION_CREDENTIALS_JSON')
             
             if credentials_json:
+                # .env often stores JSON with literal \n between keys; normalize so json.loads() works
+                if "\\n" in credentials_json:
+                    credentials_json = (
+                        credentials_json.replace('{\\n  "', '{\n  "')
+                        .replace('",\\n  "', '",\n  "')
+                        .replace('"\\n  "', '"\n  "')
+                        .replace('"\\n}"', '"\n}"')
+                        .replace('"\\n,"', '"\n,"')
+                    )
                 # Load credentials from JSON string
                 try:
                     credentials_dict = json.loads(credentials_json)
@@ -181,25 +193,50 @@ class GoogleVisionOcrProvider:
         file_path = Path(image_path)
         
         # Handle PDF files
-        if file_path.suffix.lower() == '.pdf':
-            image_bytes = self._render_pdf_to_png(image_path)
-        else:
-            # Handle image files
-            with open(image_path, 'rb') as f:
-                image_bytes = f.read()
-        
-        # Prepare Vision API request
-        image = vision.Image(content=image_bytes)
-        
-        # Use DOCUMENT_TEXT_DETECTION for handwriting-friendly OCR
-        response = self.client.document_text_detection(image=image)
-        
-        if response.error.message:
-            raise RuntimeError(
-                f"Google Cloud Vision API error: {response.error.message}"
+        try:
+            if file_path.suffix.lower() == '.pdf':
+                image_bytes = self._render_pdf_to_png(image_path)
+            else:
+                # Handle image files
+                with open(image_path, 'rb') as f:
+                    image_bytes = f.read()
+        except Exception as e:
+            # M5: Safe degradation - if we can't read/render the file, mark as failed
+            logger.warning(f"Error reading/rendering file {image_path}: {e}")
+            return OcrResult(
+                text="",
+                confidence_avg=0.0,
+                lines=[],
+                ocr_failed=True
             )
         
-        # Extract text from response
+        # Prepare Vision API request
+        try:
+            image = vision.Image(content=image_bytes)
+            
+            # Use DOCUMENT_TEXT_DETECTION for handwriting-friendly OCR
+            response = self.client.document_text_detection(image=image)
+            
+            if response.error.message:
+                # M5: Safe degradation - return low-confidence result with OCR_FAILED flag
+                logger.warning(f"Google Cloud Vision API error: {response.error.message}")
+                return OcrResult(
+                    text="",
+                    confidence_avg=0.0,
+                    lines=[],
+                    ocr_failed=True  # Mark as failed (distinct from low confidence)
+                )
+        except Exception as e:
+            # M5: Safe degradation - catch any other exceptions during OCR processing
+            logger.warning(f"OCR processing error: {e}")
+            return OcrResult(
+                text="",
+                confidence_avg=0.0,
+                lines=[],
+                ocr_failed=True
+            )
+        
+        # Extract text from response (only reached if no exceptions)
         if response.full_text_annotation and response.full_text_annotation.text:
             extracted_text = response.full_text_annotation.text.strip()
         elif response.text_annotations:

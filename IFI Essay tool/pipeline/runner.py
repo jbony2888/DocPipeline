@@ -65,7 +65,9 @@ def process_submission(
     submission_id: str,
     artifact_dir: str,
     ocr_provider_name: str = "stub",
-    original_filename: str = None
+    original_filename: str = None,
+    owner_user_id: str = None,
+    access_token: str = None
 ) -> Tuple[SubmissionRecord, dict]:
     """
     Runs the complete processing pipeline for a single submission.
@@ -101,11 +103,39 @@ def process_submission(
     artifact_path = Path(temp_artifact_dir)
     
     processing_report = {"stages": {}}
+    errors = []
+    rules_applied = []
+    
+    # M1: Initialize audit components
+    from pipeline.audit import build_decision_trace, write_artifact_json
+    from pipeline.supabase_audit import insert_audit_trace, insert_audit_event
+    
+    # Emit INGESTED event
+    if owner_user_id:
+        insert_audit_event(
+            submission_id=submission_id,
+            actor_role="system",
+            event_type="INGESTED",
+            event_payload={"filename": original_filename, "ocr_provider": ocr_provider_name},
+            actor_user_id=owner_user_id,
+            access_token=access_token
+        )
     
     try:
         # Stage 1: OCR
         ocr_provider = get_ocr_provider(ocr_provider_name)
         ocr_result = ocr_provider.process_image(image_path)
+        
+        # Emit OCR_COMPLETE event
+        if owner_user_id:
+            insert_audit_event(
+                submission_id=submission_id,
+                actor_role="system",
+                event_type="OCR_COMPLETE",
+                event_payload={"confidence_avg": ocr_result.confidence_avg, "line_count": len(ocr_result.lines)},
+                actor_user_id=owner_user_id,
+                access_token=access_token
+            )
         
         # Write OCR artifacts to temp directory
         with open(artifact_path / "ocr.json", "w", encoding="utf-8") as f:
@@ -130,6 +160,26 @@ def process_submission(
         from pipeline.extract_ifi import extract_fields_ifi
         contact_fields = extract_fields_ifi(contact_block, ocr_result.text, original_filename)
         
+        # Get doc_type_final from IFI metadata (M2)
+        ifi_metadata = contact_fields.get("_ifi_metadata", {})
+        doc_type_final = ifi_metadata.get("doc_type_final")
+        doc_type_signal = ifi_metadata.get("doc_type_signal")
+        
+        # Emit EXTRACTION_COMPLETE event
+        if owner_user_id:
+            insert_audit_event(
+                submission_id=submission_id,
+                actor_role="system",
+                event_type="EXTRACTION_COMPLETE",
+                event_payload={
+                    "doc_type_final": doc_type_final,
+                    "doc_type_signal": doc_type_signal,
+                    "fields_extracted": sum(1 for k, v in contact_fields.items() if v is not None and k != "_ifi_metadata")
+                },
+                actor_user_id=owner_user_id,
+                access_token=access_token
+            )
+        
         # Determine which model was used
         if os.environ.get("OPENAI_API_KEY"):
             model_used = "gpt-4o-mini (OpenAI)"
@@ -139,7 +189,7 @@ def process_submission(
             model_used = "none (no API key)"
         
         # Create debug info (include IFI classification if available)
-        ifi_metadata = contact_fields.get("_ifi_metadata", {})
+        # Note: ifi_metadata already extracted above
         
         extraction_debug = {
             "extraction_method": ifi_metadata.get("extraction_method", "llm"),
@@ -211,7 +261,8 @@ def process_submission(
             "artifact_dir": artifact_dir,
             **contact_fields,
             "word_count": essay_metrics["word_count"],
-            "ocr_confidence_avg": ocr_result.confidence_avg
+            "ocr_confidence_avg": ocr_result.confidence_avg,
+            "ocr_failed": getattr(ocr_result, 'ocr_failed', False)  # Pass OCR failure flag
         }
         
         record, validation_report = validate_record(partial_record)
@@ -219,10 +270,95 @@ def process_submission(
         # Write validation artifacts
         with open(artifact_path / "validation.json", "w", encoding="utf-8") as f:
             json.dump(validation_report, f, indent=2)
+        
+        # Build rules_applied from validation_report
+        if isinstance(validation_report, dict):
+            issues = validation_report.get("issues", [])
+            for issue in issues:
+                rules_applied.append({
+                    "rule_id": issue.lower().replace("_", "_"),
+                    "description": issue.replace("_", " ").title(),
+                    "params": {},
+                    "evaluated": True,
+                    "result": False,
+                    "triggered": True
+                })
+        
+        # Emit VALIDATION_COMPLETE event
+        if owner_user_id:
+            insert_audit_event(
+                submission_id=submission_id,
+                actor_role="system",
+                event_type="VALIDATION_COMPLETE",
+                event_payload={
+                    "needs_review": record.needs_review,
+                    "review_reason_codes": record.review_reason_codes
+                },
+                actor_user_id=owner_user_id,
+                access_token=access_token
+            )
+        
+        # M1: Build and write audit trace
+        ocr_dict = ocr_result.model_dump() if hasattr(ocr_result, 'model_dump') else {
+            "text": ocr_result.text,
+            "confidence_avg": ocr_result.confidence_avg,
+            "lines": ocr_result.lines
+        }
+        
+        trace_dict = build_decision_trace(
+            submission_id=submission_id,
+            filename=original_filename or "unknown",
+            owner_user_id=owner_user_id,
+            ocr_result=ocr_dict,
+            extracted_fields=contact_fields,
+            validation_result=validation_report,
+            llm_result=ifi_metadata,
+            errors=errors,
+            doc_type_final=doc_type_final,
+            doc_type_signal=doc_type_signal,
+            rules_applied=rules_applied
+        )
+        
+        # Write to Supabase (source of truth)
+        if owner_user_id:
+            insert_audit_trace(
+                submission_id=submission_id,
+                owner_user_id=owner_user_id,
+                trace_dict=trace_dict,
+                access_token=access_token
+            )
+        
+        # Also write to artifact directory (for debugging)
+        write_artifact_json(trace_dict, str(artifact_path))
     
         processing_report["stages"]["validation"] = validation_report
         processing_report["needs_review"] = record.needs_review
+        processing_report["audit_trace"] = trace_dict  # Include in report
         
+    except Exception as e:
+        # M5: Capture errors for audit, don't crash
+        error_info = {
+            "stage": "processing",
+            "error_type": type(e).__name__,
+            "message": str(e)
+        }
+        errors.append(error_info)
+        logger.error(f"Error processing submission {submission_id}: {e}")
+        
+        # Emit ERROR event
+        if owner_user_id:
+            insert_audit_event(
+                submission_id=submission_id,
+                actor_role="system",
+                event_type="ERROR",
+                event_payload=error_info,
+                actor_user_id=owner_user_id,
+                access_token=access_token
+            )
+        
+        # Re-raise to be handled by caller
+        raise
+    
     finally:
         # Clean up temporary directory (artifacts are stored in Supabase Storage, not needed locally)
         try:

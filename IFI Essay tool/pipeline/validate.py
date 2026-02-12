@@ -131,11 +131,21 @@ def validate_record(partial: dict) -> tuple[SubmissionRecord, dict]:
         issues.append("SHORT_ESSAY")
         needs_review = True
     
-    # Check OCR confidence if available
-    confidence = partial.get("ocr_confidence_avg")
-    if confidence and confidence < 0.5:
-        issues.append("LOW_CONFIDENCE")
+    # Check OCR failure (distinct from low confidence)
+    ocr_failed = partial.get("ocr_failed", False)
+    if ocr_failed:
+        issues.append("OCR_FAILED")
         needs_review = True
+    
+    # Check OCR confidence if available (only if OCR didn't fail)
+    confidence = partial.get("ocr_confidence_avg")
+    if confidence is not None and not ocr_failed:
+        if confidence < 0.5:
+            issues.append("LOW_CONFIDENCE")
+            needs_review = True
+            # M5: Escalation threshold - very low confidence escalates
+            if confidence < 0.3:
+                issues.append("ESCALATED")
     
     # Build review reason codes
     # If no issues but still needs review (default state), add pending review code

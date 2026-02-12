@@ -36,6 +36,53 @@ def process_submission_job(
         dict with status and result/error
     """
     try:
+        # M4: Check for duplicate before processing (idempotency)
+        import hashlib
+        sha256_hash = hashlib.sha256(file_bytes).hexdigest()
+        submission_id_check = sha256_hash[:12]
+        
+        from pipeline.supabase_db import check_duplicate_submission, get_record_by_id
+        duplicate_info = check_duplicate_submission(
+            submission_id=submission_id_check,
+            current_user_id=owner_user_id,
+            access_token=access_token,
+            refresh_token=None
+        )
+        
+        # If duplicate exists and is already processed/approved, skip
+        if duplicate_info.get("is_duplicate"):
+            existing_record = get_record_by_id(
+                submission_id_check,
+                owner_user_id=owner_user_id,
+                access_token=access_token,
+                refresh_token=None
+            )
+            
+            if existing_record:
+                status = existing_record.get("status", "PENDING_REVIEW")
+                # Skip if already processed or approved (unless forced reprocess)
+                if status in ["PROCESSED", "APPROVED"]:
+                    # Emit DUPLICATE_SKIPPED event
+                    from pipeline.supabase_audit import insert_audit_event
+                    insert_audit_event(
+                        submission_id=submission_id_check,
+                        actor_role="system",
+                        event_type="DUPLICATE_SKIPPED",
+                        event_payload={
+                            "existing_status": status,
+                            "existing_owner": existing_record.get("owner_user_id")
+                        },
+                        actor_user_id=owner_user_id,
+                        access_token=access_token
+                    )
+                    
+                    return {
+                        "status": "skipped",
+                        "reason": "duplicate_already_processed",
+                        "submission_id": submission_id_check,
+                        "existing_record": existing_record
+                    }
+        
         # Upload to Supabase Storage
         ingest_data = ingest_upload_supabase(
             uploaded_bytes=file_bytes,
@@ -94,7 +141,9 @@ def process_submission_job(
                             submission_id=split_ingest["submission_id"],
                             artifact_dir=split_ingest["artifact_dir"],
                             ocr_provider_name=ocr_provider,
-                            original_filename=split_filename
+                            original_filename=split_filename,
+                            owner_user_id=owner_user_id,
+                            access_token=access_token
                         )
                         
                         logging.info(f"💾 Saving entry {idx} to database...")
@@ -192,7 +241,9 @@ def process_submission_job(
                 submission_id=ingest_data["submission_id"],
                 artifact_dir=ingest_data["artifact_dir"],
                 ocr_provider_name=ocr_provider,
-                original_filename=filename
+                original_filename=filename,
+                owner_user_id=owner_user_id,
+                access_token=access_token
             )
             
             # Update artifact_dir to use Supabase Storage path
@@ -209,6 +260,20 @@ def process_submission_job(
             
             if not save_result.get("success", False):
                 raise Exception("Failed to save record to database")
+            
+            # M1: Emit SAVED event
+            from pipeline.supabase_audit import insert_audit_event
+            insert_audit_event(
+                submission_id=ingest_data["submission_id"],
+                actor_role="system",
+                event_type="SAVED",
+                event_payload={
+                    "needs_review": record.needs_review,
+                    "status": "PENDING_REVIEW"
+                },
+                actor_user_id=owner_user_id,
+                access_token=access_token
+            )
             
             # Get duplicate info from save_result (already checked in save_record)
             is_update = save_result.get("is_update", False)

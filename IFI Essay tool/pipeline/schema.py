@@ -12,6 +12,7 @@ class OcrResult(BaseModel):
     text: str
     confidence_avg: Optional[float] = None
     lines: List[str] = []
+    ocr_failed: bool = False  # True if OCR provider raised an error (distinct from low confidence)
 
 
 class SubmissionRecord(BaseModel):

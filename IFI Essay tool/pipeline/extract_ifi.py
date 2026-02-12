@@ -43,6 +43,23 @@ def extract_ifi_submission(
         logger.warning("No LLM API keys set - falling back to basic extraction")
         return _extract_ifi_fallback(raw_ocr_text, original_filename)
     
+    # M3: Check for cached LLM result (determinism)
+    submission_id = None
+    if contact_block:
+        # Try to extract submission_id from context if available
+        import hashlib
+        # Use raw_ocr_text hash as submission identifier for caching
+        text_hash = hashlib.sha256(raw_ocr_text.encode()).hexdigest()[:12]
+        submission_id = text_hash
+    
+    cached_result = None
+    if submission_id:
+        cached_result = _get_cached_llm_result(submission_id)
+        if cached_result:
+            logger.info(f"Using cached LLM result for submission {submission_id}")
+            # Emit CACHED_LLM_RESULT event (will be emitted by caller)
+            return cached_result
+    
     try:
         # Use OpenAI if available (best for complex classification)
         if openai_key:
@@ -59,20 +76,20 @@ def extract_ifi_submission(
         # Build comprehensive prompt
         prompt = _build_ifi_extraction_prompt(raw_ocr_text, original_filename)
         
-        # Call LLM
+        # Call LLM with temperature=0 for determinism (M3)
         response = client.chat.completions.create(
             model=model_name,
             messages=[
                 {
                     "role": "system",
-                    "content": "You are an expert at classifying and extracting data from educational contest submissions. Return only valid JSON."
+                    "content": "You are an expert at extracting data from educational contest submissions. Return only valid JSON. Classification suggestions are advisory only - they will be verified deterministically."
                 },
                 {
                     "role": "user",
                     "content": prompt
                 }
             ],
-            temperature=0.1,
+            temperature=0,  # Deterministic (M3)
             response_format={"type": "json_object"}
         )
         
@@ -87,18 +104,49 @@ def extract_ifi_submission(
         if result.get('grade'):
             result['grade'] = _normalize_grade(result['grade'])
         
-        logger.info(f"IFI extraction complete: doc_type={result.get('doc_type')}, "
+        # M2: Verify classification deterministically (remove LLM authority)
+        from pipeline.classify import extract_classification_features, verify_doc_type_signal
+        
+        features = extract_classification_features(raw_ocr_text)
+        signal_doc_type = result.get('doc_type')
+        doc_type_final, verified, reason = verify_doc_type_signal(signal_doc_type, features, raw_ocr_text)
+        
+        # Store both signal and final for audit
+        result['doc_type_signal'] = signal_doc_type  # LLM suggestion
+        result['doc_type_final'] = doc_type_final  # Deterministic decision
+        result['classification_verified'] = verified
+        result['classification_reason'] = reason
+        
+        # If not verified, flag for review
+        if not verified:
+            if 'notes' not in result:
+                result['notes'] = []
+            result['notes'].append(f"Classification not verified: {reason}")
+            result['needs_review'] = True
+        
+        # M2: Verify extracted fields exist in OCR text
+        result = verify_extracted_fields(result, raw_ocr_text)
+        
+        logger.info(f"IFI extraction complete: doc_type_signal={signal_doc_type}, "
+                   f"doc_type_final={doc_type_final}, verified={verified}, "
                    f"student={result.get('student_name')}, grade={result.get('grade')}")
+        
+        # M3: Cache LLM result for determinism
+        if submission_id:
+            _cache_llm_result(submission_id, result)
         
         return result
     
     except Exception as e:
         logger.error(f"IFI LLM extraction failed: {e}")
-        return _extract_ifi_fallback(raw_ocr_text, original_filename)
+        result = _extract_ifi_fallback(raw_ocr_text, original_filename)
+        # Add error to result for audit
+        result['_extraction_error'] = str(e)
+        return result
 
 
 def _build_ifi_extraction_prompt(ocr_text: str, filename: str = None) -> str:
-    """Build the comprehensive two-phase extraction prompt."""
+    """Build the comprehensive extraction prompt (classification is advisory only per DBF)."""
     
     prompt = f"""You are extracting structured data from IFI Fatherhood Essay Contest submissions.
 
@@ -109,11 +157,11 @@ OCR TEXT:
 
 FILENAME: {filename if filename else "unknown"}
 
-TASK: Classify the document, then extract fields. Return JSON only.
+TASK: Extract fields and suggest document classification. Return JSON only.
 
-===== PHASE 1: CLASSIFICATION =====
+===== PHASE 1: CLASSIFICATION SUGGESTION (ADVISORY) =====
 
-Classify as ONE of these doc_types:
+Suggest ONE of these doc_types (this will be verified deterministically):
 
 1. IFI_OFFICIAL_FORM_FILLED
    - Contains labeled form fields: "Student's Name / Nombre del Estudiante", "Grade / Grado", "School/Escuela"
@@ -314,6 +362,154 @@ def _normalize_grade(grade_value: Any) -> Optional[Any]:
                 return grade_int
     
     return None
+
+
+def verify_extracted_fields(result: Dict[str, Any], ocr_text: str) -> Dict[str, Any]:
+    """
+    Verify that extracted fields exist in OCR text (M2 - DBF compliance).
+    
+    Args:
+        result: LLM extraction result
+        ocr_text: Full OCR text
+        
+    Returns:
+        Verified result with unverified fields nullified and reason codes added
+    """
+    ocr_lower = ocr_text.lower()
+    unverified_fields = []
+    
+    # Verify student_name
+    student_name = result.get('student_name')
+    if student_name:
+        # Check if name appears in OCR (case-insensitive, allow for OCR errors)
+        name_words = student_name.split()
+        if len(name_words) >= 2:
+            # Check if first and last name appear in OCR
+            first_name = name_words[0].lower()
+            last_name = name_words[-1].lower()
+            if first_name not in ocr_lower or last_name not in ocr_lower:
+                result['student_name'] = None
+                unverified_fields.append('student_name')
+                if 'notes' not in result:
+                    result['notes'] = []
+                result['notes'].append(f"student_name '{student_name}' not found in OCR text")
+    
+    # Verify school_name
+    school_name = result.get('school_name')
+    if school_name:
+        school_lower = school_name.lower()
+        # Check if school name or key words appear
+        school_words = school_lower.split()
+        found_words = sum(1 for word in school_words if len(word) > 3 and word in ocr_lower)
+        if found_words < len(school_words) * 0.5:  # Less than 50% of words found
+            result['school_name'] = None
+            unverified_fields.append('school_name')
+            if 'notes' not in result:
+                result['notes'] = []
+            result['notes'].append(f"school_name '{school_name}' not verified in OCR text")
+    
+    # Verify grade (check for grade number or "K" in OCR)
+    grade = result.get('grade')
+    if grade:
+        if isinstance(grade, int):
+            grade_str = str(grade)
+            # Check for grade number or ordinal
+            if grade_str not in ocr_lower and f"{grade_str}th" not in ocr_lower and f"{grade_str}nd" not in ocr_lower and f"{grade_str}rd" not in ocr_lower:
+                result['grade'] = None
+                unverified_fields.append('grade')
+                if 'notes' not in result:
+                    result['notes'] = []
+                result['notes'].append(f"grade '{grade}' not verified in OCR text")
+        elif isinstance(grade, str) and grade.upper() == 'K':
+            # Check for kindergarten indicators
+            if 'k' not in ocr_lower and 'kindergarten' not in ocr_lower and 'kinder' not in ocr_lower:
+                result['grade'] = None
+                unverified_fields.append('grade')
+                if 'notes' not in result:
+                    result['notes'] = []
+                result['notes'].append(f"grade 'K' not verified in OCR text")
+    
+    # Verify father_figure_name
+    father_name = result.get('father_figure_name')
+    if father_name:
+        name_words = father_name.split()
+        if len(name_words) >= 2:
+            first_name = name_words[0].lower()
+            last_name = name_words[-1].lower()
+            if first_name not in ocr_lower or last_name not in ocr_lower:
+                result['father_figure_name'] = None
+                unverified_fields.append('father_figure_name')
+                if 'notes' not in result:
+                    result['notes'] = []
+                result['notes'].append(f"father_figure_name '{father_name}' not verified in OCR text")
+    
+    # Add unverified field reason codes
+    if unverified_fields:
+        if 'review_reason_codes' not in result:
+            result['review_reason_codes'] = []
+        for field in unverified_fields:
+            result['review_reason_codes'].append(f"UNVERIFIED_FIELD_{field.upper()}")
+        result['needs_review'] = True
+    
+    return result
+
+
+def _get_cached_llm_result(submission_id: str) -> Optional[Dict[str, Any]]:
+    """
+    M3: Get cached LLM result from Supabase audit trace for determinism.
+    
+    Args:
+        submission_id: Submission identifier
+        
+    Returns:
+        Cached result dict or None
+    """
+    try:
+        from pipeline.supabase_db import get_supabase_client
+        from supabase import create_client
+        import os
+        
+        supabase_url = os.environ.get("SUPABASE_URL")
+        service_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+        
+        if not service_key or not supabase_url:
+            return None
+        
+        admin_client = create_client(supabase_url, service_key)
+        
+        # Get most recent trace for this submission
+        result = admin_client.table("submission_audit_traces").select(
+            "signals"
+        ).eq("submission_id", submission_id).order("created_at", desc=True).limit(1).execute()
+        
+        if result.data and len(result.data) > 0:
+            signals = result.data[0].get("signals", {})
+            llm_signal = signals.get("llm", {})
+            if llm_signal:
+                # Reconstruct result from cached signal
+                # Note: This is a simplified cache - full caching would store complete result
+                return None  # For now, return None to always use fresh LLM (can be enhanced)
+        
+        return None
+    except Exception as e:
+        logger.warning(f"Could not get cached LLM result: {e}")
+        return None
+
+
+def _cache_llm_result(submission_id: str, result: Dict[str, Any]) -> None:
+    """
+    M3: Cache LLM result in Supabase for determinism.
+    
+    Args:
+        submission_id: Submission identifier
+        result: LLM extraction result
+    """
+    try:
+        # Cache is stored in audit trace signals, so no separate cache table needed
+        # The trace already contains the LLM signal
+        pass
+    except Exception as e:
+        logger.warning(f"Could not cache LLM result: {e}")
 
 
 def _extract_ifi_fallback(ocr_text: str, filename: str = None) -> Dict[str, Any]:

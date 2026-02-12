@@ -45,6 +45,7 @@ from pipeline.validate import can_approve_record
 from auth.supabase_client import get_supabase_client, get_user_id
 from jobs.queue import enqueue_submission, get_job_status, get_queue_status
 from supabase import create_client
+from datetime import datetime
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", os.urandom(32))
@@ -927,6 +928,7 @@ def review():
 @app.route("/api/db_stats")
 def api_db_stats():
     """Return per-user database stats (optionally bypassing cache)."""
+    zeros = {"total_count": 0, "clean_count": 0, "needs_review_count": 0}
     if not require_auth():
         return jsonify({"error": "Unauthorized"}), 401
 
@@ -936,23 +938,30 @@ def api_db_stats():
     fresh = request.args.get("fresh") == "1"
 
     if not user_id:
-        return jsonify({"total_count": 0, "clean_count": 0, "needs_review_count": 0})
+        return jsonify(zeros)
 
-    if not fresh:
-        return jsonify(get_cached_db_stats(user_id, access_token, refresh_token))
+    try:
+        if not fresh:
+            return jsonify(get_cached_db_stats(user_id, access_token, refresh_token))
 
-    stats = get_db_stats(owner_user_id=user_id, access_token=access_token, refresh_token=refresh_token)
+        stats = get_db_stats(owner_user_id=user_id, access_token=access_token, refresh_token=refresh_token)
+        if not isinstance(stats, dict):
+            stats = zeros
 
-    now = time.time()
-    _db_stats_cache[user_id] = {"ts": now, "stats": stats}
-    redis_client = get_redis_client()
-    if redis_client:
-        try:
-            redis_client.setex(f"db_stats:{user_id}", DB_STATS_TTL_SECONDS, json.dumps(stats))
-        except Exception as e:
-            print(f"⚠️ Warning: Redis cache write failed: {e}", flush=True)
+        now = time.time()
+        _db_stats_cache[user_id] = {"ts": now, "stats": stats}
+        redis_client = get_redis_client()
+        if redis_client:
+            try:
+                redis_client.setex(f"db_stats:{user_id}", DB_STATS_TTL_SECONDS, json.dumps(stats))
+            except Exception as e:
+                print(f"⚠️ Warning: Redis cache write failed: {e}", flush=True)
 
-    return jsonify(stats)
+        return jsonify(stats)
+    except Exception as e:
+        print(f"❌ api_db_stats error: {e}", flush=True)
+        app.logger.exception("api_db_stats failed")
+        return jsonify(zeros)
 
 
 @app.route("/record/<submission_id>", methods=["GET", "POST"])
@@ -1032,6 +1041,7 @@ def record_detail(submission_id):
             # If record was in needs_review and now has all required fields, auto-approve it
             if can_approve and record.get("needs_review", True):
                 updates["needs_review"] = False
+                updates["status"] = "APPROVED"
                 auto_approve = True
             elif not can_approve:
                 # Still missing fields, keep in needs_review
@@ -1040,6 +1050,17 @@ def record_detail(submission_id):
         access_token = session.get("supabase_access_token")
         refresh_token = session.get("supabase_refresh_token")
         if update_db_record(submission_id, updates, owner_user_id=user_id, access_token=access_token, refresh_token=refresh_token):
+            # M1: Emit APPROVED event if auto-approved
+            if auto_approve:
+                from pipeline.supabase_audit import insert_audit_event
+                insert_audit_event(
+                    submission_id=submission_id,
+                    actor_role="system",
+                    event_type="APPROVED",
+                    event_payload={"auto_approved": True, "approved_by": user_id},
+                    actor_user_id=user_id,
+                    access_token=access_token
+                )
             # Only show success message after update succeeds
             if auto_approve:
                 flash("✅ Record updated and automatically moved to approved batch!", "success")
@@ -1088,7 +1109,18 @@ def approve_record(submission_id):
         }), 400
     
     refresh_token = session.get("supabase_refresh_token")
-    if update_db_record(submission_id, {"needs_review": False}, owner_user_id=user_id, access_token=access_token, refresh_token=refresh_token):
+    updates = {"needs_review": False, "status": "APPROVED"}
+    if update_db_record(submission_id, updates, owner_user_id=user_id, access_token=access_token, refresh_token=refresh_token):
+        # M1: Emit APPROVED event
+        from pipeline.supabase_audit import insert_audit_event
+        insert_audit_event(
+            submission_id=submission_id,
+            actor_role="reviewer",
+            event_type="APPROVED",
+            event_payload={"approved_by": user_id},
+            actor_user_id=user_id,
+            access_token=access_token
+        )
         invalidate_db_stats_cache(user_id)
         return jsonify({"success": True})
     else:
@@ -1105,7 +1137,17 @@ def send_for_review(submission_id):
     access_token = session.get("supabase_access_token")
     
     refresh_token = session.get("supabase_refresh_token")
-    if update_db_record(submission_id, {"needs_review": True}, owner_user_id=user_id, access_token=access_token, refresh_token=refresh_token):
+    if update_db_record(submission_id, {"needs_review": True, "status": "PENDING_REVIEW"}, owner_user_id=user_id, access_token=access_token, refresh_token=refresh_token):
+        # M1: Emit REJECTED event (sent back for review)
+        from pipeline.supabase_audit import insert_audit_event
+        insert_audit_event(
+            submission_id=submission_id,
+            actor_role="reviewer",
+            event_type="REJECTED",
+            event_payload={"rejected_by": user_id},
+            actor_user_id=user_id,
+            access_token=access_token
+        )
         invalidate_db_stats_cache(user_id)
         return jsonify({"success": True})
     else:
@@ -1701,12 +1743,13 @@ def start_background_worker():
     def run_worker():
         """Worker thread function."""
         try:
-            from rq import SimpleWorker, Queue  # SimpleWorker doesn't install signal handlers
+            from rq import SimpleWorker, Queue
+            from rq.timeouts import TimerDeathPenalty  # thread-safe; UnixSignalDeathPenalty uses SIGALRM (main thread only)
             from jobs.redis_queue import get_redis_client
             import uuid
-            
+
             redis_client = get_redis_client()
-            
+
             # Test connection
             try:
                 redis_client.ping()
@@ -1714,17 +1757,18 @@ def start_background_worker():
             except Exception as e:
                 print(f"❌ Background worker failed to connect to Redis: {e}")
                 return
-            
-            # Create queue and worker with unique name
-            # Using SimpleWorker because it doesn't install signal handlers
-            # (signal handlers can only be set from the main thread)
+
+            # Create queue and worker with unique name.
+            # Signal handlers (SIGINT, SIGALRM) only work in the main thread; override for embedded thread.
             queue = Queue("submissions", connection=redis_client)
             worker_name = f"embedded-{uuid.uuid4().hex[:8]}"
             worker = SimpleWorker([queue], connection=redis_client, name=worker_name)
-            
+            worker._install_signal_handlers = lambda: None  # no-op: can't use signal in thread
+            worker.death_penalty_class = TimerDeathPenalty  # job timeouts via threading.Timer, not SIGALRM
+
             print(f"🚀 Background worker '{worker_name}' started (embedded in Flask app)")
             print("📊 Listening for jobs on 'submissions' queue...")
-            
+
             # Run worker (this blocks the thread, which is fine since it's a daemon thread)
             worker.work(with_scheduler=False)
             

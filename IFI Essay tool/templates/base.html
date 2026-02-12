@@ -223,7 +223,7 @@
             const needsReviewEl = document.getElementById('dbStatsNeedsReview');
             if (!totalEl && !cleanEl && !needsReviewEl) return;
 
-            fetch('/api/db_stats?fresh=1', { headers: { 'Accept': 'application/json' }})
+            fetch('/api/db_stats?fresh=1', { credentials: 'same-origin', headers: { 'Accept': 'application/json' }})
                 .then(r => r.ok ? r.json() : Promise.reject(r))
                 .then(stats => {
                     if (totalEl && stats.total_count !== undefined) totalEl.textContent = stats.total_count;

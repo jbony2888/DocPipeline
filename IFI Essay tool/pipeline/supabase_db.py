@@ -82,10 +82,19 @@ def check_duplicate_submission(submission_id: str, current_user_id: str, access_
 def save_record(record: SubmissionRecord, filename: str, owner_user_id: str, access_token: Optional[str] = None, upload_batch_id: Optional[str] = None) -> Dict[str, Any]:
     """Save a submission record to Supabase."""
     try:
-        # Prefer an authenticated client when possible (RLS relies on auth.uid()).
-        supabase = get_supabase_client(access_token=access_token) if access_token else get_supabase_client()
-        if not supabase:
-            raise Exception("Could not initialize Supabase client")
+        from supabase import create_client as create_supabase_client
+        import os
+        service_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+        supabase_url = normalize_supabase_url(os.environ.get("SUPABASE_URL"))
+
+        # Use service-role client for upsert when available (worker/background jobs).
+        # Avoids RLS and expired user token issues so saves always succeed.
+        if service_key and supabase_url:
+            write_client = create_supabase_client(supabase_url, service_key)
+        else:
+            write_client = get_supabase_client(access_token=access_token) if access_token else get_supabase_client()
+        if not write_client:
+            raise Exception("Could not initialize Supabase client (set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY or SUPABASE_ANON_KEY)")
         
         # Convert Pydantic model to dict
         record_dict = record.model_dump() if hasattr(record, 'model_dump') else record.dict()
@@ -95,22 +104,15 @@ def save_record(record: SubmissionRecord, filename: str, owner_user_id: str, acc
         record_dict["owner_user_id"] = owner_user_id
         record_dict["updated_at"] = datetime.now().isoformat()
         
+        # M5: Set status field (default to PENDING_REVIEW if not set)
+        if "status" not in record_dict or not record_dict["status"]:
+            record_dict["status"] = "PENDING_REVIEW"
+        
         # Add batch tracking
         if upload_batch_id:
             record_dict["upload_batch_id"] = upload_batch_id
         
-        # Set source tracking (default to 'extracted' for new records)
-        # These will be overridden by batch defaults or manual edits
-        # Note: Removed school_source, grade_source, teacher_source
-        # These columns don't exist in the database for simple bulk edit
-        
         # Check if this is an update (duplicate) or new record
-        # We'll check this before upsert to return info about duplicates
-        from supabase import create_client as create_supabase_client
-        import os
-        service_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
-        supabase_url = normalize_supabase_url(os.environ.get("SUPABASE_URL"))
-        
         is_update = False
         previous_owner = None
         if service_key and supabase_url:
@@ -121,7 +123,7 @@ def save_record(record: SubmissionRecord, filename: str, owner_user_id: str, acc
                 previous_owner = existing.data[0].get("owner_user_id")
         
         # Insert or update (upsert)
-        result = supabase.table("submissions").upsert(
+        result = write_client.table("submissions").upsert(
             record_dict,
             on_conflict="submission_id"
         ).execute()

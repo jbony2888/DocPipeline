@@ -8,13 +8,55 @@ import json
 import sys
 
 def test_google_vision():
-    """Test Google Cloud Vision credentials."""
+    """Test Google Cloud Vision credentials (file path or JSON env)."""
     print("🔍 Testing Google Cloud Vision credentials...")
     
     creds_json = os.environ.get('GOOGLE_CLOUD_VISION_CREDENTIALS_JSON')
-    if not creds_json:
-        print("❌ GOOGLE_CLOUD_VISION_CREDENTIALS_JSON not set")
+    creds_path = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS')
+    
+    # Prefer credentials file when set (avoids .env JSON escaping issues)
+    if creds_path:
+        # Use credentials file
+        path = os.path.abspath(os.path.expanduser(creds_path))
+        if not os.path.isfile(path):
+            print(f"❌ GOOGLE_APPLICATION_CREDENTIALS file not found: {path}")
+            return False
+        try:
+            with open(path, 'r') as f:
+                creds_dict = json.load(f)
+        except json.JSONDecodeError as e:
+            print(f"❌ Invalid JSON in credentials file: {e}")
+            return False
+        if creds_dict.get('type') != 'service_account':
+            print("❌ Invalid credentials type (expected 'service_account')")
+            return False
+        project_id = creds_dict.get('project_id', '')
+        client_email = creds_dict.get('client_email', '')
+        print(f"✅ Google credentials file is valid: {path}")
+        print(f"   Project ID: {project_id}")
+        print(f"   Client Email: {client_email}")
+        try:
+            from pipeline.ocr import GoogleVisionOcrProvider
+            ocr = GoogleVisionOcrProvider()
+            print("✅ Google Vision OCR client initialized successfully")
+            return True
+        except Exception as e:
+            print(f"⚠️  Credentials loaded but client init failed: {e}")
+            print("   This might be OK if Cloud Vision API is not enabled")
+            return True
+    elif not creds_json or creds_json.strip() == '':
+        print("❌ Neither GOOGLE_CLOUD_VISION_CREDENTIALS_JSON nor GOOGLE_APPLICATION_CREDENTIALS set")
         return False
+    
+    # .env often stores JSON with literal \n (backslash-n) between keys; normalize so json.loads() works
+    if "\\n" in creds_json:
+        creds_json = (
+            creds_json.replace('{\\n  "', '{\n  "')
+            .replace('",\\n  "', '",\n  "')
+            .replace('"\\n  "', '"\n  "')
+            .replace('"\\n}"', '"\n}"')
+            .replace('"\\n,"', '"\n,"')
+        )
     
     try:
         creds_dict = json.loads(creds_json)
@@ -31,8 +73,8 @@ def test_google_vision():
         
         # Try to initialize the client
         try:
-            from pipeline.ocr import GoogleVisionOCR
-            ocr = GoogleVisionOCR()
+            from pipeline.ocr import GoogleVisionOcrProvider
+            ocr = GoogleVisionOcrProvider()
             print("✅ Google Vision OCR client initialized successfully")
             return True
         except Exception as e:
@@ -49,7 +91,7 @@ def test_google_vision():
 
 
 def test_groq_key():
-    """Test Groq API key."""
+    """Test Groq API key and connectivity."""
     print("\n🔍 Testing Groq API key...")
     
     groq_key = os.environ.get('GROQ_API_KEY')
@@ -64,11 +106,26 @@ def test_groq_key():
     
     if not groq_key.startswith('gsk_'):
         print("⚠️  Groq key doesn't start with 'gsk_' (unusual format)")
-        # Still return True as format might vary
     
-    print(f"✅ Groq API key is set (length: {len(groq_key)} chars)")
-    print(f"   Key format: {groq_key[:4]}...{groq_key[-4:]}")
-    return True
+    print(f"   Key set (length: {len(groq_key)} chars, {groq_key[:4]}...{groq_key[-4:]})")
+    
+    # Verify Groq API is reachable with a minimal chat completion
+    try:
+        from groq import Groq
+        client = Groq(api_key=groq_key)
+        chat = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": "Say OK"}],
+            max_tokens=5,
+        )
+        if chat.choices:
+            print("✅ Groq API reachable (completion OK)")
+        else:
+            print("⚠️  Groq responded but no completion (key may still work)")
+        return True
+    except Exception as e:
+        print(f"❌ Groq API error: {e}")
+        return False
 
 
 def main():
@@ -96,7 +153,7 @@ def main():
         print("❌ Some API keys are missing or invalid")
         print("\nNext steps:")
         if not google_ok:
-            print("  - Set GOOGLE_CLOUD_VISION_CREDENTIALS_JSON in .env")
+            print("  - Set GOOGLE_APPLICATION_CREDENTIALS=/path/to/credentials_vision.json or GOOGLE_CLOUD_VISION_CREDENTIALS_JSON in .env")
         if not groq_ok:
             print("  - Set GROQ_API_KEY in .env")
         return 1
