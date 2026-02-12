@@ -8,12 +8,43 @@ import json
 import sys
 
 def test_google_vision():
-    """Test Google Cloud Vision credentials."""
+    """Test Google Cloud Vision credentials (file path or JSON env)."""
     print("🔍 Testing Google Cloud Vision credentials...")
     
     creds_json = os.environ.get('GOOGLE_CLOUD_VISION_CREDENTIALS_JSON')
-    if not creds_json:
-        print("❌ GOOGLE_CLOUD_VISION_CREDENTIALS_JSON not set")
+    creds_path = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS')
+    
+    # Prefer credentials file when set
+    if creds_path:
+        path = os.path.abspath(os.path.expanduser(creds_path))
+        if not os.path.isfile(path):
+            print(f"❌ GOOGLE_APPLICATION_CREDENTIALS file not found: {path}")
+            return False
+        try:
+            with open(path, 'r') as f:
+                creds_dict = json.load(f)
+        except json.JSONDecodeError as e:
+            print(f"❌ Invalid JSON in credentials file: {e}")
+            return False
+        if creds_dict.get('type') != 'service_account':
+            print("❌ Invalid credentials type (expected 'service_account')")
+            return False
+        project_id = creds_dict.get('project_id', '')
+        client_email = creds_dict.get('client_email', '')
+        print(f"✅ Google credentials file is valid: {path}")
+        print(f"   Project ID: {project_id}")
+        print(f"   Client Email: {client_email}")
+        try:
+            from pipeline.ocr import GoogleVisionOcrProvider
+            ocr = GoogleVisionOcrProvider()
+            print("✅ Google Vision OCR client initialized successfully")
+            return True
+        except Exception as e:
+            print(f"⚠️  Credentials loaded but client init failed: {e}")
+            print("   This might be OK if Cloud Vision API is not enabled")
+            return True
+    elif not creds_json or creds_json.strip() == '':
+        print("❌ Neither GOOGLE_APPLICATION_CREDENTIALS nor GOOGLE_CLOUD_VISION_CREDENTIALS_JSON set")
         return False
     
     try:
@@ -29,16 +60,15 @@ def test_google_vision():
         print(f"   Project ID: {project_id}")
         print(f"   Client Email: {client_email}")
         
-        # Try to initialize the client
         try:
-            from pipeline.ocr import GoogleVisionOCR
-            ocr = GoogleVisionOCR()
+            from pipeline.ocr import GoogleVisionOcrProvider
+            ocr = GoogleVisionOcrProvider()
             print("✅ Google Vision OCR client initialized successfully")
             return True
         except Exception as e:
             print(f"⚠️  Credentials loaded but client init failed: {e}")
             print("   This might be OK if Cloud Vision API is not enabled")
-            return True  # Still return True as credentials are valid
+            return True
         
     except json.JSONDecodeError as e:
         print(f"❌ Invalid JSON in GOOGLE_CLOUD_VISION_CREDENTIALS_JSON: {e}")

@@ -49,3 +49,5 @@ data/
 render_google_creds.txtCOPY_THIS_EXACT_STRING.txt
 render_google_creds.txt
 *.credentials.json
+credentials_vision.json
+credentials.json

@@ -914,19 +914,85 @@ def bulk_update_records():
 
 @app.route("/record/<submission_id>/delete", methods=["POST"])
 def delete_record(submission_id):
-    """Delete a record."""
+    """Delete a record and its files from storage."""
     if not require_auth():
         return jsonify({"success": False, "error": "Not authenticated"}), 401
-    
+
     user_id = session.get("user_id")
     access_token = session.get("supabase_access_token")
-    
     refresh_token = session.get("supabase_refresh_token")
+
+    # Fetch the record to get artifact_dir before deleting
+    record = get_record_by_id(submission_id, owner_user_id=user_id, access_token=access_token)
+    if record:
+        artifact_dir = record.get("artifact_dir", "")
+        if artifact_dir:
+            # Delete files from storage using service role key (anon key lacks delete permission)
+            service_role_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+            sb = create_client(os.environ["SUPABASE_URL"], service_role_key)
+            paths = [f"{artifact_dir}/original.{ext}" for ext in ["pdf", "png", "jpg", "jpeg"]]
+            try:
+                sb.storage.from_("essay-submissions").remove(paths)
+            except Exception as e:
+                app.logger.warning(f"Storage delete warning: {e}")
+
     if delete_db_record(submission_id, owner_user_id=user_id, access_token=access_token, refresh_token=refresh_token):
         invalidate_db_stats_cache(user_id)
         return jsonify({"success": True})
     else:
         return jsonify({"success": False, "error": "Failed to delete record"}), 500
+
+
+@app.route("/record/<submission_id>/reprocess", methods=["POST"])
+def reprocess_record(submission_id):
+    """Re-download the original file from storage and re-run the pipeline."""
+    if not require_auth():
+        return jsonify({"success": False, "error": "Not authenticated"}), 401
+
+    user_id = session.get("user_id")
+    access_token = session.get("supabase_access_token")
+
+    # 1. Fetch the existing record to get artifact_dir and filename
+    record = get_record_by_id(submission_id, owner_user_id=user_id, access_token=access_token)
+    if not record:
+        return jsonify({"success": False, "error": "Record not found"}), 404
+
+    artifact_dir = record.get("artifact_dir", "")
+    filename = record.get("filename", "unknown.pdf")
+
+    if not artifact_dir:
+        return jsonify({"success": False, "error": "No artifact directory — cannot retrieve original file"}), 400
+
+    # 2. Download the original file from Supabase Storage (try multiple extensions)
+    file_bytes = None
+    for ext in ["pdf", "png", "jpg", "jpeg"]:
+        storage_path = f"{artifact_dir}/original.{ext}"
+        file_bytes = download_file(storage_path, access_token=access_token)
+        if file_bytes:
+            break
+
+    if not file_bytes:
+        return jsonify({"success": False, "error": "Original file not found in storage"}), 404
+
+    # 3. Delete the old record so the worker can create a fresh one
+    refresh_token = session.get("supabase_refresh_token")
+    delete_db_record(submission_id, owner_user_id=user_id, access_token=access_token, refresh_token=refresh_token)
+
+    # 4. Enqueue a new processing job
+    try:
+        job_id = enqueue_submission(
+            file_bytes=file_bytes,
+            filename=filename,
+            owner_user_id=user_id,
+            access_token=access_token,
+            ocr_provider="google",
+        )
+        invalidate_db_stats_cache(user_id)
+        app.logger.info(f"♻️ Reprocess enqueued for {submission_id} → job {job_id}")
+        return jsonify({"success": True, "job_id": job_id})
+    except Exception as e:
+        app.logger.error(f"❌ Reprocess failed for {submission_id}: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
 
 
 def _export_records_to_csv(records: List[Dict]) -> io.BytesIO:

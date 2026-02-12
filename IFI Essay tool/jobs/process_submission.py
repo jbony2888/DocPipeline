@@ -34,12 +34,18 @@ def process_submission_job(
         dict with status and result/error
     """
     try:
+        # Use service role key for storage uploads in the worker.
+        # The user's access_token (JWT) may have expired by the time
+        # the worker picks up the job; the service role key bypasses RLS.
+        service_role_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+        storage_token = service_role_key if service_role_key else access_token
+
         # Upload to Supabase Storage
         ingest_data = ingest_upload_supabase(
             uploaded_bytes=file_bytes,
             original_filename=filename,
             owner_user_id=owner_user_id,
-            access_token=access_token
+            access_token=storage_token
         )
         
         # Create temporary file for processing
@@ -60,12 +66,12 @@ def process_submission_job(
             # Update artifact_dir to use Supabase Storage path
             record.artifact_dir = ingest_data["artifact_dir"]
             
-            # Save to Supabase database
+            # Save to Supabase database (use service role key to bypass RLS)
             save_result = save_db_record(
-                record, 
-                filename=filename, 
-                owner_user_id=owner_user_id, 
-                access_token=access_token,
+                record,
+                filename=filename,
+                owner_user_id=owner_user_id,
+                access_token=storage_token,
                 upload_batch_id=upload_batch_id
             )
             

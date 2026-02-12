@@ -209,6 +209,9 @@
                             <button class="btn btn-sm btn-success" onclick="approveRecord('{{ record.submission_id }}')">
                                 <i class="bi bi-check-circle"></i> Approve
                             </button>
+                            <button class="btn btn-sm btn-outline-info" onclick="reprocessRecord('{{ record.submission_id }}')">
+                                <i class="bi bi-arrow-repeat"></i> Reprocess
+                            </button>
                             {% else %}
                             <button class="btn btn-sm btn-warning" onclick="sendForReview('{{ record.submission_id }}')">
                                 <i class="bi bi-exclamation-triangle"></i> Send for Review
@@ -577,6 +580,34 @@ function deleteRecord(submissionId) {
                 if (data.success) {
                     showToastModal('Record deleted successfully!', 'success');
                     setTimeout(() => location.reload(), 1500);
+                } else {
+                    showToastModal('Error: ' + data.error, 'error');
+                }
+            })
+            .catch(error => {
+                showToastModal('Error: ' + error.message, 'error');
+            });
+        }
+    );
+}
+
+function reprocessRecord(submissionId) {
+    showConfirmModal(
+        'Reprocess Record',
+        'Re-download the original file and run the full pipeline again?',
+        'Reprocess',
+        'btn-info',
+        function() {
+            showToastModal('Reprocessing... this may take a few seconds.', 'warning');
+            fetch(`/record/${submissionId}/reprocess`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'}
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    showToastModal('Reprocess job enqueued! Refreshing...', 'success');
+                    setTimeout(() => location.reload(), 3000);
                 } else {
                     showToastModal('Error: ' + data.error, 'error');
                 }
