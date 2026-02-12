@@ -4,12 +4,15 @@ This runs in a worker process, separate from the Flask request handler.
 """
 
 import os
+import logging
 import tempfile
 from pathlib import Path
 from pipeline.runner import process_submission
 from pipeline.supabase_storage import ingest_upload_supabase
 from pipeline.supabase_db import save_record as save_db_record
 from utils.email_notification import send_job_completion_email, get_job_url, get_user_email_from_token
+
+logger = logging.getLogger(__name__)
 
 
 def process_submission_job(
@@ -34,6 +37,8 @@ def process_submission_job(
         dict with status and result/error
     """
     try:
+        logger.info(f"📄 Processing {filename} for user {owner_user_id}")
+
         # Use service role key for storage uploads in the worker.
         # The user's access_token (JWT) may have expired by the time
         # the worker picks up the job; the service role key bypasses RLS.
@@ -41,20 +46,23 @@ def process_submission_job(
         storage_token = service_role_key if service_role_key else access_token
 
         # Upload to Supabase Storage
+        logger.info(f"⬆️ Uploading {filename} to Supabase Storage...")
         ingest_data = ingest_upload_supabase(
             uploaded_bytes=file_bytes,
             original_filename=filename,
             owner_user_id=owner_user_id,
             access_token=storage_token
         )
-        
+        logger.info(f"✅ Uploaded → submission_id={ingest_data['submission_id']}")
+
         # Create temporary file for processing
         with tempfile.NamedTemporaryFile(delete=False, suffix=Path(filename).suffix) as tmp_file:
             tmp_file.write(file_bytes)
             tmp_path = tmp_file.name
-        
+
         try:
             # Process the submission
+            logger.info(f"🔍 Running OCR + extraction pipeline ({ocr_provider})...")
             record, report = process_submission(
                 image_path=tmp_path,
                 submission_id=ingest_data["submission_id"],
@@ -62,11 +70,13 @@ def process_submission_job(
                 ocr_provider_name=ocr_provider,
                 original_filename=filename
             )
-            
+            logger.info(f"✅ Pipeline complete: student={record.student_name}, word_count={record.word_count}")
+
             # Update artifact_dir to use Supabase Storage path
             record.artifact_dir = ingest_data["artifact_dir"]
-            
+
             # Save to Supabase database (use service role key to bypass RLS)
+            logger.info(f"💾 Saving record to database...")
             save_result = save_db_record(
                 record,
                 filename=filename,
@@ -74,9 +84,9 @@ def process_submission_job(
                 access_token=storage_token,
                 upload_batch_id=upload_batch_id
             )
-            
+
             if not save_result.get("success", False):
-                raise Exception("Failed to save record to database")
+                raise Exception(f"Failed to save record to database: {save_result.get('error', 'unknown')}")
             
             # Get duplicate info from save_result (already checked in save_record)
             is_update = save_result.get("is_update", False)
@@ -147,30 +157,21 @@ def process_submission_job(
                 pass
                 
     except Exception as e:
-        error_result = {
-            "status": "error",
-            "filename": filename,
-            "error": str(e)
-        }
-        
+        logger.error(f"❌ FAILED processing {filename}: {e}", exc_info=True)
+
         # Send email notification on failure
         try:
             user_email = get_user_email_from_token(access_token)
             if user_email:
-                # Get job_id from RQ context if available
                 job_id = None
                 try:
                     from rq import get_current_job
                     current_job = get_current_job()
                     if current_job:
                         job_id = current_job.id
-                except ImportError:
-                    # RQ not available (running in different context)
-                    pass
                 except Exception:
-                    # Job not in RQ context
                     pass
-                
+
                 if job_id:
                     job_url = get_job_url(job_id)
                     send_job_completion_email(
@@ -182,7 +183,6 @@ def process_submission_job(
                         error_message=str(e)
                     )
                 else:
-                    # Fallback: send email without job URL
                     send_job_completion_email(
                         user_email=user_email,
                         job_id="unknown",
@@ -191,10 +191,8 @@ def process_submission_job(
                         error_message=str(e)
                     )
         except Exception as email_error:
-            # Don't fail job if email fails
-            print(f"⚠️ Failed to send email notification: {email_error}")
-            import traceback
-            traceback.print_exc()
-        
-        return error_result
+            logger.warning(f"⚠️ Failed to send failure email: {email_error}")
+
+        # Re-raise so RQ marks the job as failed (not silently "finished")
+        raise
 
