@@ -108,6 +108,25 @@ def is_likely_label_line(line: str) -> bool:
     return False
 
 
+# Essay/sentence starters that indicate captured text is essay body, not a form field value
+_ESSAY_FRAGMENT_STARTERS = (
+    "and ", "at ", "if ", "the ", "to ", "she ", "he ", "my ", "because ", "when ", "that ",
+    "so ", "but ", "or ", "in ", "on ", "for ", "with ", "is ", "was ", "has ", "have ",
+    "it ", "we ", "they ", "this ", "what ", "and if ", "of ", "as ", "by ", "from ",
+)
+
+
+def looks_like_essay_fragment(text: str) -> bool:
+    """
+    Return True if text looks like essay/sentence content rather than a form value (e.g. school name).
+    Used to reject captures that are essay text after a label on the same line.
+    """
+    if not text or not text.strip():
+        return False
+    low = text.strip().lower()
+    return any(low.startswith(s) for s in _ESSAY_FRAGMENT_STARTERS)
+
+
 def is_valid_value_candidate(text: str, max_length: int = 60, min_alpha_ratio: float = 0.4) -> bool:
     """
     Check if text looks like a valid field value.
@@ -169,7 +188,8 @@ def extract_value_near_label(
     lines: list[str],
     label_aliases: list[str],
     start_index: int = 0,
-    max_length: int = 60
+    max_length: int = 60,
+    same_line_only: bool = False,
 ) -> Optional[str]:
     """
     Find a line containing any label alias and extract the associated value.
@@ -177,13 +197,18 @@ def extract_value_near_label(
     Tries multiple strategies:
     1. Value after ':' on same line
     2. Value after alias text on same line
-    3. Value on next 1-2 lines (if they're not labels themselves)
+    3. Value on previous 1-2 lines (if same_line_only is False)
+    4. Value on next 1-2 lines (if same_line_only is False)
+    
+    When same_line_only is True (e.g. typed forms), only strategies 1-2 are used:
+    value must be on the same line as the label, not on the next/previous line.
     
     Args:
         lines: List of text lines
         label_aliases: List of label variations to search for
         start_index: Index to start searching from
         max_length: Maximum length for value
+        same_line_only: If True, only extract value from the same line as the label
         
     Returns:
         Extracted value or None
@@ -279,6 +304,10 @@ def extract_value_near_label(
                                         return original_after
                     # Last resort: return normalized version (will be lowercase but better than nothing)
                     return line_after_alias
+                
+                if same_line_only:
+                    # Typed-form layout: value is only on same line as label; do not use next/previous lines
+                    return None
                 
                 # Strategy 3: Check previous 1-2 lines for value (form may have value above label)
                 for j in range(1, 3):

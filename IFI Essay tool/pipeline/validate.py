@@ -81,8 +81,8 @@ def validate_record(partial: dict) -> tuple[SubmissionRecord, dict]:
     # ALL records start in needs_review - must be manually approved
     needs_review = True
     
-    # Check required fields (student_name, school_name, grade)
-    # These are mandatory for a record to be approved/clean
+    # Check required fields (student_name, school_name, grade) - missing any of these raises a flag.
+    # Email and phone are extracted when available; if missing, no flag is raised.
     student_name = partial.get("student_name")
     if not student_name or not str(student_name).strip():
         issues.append("MISSING_STUDENT_NAME")
@@ -122,32 +122,64 @@ def validate_record(partial: dict) -> tuple[SubmissionRecord, dict]:
         issues.append("MISSING_GRADE")
         needs_review = True
     
-    # Check essay content
+    # Template flags
+    if partial.get("template_detected"):
+        issues.append("TEMPLATE_ONLY")
+        needs_review = True
+    elif partial.get("template_blocked_low_confidence"):
+        issues.append("OCR_LOW_CONFIDENCE")
+        needs_review = True
+
+    # Guardrail: fields detected only outside chunk start page can indicate cross-submission leakage.
+    if partial.get("field_attribution_risk"):
+        issues.append("FIELD_ATTRIBUTION_RISK")
+        needs_review = True
+
+    # Check essay content with format-aware rules
     word_count = partial.get("word_count", 0)
+    doc_format = partial.get("format")  # optional
+    ocr_low_conf_pages = partial.get("ocr_low_conf_page_count") or 0
+    ocr_min = partial.get("ocr_confidence_min")
+    ocr_p10 = partial.get("ocr_confidence_p10")
+    confidence = partial.get("ocr_confidence_avg")
+
     if word_count == 0:
-        issues.append("EMPTY_ESSAY")
+        if doc_format in ("image_only", "hybrid"):
+            if (ocr_low_conf_pages and ocr_low_conf_pages > 0) or (ocr_min is not None and ocr_min < 0.5):
+                issues.append("OCR_LOW_CONFIDENCE")
+            else:
+                issues.append("EMPTY_ESSAY")
+        else:
+            issues.append("EMPTY_ESSAY")
         needs_review = True
     elif word_count < 50:
         issues.append("SHORT_ESSAY")
         needs_review = True
-    
-    # Check OCR confidence if available
-    confidence = partial.get("ocr_confidence_avg")
-    if confidence and confidence < 0.5:
+
+    # Check OCR confidence if available (format aware)
+    if confidence is not None and confidence < 0.5:
         issues.append("LOW_CONFIDENCE")
         needs_review = True
     
-    # Build review reason codes
-    # If no issues but still needs review (default state), add pending review code
+    # Build review reason codes and embed minimal metadata for traceability
     if not issues:
         issues.append("PENDING_REVIEW")
+
     review_reason_codes = ";".join(issues) if issues else "PENDING_REVIEW"
     
     # Create SubmissionRecord
     # Handle "K" grade: convert to None since schema expects int
+    # Reject out-of-range grades (e.g. 40, 0, 13) - treat as missing
     grade_for_record = partial.get("grade")
     if isinstance(grade_for_record, str) and grade_for_record.strip().upper() in ["K", "KINDER", "KINDERGARTEN"]:
         grade_for_record = None  # "K" stored as None (schema expects int)
+    elif grade_for_record is not None:
+        try:
+            g = int(grade_for_record) if isinstance(grade_for_record, (int, float)) else int(str(grade_for_record).strip())
+            if not (1 <= g <= 12):
+                grade_for_record = None
+        except (ValueError, TypeError):
+            pass
     
     record = SubmissionRecord(
         submission_id=partial["submission_id"],
@@ -175,4 +207,3 @@ def validate_record(partial: dict) -> tuple[SubmissionRecord, dict]:
     }
     
     return record, validation_report
-

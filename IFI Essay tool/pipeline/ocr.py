@@ -5,9 +5,184 @@ OCR provider abstraction with stub and Google Cloud Vision implementations.
 import io
 import json
 import os
+import tempfile
 from pathlib import Path
 from typing import Protocol
 from pipeline.schema import OcrResult
+import fitz
+
+
+def _confidence_stats(confidences: list[float], low_threshold: float = 0.65) -> tuple[float, float, int]:
+    """
+    Compute min, p10 percentile, and low confidence page count.
+    Returns (min_conf, p10_conf, low_conf_count)
+    """
+    if not confidences:
+        return 0.0, 0.0, 0
+    sorted_conf = sorted(confidences)
+    min_conf = sorted_conf[0]
+    p10_index = max(0, int(len(sorted_conf) * 0.1) - 1)
+    p10_conf = sorted_conf[p10_index]
+    low_conf_count = sum(1 for c in confidences if c < low_threshold)
+    return float(min_conf), float(p10_conf), int(low_conf_count)
+
+
+def extract_pdf_text_layer(
+    pdf_path: str,
+    pages: list[int] | None = None,
+    mode: str = "full",
+    include_text: bool = True,
+) -> tuple[list[dict], int]:
+    """
+    Extract text from PDF using the native text layer only (no OCR).
+    Use for typed form submissions (format native_text).
+
+    Returns (per_page_results, total_pages) with same shape as ocr_pdf_pages:
+      each dict: page_index, text, confidence_avg=1.0, confidence_min, confidence_p10,
+      low_conf_page_count=0, char_count
+    """
+    doc = fitz.open(pdf_path)
+    page_indices = pages if pages is not None else list(range(len(doc)))
+    results = []
+    for idx in page_indices:
+        page = doc.load_page(idx)
+        rect = page.rect
+        if mode == "top_strip":
+            clip = fitz.Rect(rect.x0, rect.y0, rect.x1, rect.y0 + rect.height * 0.25)
+            text = page.get_text("text", clip=clip)
+        else:
+            text = page.get_text("text")
+        text = (text or "").strip()
+        # Merge form field values into text so extraction sees them (filled AcroForm fields)
+        if idx == 0 and mode == "full":
+            form_lines = []
+            for w in page.widgets():
+                v = (w.field_value or "").strip()
+                if not v or w.field_type == 5:  # skip radio/checkbox unless we need state
+                    continue
+                name = w.field_name
+                if name in ("Student's Name", "Grade", "School", "Essay", "Dad's Response"):
+                    form_lines.append(f"{name}: {v}")
+                elif name == "Dad's Name":
+                    form_lines.append(f"Father/Father-Figure Name: {v}")
+                elif name == "Dad's Email":
+                    form_lines.append(f"Email: {v}")
+                elif name == "Dad's Phone":
+                    form_lines.append(f"Phone: {v}")
+            if form_lines:
+                text = "\n".join(form_lines) + "\n\n" + text
+        char_count = len(text)
+        # Native text = high confidence
+        entry = {
+            "page_index": idx,
+            "confidence_avg": 1.0,
+            "confidence_min": 1.0,
+            "confidence_p10": 1.0,
+            "low_conf_page_count": 0,
+            "char_count": char_count,
+        }
+        if include_text:
+            entry["text"] = text
+        results.append(entry)
+    doc.close()
+    return results, len(results)
+
+
+def get_ocr_result_from_pdf_text_layer(pdf_path: str) -> OcrResult | None:
+    """
+    Build an OcrResult from the PDF text layer only (no OCR).
+    Returns None if the PDF has no pages or any page has no text (caller should use OCR).
+    Use for typed form submissions (native_text) to avoid OCR.
+    """
+    try:
+        per_page, _ = extract_pdf_text_layer(pdf_path, pages=None, mode="full", include_text=True)
+    except Exception:
+        return None
+    if not per_page:
+        return None
+    texts = []
+    for p in sorted(per_page, key=lambda x: int(x.get("page_index", 0))):
+        t = (p.get("text") or "").strip()
+        if not t:
+            return None  # require text on every page
+        texts.append(t)
+    full_text = "\n\n".join(texts)
+    lines = full_text.split("\n") if full_text else []
+    return OcrResult(
+        text=full_text,
+        confidence_avg=1.0,
+        confidence_min=1.0,
+        confidence_p10=1.0,
+        low_conf_page_count=0,
+        lines=lines,
+    )
+
+
+def ocr_pdf_pages(
+    pdf_path: str,
+    pages: list[int] | None = None,
+    mode: str = "full",
+    provider_name: str = "google",
+    provider: "OcrProvider | None" = None,
+    include_text: bool = False,
+) -> tuple[list[dict], int]:
+    """
+    OCR selected pages of a PDF (default all). Mode can be:
+      - full: render full page
+      - top_strip: render top 25% of page (for header detection)
+    Returns (per_page_results, total_pages_ocrd)
+    Each per_page_result: {page_index, text, confidence_avg, confidence_min, confidence_p10, low_conf_page_count, char_count}
+    """
+    doc = fitz.open(pdf_path)
+    page_indices = pages if pages is not None else list(range(len(doc)))
+    provider = provider or get_ocr_provider(provider_name)
+    results = []
+    for idx in page_indices:
+        page = doc.load_page(idx)
+        rect = page.rect
+        if mode == "top_strip":
+            clip = fitz.Rect(rect.x0, rect.y0, rect.x1, rect.y0 + rect.height * 0.25)
+        else:
+            clip = rect
+        pix = page.get_pixmap(clip=clip, dpi=300)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_img:
+            tmp_img.write(pix.tobytes())
+            tmp_path = tmp_img.name
+        try:
+            ocr_res = provider.process_image(tmp_path)
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
+        confs = [ocr_res.confidence_avg or 0.0]
+        min_conf, p10_conf, low_conf = _confidence_stats(confs)
+        entry = {
+            "page_index": idx,
+            "confidence_avg": ocr_res.confidence_avg,
+            "confidence_min": min_conf,
+            "confidence_p10": p10_conf,
+            "low_conf_page_count": low_conf,
+            "char_count": len((ocr_res.text or "").strip()),
+        }
+        if include_text:
+            entry["text"] = ocr_res.text or ""
+        results.append(entry)
+
+    # Guardrail: per-page OCR output must be 1:1 with requested page indices.
+    if len(results) != len(page_indices):
+        raise AssertionError(
+            f"OCR page result count mismatch for {pdf_path}: "
+            f"expected={len(page_indices)} actual={len(results)}"
+        )
+    expected_indices = set(page_indices)
+    actual_indices = {int(r.get("page_index", -1)) for r in results}
+    if actual_indices != expected_indices:
+        raise AssertionError(
+            f"OCR page indices mismatch for {pdf_path}: "
+            f"expected={sorted(expected_indices)} actual={sorted(actual_indices)}"
+        )
+    return results, len(page_indices)
 
 
 class OcrProvider(Protocol):
@@ -57,10 +232,14 @@ My father may not have a college degree, but he is the smartest and
 bravest person I know. He is my hero."""
 
         lines = simulated_text.strip().split('\n')
-        
+        confidences = [0.65]
+        min_conf, p10_conf, low_conf = _confidence_stats(confidences)
         return OcrResult(
             text=simulated_text.strip(),
             confidence_avg=0.65,  # Typical for handwriting
+            confidence_min=min_conf,
+            confidence_p10=p10_conf,
+            low_conf_page_count=low_conf,
             lines=lines
         )
 
@@ -144,14 +323,11 @@ class GoogleVisionOcrProvider:
                         credentials_dict
                     )
                     self.client = vision.ImageAnnotatorClient(credentials=credentials)
-                except json.JSONDecodeError as e:
-                    raise RuntimeError(
-                        f"Invalid JSON in GOOGLE_CLOUD_VISION_CREDENTIALS_JSON: {e}\n"
-                        "Make sure the environment variable contains valid JSON."
-                    )
-            else:
-                # Fall back to standard GOOGLE_APPLICATION_CREDENTIALS (file path)
-                # This will use the default credentials chain
+                except json.JSONDecodeError:
+                    # JSON invalid (e.g. .env escaping issues) - fall back to file
+                    credentials_json = None
+            if not credentials_json:
+                # Use standard GOOGLE_APPLICATION_CREDENTIALS (file path)
                 self.client = vision.ImageAnnotatorClient()
                 
         except Exception as e:
@@ -180,54 +356,47 @@ class GoogleVisionOcrProvider:
         
         file_path = Path(image_path)
         
-        # Handle PDF files
+        extracted_texts = []
+        confidences = []
         if file_path.suffix.lower() == '.pdf':
-            image_bytes = self._render_pdf_to_png(image_path)
+            images = self._render_pdf_pages_to_png(image_path)
         else:
-            # Handle image files
             with open(image_path, 'rb') as f:
-                image_bytes = f.read()
-        
-        # Prepare Vision API request
-        image = vision.Image(content=image_bytes)
-        
-        # Use DOCUMENT_TEXT_DETECTION for handwriting-friendly OCR
-        response = self.client.document_text_detection(image=image)
-        
-        if response.error.message:
-            raise RuntimeError(
-                f"Google Cloud Vision API error: {response.error.message}"
-            )
-        
-        # Extract text from response
-        if response.full_text_annotation and response.full_text_annotation.text:
-            extracted_text = response.full_text_annotation.text.strip()
-        elif response.text_annotations:
-            extracted_text = response.text_annotations[0].description.strip()
-        else:
-            extracted_text = ""
-        
-        # Compute quality score (deterministic confidence)
-        quality_score = compute_ocr_quality_score(extracted_text)
-        
-        # Split into lines
+                images = [f.read()]
+
+        for image_bytes in images:
+            image = vision.Image(content=image_bytes)
+            response = self.client.document_text_detection(image=image)
+            if response.error.message:
+                raise RuntimeError(
+                    f"Google Cloud Vision API error: {response.error.message}"
+                )
+            page_text = ""
+            if response.full_text_annotation and response.full_text_annotation.text:
+                page_text = response.full_text_annotation.text.strip()
+            elif response.text_annotations:
+                page_text = response.text_annotations[0].description.strip()
+            if page_text:
+                extracted_texts.append(page_text)
+                confidences.append(compute_ocr_quality_score(page_text))
+
+        extracted_text = "\n".join(extracted_texts)
+        quality_score = sum(confidences) / len(confidences) if confidences else 0.0
+        min_conf, p10_conf, low_conf = _confidence_stats(confidences)
         lines = extracted_text.split('\n') if extracted_text else []
-        
+
         return OcrResult(
             text=extracted_text,
             confidence_avg=quality_score,
+            confidence_min=min_conf,
+            confidence_p10=p10_conf,
+            low_conf_page_count=low_conf,
             lines=lines
         )
     
-    def _render_pdf_to_png(self, pdf_path: str) -> bytes:
+    def _render_pdf_pages_to_png(self, pdf_path: str) -> list[bytes]:
         """
-        Render first page of PDF to PNG bytes using PyMuPDF.
-        
-        Args:
-            pdf_path: Path to PDF file
-            
-        Returns:
-            PNG image bytes
+        Render all pages of PDF to PNG bytes using PyMuPDF.
         """
         try:
             import fitz  # PyMuPDF
@@ -236,22 +405,16 @@ class GoogleVisionOcrProvider:
                 "PyMuPDF not installed. Install with: pip install PyMuPDF"
             )
         
-        # Open PDF and render first page
         pdf_document = fitz.open(pdf_path)
-        
         if len(pdf_document) == 0:
             raise ValueError(f"PDF file is empty: {pdf_path}")
         
-        # Render first page to pixmap (higher DPI for better OCR)
-        page = pdf_document[0]
-        pixmap = page.get_pixmap(dpi=300)
-        
-        # Convert pixmap to PNG bytes
-        png_bytes = pixmap.tobytes("png")
-        
+        images: list[bytes] = []
+        for page in pdf_document:
+            pixmap = page.get_pixmap(dpi=300)
+            images.append(pixmap.tobytes("png"))
         pdf_document.close()
-        
-        return png_bytes
+        return images
 
 
 class EasyOcrProvider:
@@ -358,9 +521,13 @@ class EasyOcrProvider:
         # Split into lines for compatibility
         lines = extracted_text.split('\n') if extracted_text else []
         
+        min_conf, p10_conf, low_conf = _confidence_stats([final_confidence])
         return OcrResult(
             text=extracted_text,
             confidence_avg=final_confidence,
+            confidence_min=min_conf,
+            confidence_p10=p10_conf,
+            low_conf_page_count=low_conf,
             lines=lines
         )
     
@@ -417,4 +584,3 @@ def get_ocr_provider(name: str = "stub") -> OcrProvider:
         return EasyOcrProvider()
     else:
         raise ValueError(f"Unknown OCR provider: {name}")
-
