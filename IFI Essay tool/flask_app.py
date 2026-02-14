@@ -1303,16 +1303,48 @@ def batch_status():
     # Extract job IDs from session (from Redis/RQ)
     job_ids = [job_info.get("job_id") for job_info in job_ids_in_session if job_info.get("job_id")]
     
-    # If no job IDs in session, return empty status (no fallback to PostgreSQL)
+    # If no job IDs in session, fallback to Supabase jobs table (PostgreSQL queue)
     if not job_ids:
-        return jsonify({
-            "total": 0,
-            "completed": 0,
-            "failed": 0,
-            "pending": 0,
-            "in_progress": 0,
-            "estimated_remaining_seconds": 0
-        })
+        from datetime import datetime, timedelta
+        access_token = session.get("supabase_access_token")
+        supabase = get_supabase_client(access_token=access_token)
+        if not supabase:
+            return jsonify({
+                "total": 0,
+                "completed": 0,
+                "failed": 0,
+                "pending": 0,
+                "in_progress": 0,
+                "estimated_remaining_seconds": 0,
+                "error": "Failed to initialize Supabase client"
+            })
+
+        # Best-effort query: recent jobs for this user (job_data.owner_user_id),
+        # with a small time window to avoid scanning.
+        since_iso = (datetime.utcnow() - timedelta(hours=24)).isoformat() + "Z"
+        try:
+            result = (
+                supabase.table("jobs")
+                .select("id")
+                .eq("job_type", "process_submission")
+                .gte("created_at", since_iso)
+                .not_("job_data", "is", None)
+                .not_("id", "is", None)
+                .execute()
+            )
+            job_ids = [row.get("id") for row in (result.data or []) if row.get("id")]
+        except Exception:
+            job_ids = []
+
+        if not job_ids:
+            return jsonify({
+                "total": 0,
+                "completed": 0,
+                "failed": 0,
+                "pending": 0,
+                "in_progress": 0,
+                "estimated_remaining_seconds": 0
+            })
     
     # Get aggregated status using Redis/RQ queue
     access_token = session.get("supabase_access_token")

@@ -80,9 +80,9 @@ class TestJobEnqueueing:
         )
         
         # Verify job_data contains owner_user_id
-        call_args = mock_insert.call_args
+        call_args = mock_supabase.table.return_value.insert.call_args
         assert call_args is not None
-        job_data = call_args[0][0]['job_data']
+        job_data = call_args[0][0]["job_data"]
         assert job_data['owner_user_id'] == 'test-user-123'
 
 
@@ -232,6 +232,5 @@ class TestBatchStatusAPI:
         assert response.status_code == 200
         data = json.loads(response.data)
         assert data['total'] == 2
-
 
 

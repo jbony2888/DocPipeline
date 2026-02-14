@@ -1,0 +1,12 @@
+{
+  "started_at": "2026-02-12T17:03:24.857130+00:00",
+  "owner_user_id": "46594d3f-c1d2-467f-b73b-46cd02359fc3",
+  "input_dir": "/Users/jerrybony/Documents/GitHub/DocPipeline/IFI Essay tool/docs",
+  "pattern": "*.pdf",
+  "ocr_provider": "google",
+  "total_files": 20,
+  "success_count": 0,
+  "failed_count": 20,
+  "verified_count": 0,
+  "finished_at": "2026-02-12T17:03:25.213266+00:00"
+}

@@ -8,7 +8,15 @@ import json
 import base64
 from typing import Dict, Any, Optional, List
 from datetime import datetime, timezone
-from auth.supabase_client import get_supabase_client, normalize_supabase_url
+from auth.supabase_client import get_supabase_client
+from supabase import create_client
+
+
+def _supabase_url_no_trailing_slash() -> Optional[str]:
+    url = os.environ.get("SUPABASE_URL")
+    if not url:
+        return None
+    return url.rstrip("/")
 
 
 def enqueue_submission(
@@ -31,13 +39,14 @@ def enqueue_submission(
     try:
         # Use service role key to bypass RLS for job insertion
         # This is safe because we validate owner_user_id matches the authenticated user
-        supabase_url = normalize_supabase_url(os.environ.get("SUPABASE_URL"))
+        supabase_url = _supabase_url_no_trailing_slash()
         service_role_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
         
-        if not supabase_url or not service_role_key:
-            raise Exception("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY")
-        
-        from supabase import create_client
+        if not supabase_url:
+            raise Exception("SUPABASE_URL is not set")
+        if not service_role_key:
+            raise Exception("Supabase Service Role Key not set (SUPABASE_SERVICE_ROLE_KEY)")
+
         supabase = create_client(supabase_url, service_role_key)
         
         # Encode file bytes as base64 for storage
@@ -131,14 +140,13 @@ def get_queue_status(job_ids: List[str], access_token: Optional[str] = None) -> 
     try:
         # Use service role key to bypass RLS for status checking
         # This is safe because we're only checking status, not modifying data
-        supabase_url = normalize_supabase_url(os.environ.get("SUPABASE_URL"))
+        supabase_url = _supabase_url_no_trailing_slash()
         service_role_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
         
         if not supabase_url or not service_role_key:
             # Fallback to authenticated client if service role not available
             supabase = get_supabase_client(access_token=access_token) if access_token else get_supabase_client()
         else:
-            from supabase import create_client
             supabase = create_client(supabase_url, service_role_key)
         
         if not supabase:
@@ -242,11 +250,10 @@ def get_next_job(service_role_key: Optional[str] = None) -> Optional[Dict[str, A
         # Use service role key for worker to bypass RLS
         if service_role_key:
             # Create client with service role key
-            supabase_url = normalize_supabase_url(os.environ.get("SUPABASE_URL"))
+            supabase_url = _supabase_url_no_trailing_slash()
             if not supabase_url:
                 return None
             
-            from supabase import create_client
             supabase = create_client(supabase_url, service_role_key)
         else:
             supabase = get_supabase_client()
@@ -282,10 +289,9 @@ def update_job_status(
     """
     try:
         if service_role_key:
-            supabase_url = normalize_supabase_url(os.environ.get("SUPABASE_URL"))
+            supabase_url = _supabase_url_no_trailing_slash()
             if not supabase_url:
                 return False
-            from supabase import create_client
             supabase = create_client(supabase_url, service_role_key)
         else:
             supabase = get_supabase_client()

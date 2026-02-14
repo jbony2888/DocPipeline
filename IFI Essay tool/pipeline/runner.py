@@ -4,17 +4,47 @@ Runs OCR → segmentation → extraction → validation and writes artifacts.
 """
 
 import json
+import re
 from pathlib import Path
 from typing import Tuple
 
 from pipeline.schema import SubmissionRecord
-from pipeline.ocr import get_ocr_provider
+from pipeline.ocr import get_ocr_provider, ocr_pdf_pages, get_ocr_result_from_pdf_text_layer, extract_pdf_text_layer
 from pipeline.segment import split_contact_vs_essay
 from pipeline.extract import extract_fields_rules, compute_essay_metrics
 from pipeline.validate import validate_record
+from pipeline.normalize import normalize_grade, normalize_school_name, sanitize_grade
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_header_fields_from_text(text: str) -> dict:
+    """Extract student/school/grade from header-like OCR text."""
+    txt = text or ""
+    patterns = {
+        "student_name": [
+            r"(?im)\b(?:student(?:'s)?\s*name|nombre(?:\s+del)?\s+estudiante)\s*[:\-]?\s*([^\n\r]{2,80})",
+        ],
+        "school_name": [
+            r"(?im)\b(?:school(?:\s+name)?|escuela|campus)\s*[:\-]?\s*([^\n\r]{2,120})",
+        ],
+        "grade": [
+            r"(?im)\b(?:grade|grado)\s*[:\-]?\s*(pre[\s\-]?k|k|[0-9]{1,2})\b",
+        ],
+    }
+
+    extracted = {"student_name": None, "school_name": None, "grade": None}
+    for field, field_patterns in patterns.items():
+        for pattern in field_patterns:
+            match = re.search(pattern, txt)
+            if not match:
+                continue
+            value = re.sub(r"\s+", " ", (match.group(1) or "")).strip(" .,:;-\t")
+            extracted[field] = value or None
+            if extracted[field]:
+                break
+    return extracted
 
 
 def _get_best_essay_text(essay_block: str, llm_essay_text: str = None, raw_text: str = None) -> tuple[str, str]:
@@ -65,7 +95,9 @@ def process_submission(
     submission_id: str,
     artifact_dir: str,
     ocr_provider_name: str = "stub",
-    original_filename: str = None
+    original_filename: str = None,
+    chunk_metadata: dict | None = None,
+    doc_format: str | None = None,
 ) -> Tuple[SubmissionRecord, dict]:
     """
     Runs the complete processing pipeline for a single submission.
@@ -103,9 +135,16 @@ def process_submission(
     processing_report = {"stages": {}}
     
     try:
-        # Stage 1: OCR
+        # Stage 1: OCR (or text-layer extraction for typed PDFs)
         ocr_provider = get_ocr_provider(ocr_provider_name)
-        ocr_result = ocr_provider.process_image(image_path)
+        if str(image_path).lower().endswith(".pdf"):
+            ocr_result = get_ocr_result_from_pdf_text_layer(image_path)
+            if ocr_result is not None:
+                logger.info(f"Using PDF text layer for {submission_id} (no OCR)")
+        else:
+            ocr_result = None
+        if ocr_result is None:
+            ocr_result = ocr_provider.process_image(image_path)
         
         # Write OCR artifacts to temp directory
         with open(artifact_path / "ocr.json", "w", encoding="utf-8") as f:
@@ -116,7 +155,17 @@ def process_submission(
         
         processing_report["stages"]["ocr"] = {
             "confidence_avg": ocr_result.confidence_avg,
+            "confidence_min": ocr_result.confidence_min,
+            "confidence_p10": ocr_result.confidence_p10,
+            "low_conf_page_count": ocr_result.low_conf_page_count,
             "line_count": len(ocr_result.lines)
+        }
+        processing_report["ocr_summary"] = {
+            "confidence_avg": ocr_result.confidence_avg,
+            "confidence_min": ocr_result.confidence_min,
+            "confidence_p10": ocr_result.confidence_p10,
+            "low_conf_page_count": ocr_result.low_conf_page_count,
+            "char_count": len(ocr_result.text or ""),
         }
         
         # Stage 2: Segmentation
@@ -129,6 +178,72 @@ def process_submission(
         # Stage 3: Extraction (IFI-specific two-phase extraction)
         from pipeline.extract_ifi import extract_fields_ifi
         contact_fields = extract_fields_ifi(contact_block, ocr_result.text, original_filename)
+
+        chunk_meta = chunk_metadata or {}
+        field_attribution = {
+            "chunk_scoped_enforced": False,
+            "chunk_start_page": chunk_meta.get("chunk_page_start"),
+            "field_source_pages": {"student_name": None, "school_name": None, "grade": None},
+            "attribution_risk_fields": [],
+        }
+
+        # Guardrail: for chunked PDFs, source student/school/grade from the chunk start page only.
+        # Skip for IFI typed forms (rule-based extraction; guardrail would overwrite with None)
+        ifi_meta = contact_fields.get("_ifi_metadata", {})
+        is_typed_form = ifi_meta.get("extraction_method") == "typed_form_rule_based"
+        if chunk_meta.get("is_chunk") and str(image_path).lower().endswith(".pdf") and not is_typed_form:
+            try:
+                # Prefer text layer for typed PDFs (no OCR)
+                per_page_stats, _ = extract_pdf_text_layer(
+                    image_path, pages=None, mode="full", include_text=True
+                )
+                if not per_page_stats or not (per_page_stats[0].get("text") or "").strip():
+                    per_page_stats, _ = ocr_pdf_pages(
+                        image_path,
+                        pages=None,
+                        mode="full",
+                        provider_name=ocr_provider_name,
+                        provider=ocr_provider,
+                        include_text=True,
+                    )
+                per_page_stats_sorted = sorted(per_page_stats, key=lambda r: int(r.get("page_index", 0)))
+                start_page_text = (per_page_stats_sorted[0].get("text") or "") if per_page_stats_sorted else ""
+                start_fields = _extract_header_fields_from_text(start_page_text)
+                absolute_start_page = chunk_meta.get("chunk_page_start")
+                if absolute_start_page is None:
+                    absolute_start_page = 0
+
+                found_on_non_start = {"student_name": False, "school_name": False, "grade": False}
+                for page in per_page_stats_sorted[1:]:
+                    page_fields = _extract_header_fields_from_text(page.get("text") or "")
+                    for key in ("student_name", "school_name", "grade"):
+                        if page_fields.get(key):
+                            found_on_non_start[key] = True
+
+                for key in ("student_name", "school_name", "grade"):
+                    if start_fields.get(key):
+                        contact_fields[key] = start_fields[key]
+                        field_attribution["field_source_pages"][key] = absolute_start_page
+                    else:
+                        contact_fields[key] = None
+                        if found_on_non_start[key]:
+                            field_attribution["attribution_risk_fields"].append(key)
+
+                field_attribution["chunk_scoped_enforced"] = True
+            except Exception as exc:
+                logger.warning(f"Chunk attribution guardrail failed for {submission_id}: {exc}")
+
+        # Deterministic normalization
+        grade_raw = contact_fields.get("grade")
+        grade_norm, grade_norm_reason = normalize_grade(grade_raw)
+        school_raw = contact_fields.get("school_name")
+        school_norm, school_key = normalize_school_name(school_raw)
+        contact_fields["grade_raw"] = grade_raw
+        contact_fields["grade_normalized"] = grade_norm
+        contact_fields["grade_norm_reason"] = grade_norm_reason
+        contact_fields["school_raw"] = school_raw
+        contact_fields["school_normalized"] = school_norm
+        contact_fields["school_canonical_key"] = school_key
         
         # Determine which model was used
         if os.environ.get("OPENAI_API_KEY"):
@@ -150,7 +265,15 @@ def process_submission(
                 "school_name": contact_fields.get("school_name") is not None,
                 "grade": contact_fields.get("grade") is not None
             },
-            "result": {k: v for k, v in contact_fields.items() if k != "_ifi_metadata"}
+            "result": {k: v for k, v in contact_fields.items() if k != "_ifi_metadata"},
+            "normalization": {
+                "grade_raw": grade_raw,
+                "grade_normalized": grade_norm,
+                "grade_norm_reason": grade_norm_reason,
+                "school_raw": school_raw,
+                "school_normalized": school_norm,
+                "school_canonical_key": school_key,
+            }
         }
         
         # Add IFI-specific classification info if available
@@ -204,14 +327,40 @@ def process_submission(
             "fields_extracted": sum(1 for v in contact_fields.values() if v is not None),
             "word_count": essay_metrics["word_count"]
         }
+        processing_report["normalization"] = {
+            "grade_raw": grade_raw,
+            "grade_normalized": grade_norm,
+            "grade_norm_reason": grade_norm_reason,
+            "school_raw": school_raw,
+            "school_normalized": school_norm,
+            "school_canonical_key": school_key,
+        }
         
         # Stage 4: Validation
+        # Choose grade to store (prefer normalized). Reject out-of-range (e.g. 40, 0, 13).
+        grade_for_record = grade_norm if grade_norm is not None else sanitize_grade(grade_raw)
+        school_for_record = school_norm if school_norm else school_raw
+
         partial_record = {
             "submission_id": submission_id,
             "artifact_dir": artifact_dir,
             **contact_fields,
+            "grade": grade_for_record,
+            "school_name": school_for_record,
             "word_count": essay_metrics["word_count"],
-            "ocr_confidence_avg": ocr_result.confidence_avg
+            "ocr_confidence_avg": ocr_result.confidence_avg,
+            "ocr_confidence_min": ocr_result.confidence_min,
+            "ocr_confidence_p10": ocr_result.confidence_p10,
+            "ocr_low_conf_page_count": ocr_result.low_conf_page_count,
+            "format": doc_format,
+            "parent_submission_id": chunk_meta.get("parent_submission_id"),
+            "chunk_index": chunk_meta.get("chunk_index"),
+            "chunk_page_start": chunk_meta.get("chunk_page_start"),
+            "chunk_page_end": chunk_meta.get("chunk_page_end"),
+            "is_chunk": chunk_meta.get("is_chunk", False),
+            "template_detected": chunk_meta.get("template_detected", False),
+            "template_blocked_low_confidence": chunk_meta.get("template_blocked_low_confidence", False),
+            "field_attribution_risk": bool(field_attribution["attribution_risk_fields"]),
         }
         
         record, validation_report = validate_record(partial_record)
@@ -222,7 +371,14 @@ def process_submission(
     
         processing_report["stages"]["validation"] = validation_report
         processing_report["needs_review"] = record.needs_review
-        
+        processing_report["chunk_metadata"] = chunk_meta
+        processing_report["field_attribution"] = field_attribution
+        processing_report["extracted_fields"] = {
+            "student_name": record.student_name,
+            "school_name": record.school_name,
+            "grade": record.grade,
+        }
+    
     finally:
         # Clean up temporary directory (artifacts are stored in Supabase Storage, not needed locally)
         try:
@@ -232,4 +388,3 @@ def process_submission(
             logger.warning(f"Could not clean up temp directory {temp_artifact_dir}: {e}")
     
     return record, processing_report
-

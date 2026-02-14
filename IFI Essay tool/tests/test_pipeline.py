@@ -370,6 +370,29 @@ class TestExtractIfi:
 
         assert result["extraction_method"] == "fallback"
 
+    def test_extract_grade_by_placement_header_metadata(self):
+        """Grade in header: 'School 6th grade' format."""
+        from pipeline.extract_ifi import _extract_grade_by_placement
+
+        text = "Ashley Esparza\nRachel Carson School 6th grade\nI admire my father..."
+        g = _extract_grade_by_placement(raw_text=text, contact_block="", doc_type="ESSAY_WITH_HEADER_METADATA")
+        assert g == 6
+
+    def test_extract_grade_by_placement_form_label_followed(self):
+        """Grade after 'Grade / Grado' label in form."""
+        from pipeline.extract_ifi import _extract_grade_by_placement
+
+        cb = "Student's Name: John\nGrade / Grado\n5\nSchool: Lincoln"
+        g = _extract_grade_by_placement(raw_text="", contact_block=cb, doc_type="IFI_OFFICIAL_FORM_FILLED")
+        assert g == 5
+
+    def test_extract_grade_by_placement_template_returns_none(self):
+        """Template and essay-only: no grade expected."""
+        from pipeline.extract_ifi import _extract_grade_by_placement
+
+        assert _extract_grade_by_placement(raw_text="any", contact_block="", doc_type="IFI_OFFICIAL_TEMPLATE_BLANK") is None
+        assert _extract_grade_by_placement(raw_text="essay only", contact_block="", doc_type="ESSAY_ONLY") is None
+
 
 class TestNormalizeGrade:
     """Tests for grade normalization in extract_ifi."""

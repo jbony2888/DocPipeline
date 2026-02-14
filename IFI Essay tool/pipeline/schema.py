@@ -11,6 +11,9 @@ class OcrResult(BaseModel):
     """Raw OCR output with confidence metrics."""
     text: str
     confidence_avg: Optional[float] = None
+    confidence_min: Optional[float] = None
+    confidence_p10: Optional[float] = None
+    low_conf_page_count: Optional[int] = None
     lines: List[str] = []
 
 
@@ -43,4 +46,3 @@ class SubmissionRecord(BaseModel):
     
     # Artifact tracking
     artifact_dir: str
-

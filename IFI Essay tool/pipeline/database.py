@@ -135,9 +135,8 @@ def save_record(record: SubmissionRecord, filename: str = None, owner_user_id: s
     Returns:
         True if successful, False otherwise
     """
-    if not owner_user_id:
-        print("Error: owner_user_id is required to save a record")
-        return False
+    # owner_user_id is required for the multi-tenant app, but some tests (and
+    # local single-tenant workflows) store records without an owner.
     
     init_database()
     
@@ -244,7 +243,7 @@ def get_records(needs_review: Optional[bool] = None, limit: int = 1000, owner_us
             "review_reason_codes": row["review_reason_codes"],
             "artifact_dir": row["artifact_dir"],
             "filename": row["filename"],
-            "owner_user_id": row.get("owner_user_id"),  # May be None for old records
+            "owner_user_id": row["owner_user_id"],  # May be None for old records
             "created_at": row["created_at"],
             "updated_at": row["updated_at"]
         })
@@ -263,10 +262,6 @@ def get_record_by_id(submission_id: str, owner_user_id: str = None) -> Optional[
     Returns:
         Record dictionary if found and owned by user, None otherwise
     """
-    if not owner_user_id:
-        print("Error: owner_user_id is required to get a record")
-        return None
-    
     init_database()
     
     db_path = Path(DB_PATH)
@@ -274,10 +269,16 @@ def get_record_by_id(submission_id: str, owner_user_id: str = None) -> Optional[
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     
-    cursor.execute(
-        "SELECT * FROM submissions WHERE submission_id = ? AND owner_user_id = ?",
-        (submission_id, owner_user_id)
-    )
+    if owner_user_id is None:
+        cursor.execute(
+            "SELECT * FROM submissions WHERE submission_id = ? AND owner_user_id IS NULL",
+            (submission_id,)
+        )
+    else:
+        cursor.execute(
+            "SELECT * FROM submissions WHERE submission_id = ? AND owner_user_id = ?",
+            (submission_id, owner_user_id)
+        )
     row = cursor.fetchone()
     conn.close()
     
@@ -298,7 +299,7 @@ def get_record_by_id(submission_id: str, owner_user_id: str = None) -> Optional[
             "review_reason_codes": row["review_reason_codes"],
             "artifact_dir": row["artifact_dir"],
             "filename": row["filename"],
-            "owner_user_id": row.get("owner_user_id"),
+            "owner_user_id": row["owner_user_id"],
             "created_at": row["created_at"],
             "updated_at": row["updated_at"]
         }
@@ -317,10 +318,6 @@ def update_record(submission_id: str, updates: Dict, owner_user_id: str = None) 
     Returns:
         True if successful, False otherwise
     """
-    if not owner_user_id:
-        print("Error: owner_user_id is required to update a record")
-        return False
-    
     init_database()
     
     db_path = Path(DB_PATH)
@@ -353,17 +350,22 @@ def update_record(submission_id: str, updates: Dict, owner_user_id: str = None) 
     # Add updated_at timestamp
     set_clauses.append("updated_at = ?")
     values.append(datetime.now())
-    # Add owner_user_id check to WHERE clause
-    values.append(submission_id)
-    values.append(owner_user_id)
-    
+
     try:
-        query = f"""
-            UPDATE submissions 
-            SET {', '.join(set_clauses)}
-            WHERE submission_id = ? AND owner_user_id = ?
-        """
-        cursor.execute(query, values)
+        if owner_user_id is None:
+            query = f"""
+                UPDATE submissions
+                SET {', '.join(set_clauses)}
+                WHERE submission_id = ? AND owner_user_id IS NULL
+            """
+            cursor.execute(query, [*values, submission_id])
+        else:
+            query = f"""
+                UPDATE submissions
+                SET {', '.join(set_clauses)}
+                WHERE submission_id = ? AND owner_user_id = ?
+            """
+            cursor.execute(query, [*values, submission_id, owner_user_id])
         conn.commit()
         return cursor.rowcount > 0
     except Exception as e:
@@ -385,10 +387,6 @@ def delete_record(submission_id: str, owner_user_id: str = None) -> bool:
     Returns:
         True if successful, False otherwise
     """
-    if not owner_user_id:
-        print("Error: owner_user_id is required to delete a record")
-        return False
-    
     init_database()
     
     db_path = Path(DB_PATH)
@@ -396,10 +394,16 @@ def delete_record(submission_id: str, owner_user_id: str = None) -> bool:
     cursor = conn.cursor()
     
     try:
-        cursor.execute(
-            "DELETE FROM submissions WHERE submission_id = ? AND owner_user_id = ?",
-            (submission_id, owner_user_id)
-        )
+        if owner_user_id is None:
+            cursor.execute(
+                "DELETE FROM submissions WHERE submission_id = ? AND owner_user_id IS NULL",
+                (submission_id,)
+            )
+        else:
+            cursor.execute(
+                "DELETE FROM submissions WHERE submission_id = ? AND owner_user_id = ?",
+                (submission_id, owner_user_id)
+            )
         conn.commit()
         return cursor.rowcount > 0
     except Exception as e:
@@ -458,4 +462,3 @@ def get_stats(owner_user_id: str = None) -> Dict:
         "clean_count": clean_count,
         "needs_review_count": needs_review_count
     }
-

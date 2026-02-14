@@ -183,6 +183,27 @@ class TestBulkUpdateGradeNormalization:
                 app = Flask(__name__)
                 app.config['TESTING'] = True
                 app.config['SECRET_KEY'] = 'test-secret-key'
+
+                # Register the route (same lightweight mock as above)
+                @app.route("/api/bulk_update_records", methods=["POST"])
+                def bulk_update_records():
+                    from flask import request, jsonify, session
+                    if not session.get('user_id'):
+                        return jsonify({"success": False, "error": "Unauthorized"}), 401
+
+                    data = request.get_json()
+                    selected_ids = data.get("selected_ids", [])
+                    school_name = data.get("school_name", "").strip() or None
+                    grade = data.get("grade", "").strip() or None
+
+                    if not selected_ids:
+                        return jsonify({"success": False, "error": "No records selected for bulk update."}), 400
+
+                    if not school_name and not grade:
+                        return jsonify({"success": False, "error": "Please provide a school name or grade for bulk update."}), 400
+
+                    return jsonify({"success": True, "updated_count": len(selected_ids)})
+
                 return app
     
     @pytest.fixture
@@ -227,4 +248,3 @@ class TestBulkUpdateGradeNormalization:
         assert response.status_code == 200
         data = json.loads(response.data)
         assert data['success'] is True
-

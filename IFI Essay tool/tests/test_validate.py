@@ -131,6 +131,17 @@ class TestCanApproveRecord:
         can_approve, missing = can_approve_record(record)
         assert can_approve is False
         assert "grade" in missing
+
+    def test_cannot_approve_grade_40_ocr_error(self):
+        """Record with grade 40 (OCR/LLM error) should not be approvable."""
+        record = {
+            "student_name": "John Doe",
+            "school_name": "Lincoln Elementary",
+            "grade": 40
+        }
+        can_approve, missing = can_approve_record(record)
+        assert can_approve is False
+        assert "grade" in missing
     
     def test_cannot_approve_multiple_missing_fields(self):
         """Record missing multiple fields should list all missing fields."""
@@ -305,6 +316,20 @@ class TestValidateRecord:
         assert record.needs_review is True
         assert "MISSING_GRADE" in report["issues"]
     
+    def test_validate_out_of_range_grade_stored_as_none(self):
+        """validate_record should store grade=None when given 40 (out of range)."""
+        partial = {
+            "submission_id": "test40",
+            "artifact_dir": "artifacts/test40",
+            "student_name": "John Doe",
+            "school_name": "Lincoln Elementary",
+            "grade": 40,
+            "word_count": 100,
+        }
+        record, report = validate_record(partial)
+        assert record.grade is None
+        assert "MISSING_GRADE" in report["review_reason_codes"]
+
     def test_validate_invalid_grade_too_high(self):
         """Record with grade > 12 should flag MISSING_GRADE."""
         partial = {

@@ -78,6 +78,8 @@ def group_records(records: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
     needs_review = []
     schools: Dict[str, Dict[str, List[Dict]]] = {}
+    school_display_by_key: Dict[str, str] = {}
+    grade_display_by_school_key: Dict[str, Dict[str, str]] = {}
     
     for record in records:
         # Check if record belongs in needs_review
@@ -106,9 +108,21 @@ def group_records(records: List[Dict[str, Any]]) -> Dict[str, Any]:
                 needs_review.append(record)
                 continue
             
-            # Get display values (original)
-            display_school = get_display_value(record, "school_name")
-            display_grade = get_display_value(record, "grade")
+            # Get display values (preserve first seen display value per normalized key)
+            display_school = school_display_by_key.get(school_key)
+            if display_school is None:
+                display_school = get_display_value(record, "school_name")
+                school_display_by_key[school_key] = display_school
+
+            grade_map = grade_display_by_school_key.get(school_key)
+            if grade_map is None:
+                grade_map = {}
+                grade_display_by_school_key[school_key] = grade_map
+
+            display_grade = grade_map.get(grade_key)
+            if display_grade is None:
+                display_grade = get_display_value(record, "grade")
+                grade_map[grade_key] = display_grade
             
             # Initialize school dict if needed
             if display_school not in schools:
@@ -188,7 +202,6 @@ def get_grades_for_school(grouped: Dict[str, Any], school_name: str) -> List[str
             return (1, g.lower())  # Text grades
     
     return sorted(grades.keys(), key=sort_key)
-
 
 
 
