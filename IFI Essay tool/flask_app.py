@@ -83,8 +83,11 @@ def get_redis_client() -> Optional[redis.Redis]:
     if _redis_client is not None:
         return _redis_client
 
-    redis_url = os.environ.get("REDIS_URL")
+    redis_url = (os.environ.get("REDIS_URL") or "").strip()
     if not redis_url:
+        return None
+    if not any(redis_url.startswith(s) for s in ("redis://", "rediss://", "unix://")):
+        print("⚠️ Warning: Redis cache unavailable: REDIS_URL must start with redis://, rediss://, or unix://", flush=True)
         return None
 
     try:
@@ -465,16 +468,19 @@ def upload():
 
     # Create batch run so we send one email when all jobs complete (async path)
     batch_run_id = str(uuid.uuid4())
-    try:
-        r = get_redis_client()
-        r.setex(
-            f"batch_run:{batch_run_id}",
-            86400,
-            json.dumps({"total": total, "access_token": access_token, "upload_batch_id": upload_batch_id or ""}),
-        )
-        app.logger.info(f"📬 Batch run created: batch_run_id={batch_run_id[:8]}... total={total} (email after all jobs complete)")
-    except Exception as e:
-        app.logger.warning(f"Redis unavailable for batch_run; sync path will send one email after loop: {e}")
+    r = get_redis_client()
+    if r:
+        try:
+            r.setex(
+                f"batch_run:{batch_run_id}",
+                86400,
+                json.dumps({"total": total, "access_token": access_token, "upload_batch_id": upload_batch_id or ""}),
+            )
+            app.logger.info(f"📬 Batch run created: batch_run_id={batch_run_id[:8]}... total={total} (email after all jobs complete)")
+        except Exception as e:
+            app.logger.warning(f"Redis unavailable for batch_run: {e}")
+            batch_run_id = None
+    else:
         batch_run_id = None  # Redis down; sync path will send one email after loop
 
     used_sync = False
