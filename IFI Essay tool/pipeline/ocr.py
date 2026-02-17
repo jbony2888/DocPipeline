@@ -317,43 +317,11 @@ class GoogleVisionOcrProvider:
     """
     
     def __init__(self):
-        """
-        Initialize Google Cloud Vision client.
-        
-        Supports two credential methods:
-        1. File path: GOOGLE_APPLICATION_CREDENTIALS=/path/to/key.json
-        2. JSON content: GOOGLE_CLOUD_VISION_CREDENTIALS_JSON='{"type":"service_account",...}'
-        """
-        try:
-            from google.cloud import vision
-            from google.oauth2 import service_account
-            
-            # Check for JSON content in environment variable
-            credentials_json = os.environ.get('GOOGLE_CLOUD_VISION_CREDENTIALS_JSON')
-            
-            if credentials_json:
-                # Load credentials from JSON string
-                try:
-                    credentials_dict = json.loads(credentials_json)
-                    credentials = service_account.Credentials.from_service_account_info(
-                        credentials_dict
-                    )
-                    self.client = vision.ImageAnnotatorClient(credentials=credentials)
-                except json.JSONDecodeError:
-                    # JSON invalid (e.g. .env escaping issues) - fall back to file
-                    credentials_json = None
-            if not credentials_json:
-                # Use standard GOOGLE_APPLICATION_CREDENTIALS (file path)
-                self.client = vision.ImageAnnotatorClient()
-                
-        except Exception as e:
-            raise RuntimeError(
-                f"Failed to initialize Google Cloud Vision client: {e}\n\n"
-                "Credentials can be provided in two ways:\n"
-                "1. File path: GOOGLE_APPLICATION_CREDENTIALS=/path/to/key.json\n"
-                "2. JSON content: GOOGLE_CLOUD_VISION_CREDENTIALS_JSON='{...}'\n\n"
-                "Also ensure Cloud Vision API is enabled in Google Cloud Console."
-            )
+        from google.cloud import vision
+        from google.oauth2 import service_account
+        creds_json = os.environ["GOOGLE_CLOUD_VISION_CREDENTIALS_JSON"]
+        creds = service_account.Credentials.from_service_account_info(json.loads(creds_json))
+        self.client = vision.ImageAnnotatorClient(credentials=creds)
     
     def process_image(self, image_path: str) -> OcrResult:
         """
@@ -583,47 +551,11 @@ class EasyOcrProvider:
 
 
 def _require_google_credentials() -> None:
-    """
-    Ensure Google Cloud Vision API credentials are configured.
-    Accepts either a file path or inline JSON (the key itself) in GOOGLE_APPLICATION_CREDENTIALS.
-    Raises RuntimeError with setup instructions if missing or invalid.
-    """
-    raw = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS") or ""
-    raw = raw.strip()
-    if not raw:
-        raise RuntimeError(
-            "Google Cloud Vision API requires GOOGLE_APPLICATION_CREDENTIALS to be set. "
-            "In the terminal export the key (inline JSON) or a file path: "
-            "export GOOGLE_APPLICATION_CREDENTIALS='{\"type\":\"service_account\", ...}'"
-        )
-    # Inline JSON: value is the key itself (starts with {)
-    if raw.startswith("{"):
-        try:
-            json.loads(raw)
-        except json.JSONDecodeError as e:
-            raise RuntimeError(
-                f"GOOGLE_APPLICATION_CREDENTIALS looks like JSON but is invalid: {e}"
-            ) from e
-        fd, path = tempfile.mkstemp(suffix=".json", prefix="gcreds_")
-        try:
-            with os.fdopen(fd, "w") as f:
-                f.write(raw)
-            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = path
-        except Exception:
-            os.close(fd)
-            if os.path.exists(path):
-                try:
-                    os.unlink(path)
-                except Exception:
-                    pass
-            raise
-        return
-    # File path
-    if not os.path.isfile(raw):
-        raise RuntimeError(
-            f"GOOGLE_APPLICATION_CREDENTIALS is set to a path that does not exist or is not a file. "
-            "Use a file path or export the key JSON directly."
-        )
+    """Require GOOGLE_CLOUD_VISION_CREDENTIALS_JSON to be set and valid JSON."""
+    creds = os.environ.get("GOOGLE_CLOUD_VISION_CREDENTIALS_JSON") or ""
+    if not creds.strip():
+        raise RuntimeError("GOOGLE_CLOUD_VISION_CREDENTIALS_JSON is required")
+    json.loads(creds)
 
 
 def ensure_google_credentials() -> None:
@@ -659,8 +591,7 @@ if __name__ == "__main__":
     import sys
     try:
         ensure_google_credentials()
-        path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "")
-        print(f"OK: GOOGLE_APPLICATION_CREDENTIALS is set")
+        print("OK: GOOGLE_CLOUD_VISION_CREDENTIALS_JSON is set")
         sys.exit(0)
     except RuntimeError as e:
         print(f"Error: {e}", file=sys.stderr)

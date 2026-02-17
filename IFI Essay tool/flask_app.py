@@ -24,7 +24,7 @@ try:
 except ImportError:
     pass  # dotenv not installed, assume env vars are set another way
 
-from pipeline.supabase_storage import ingest_upload_supabase, get_file_url, download_file, BUCKET_NAME
+from pipeline.supabase_storage import ingest_upload_supabase, get_file_url, download_file, delete_artifact_dir, BUCKET_NAME
 from pipeline.runner import process_submission
 from pipeline.csv_writer import append_to_csv
 from pipeline.schema import SubmissionRecord
@@ -41,7 +41,7 @@ from pipeline.supabase_db import (
 from pipeline.validate import can_approve_record
 # Removed batch_defaults - using simple bulk edit instead
 # from pipeline.batch_defaults import create_upload_batch, get_batch_with_submissions, apply_batch_defaults
-from auth.supabase_client import get_supabase_client, get_user_id
+from auth.supabase_client import get_supabase_client, get_user_id, normalize_supabase_url
 from jobs.queue import enqueue_submission, get_job_status, get_queue_status
 from jobs.process_submission import process_submission_job
 from jobs.redis_queue import get_redis_client
@@ -1015,7 +1015,9 @@ def bulk_delete_records():
         return jsonify({"success": False, "error": "No records selected for deletion."}), 400
 
     service_role_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
-    supabase_url = os.environ.get("SUPABASE_URL")
+    supabase_url = (os.environ.get("SUPABASE_URL") or "").strip().rstrip("/")
+    if supabase_url:
+        supabase_url = supabase_url + "/"
     sb = create_client(supabase_url, service_role_key) if (service_role_key and supabase_url) else None
 
     deleted_count = 0
@@ -1027,8 +1029,7 @@ def bulk_delete_records():
             artifact_dir = record.get("artifact_dir", "")
             if artifact_dir and sb:
                 try:
-                    paths = [f"{artifact_dir}/original.{ext}" for ext in ["pdf", "png", "jpg", "jpeg"]]
-                    sb.storage.from_("essay-submissions").remove(paths)
+                    delete_artifact_dir(artifact_dir, sb)
                 except Exception as e:
                     app.logger.warning(f"Storage delete warning for {submission_id}: {e}")
 
@@ -1069,14 +1070,17 @@ def delete_record(submission_id):
     if record:
         artifact_dir = record.get("artifact_dir", "")
         if artifact_dir:
-            # Delete files from storage using service role key (anon key lacks delete permission)
+            # Delete all files in storage under artifact_dir (service role for admin)
             service_role_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
-            sb = create_client(os.environ["SUPABASE_URL"], service_role_key)
-            paths = [f"{artifact_dir}/original.{ext}" for ext in ["pdf", "png", "jpg", "jpeg"]]
-            try:
-                sb.storage.from_("essay-submissions").remove(paths)
-            except Exception as e:
-                app.logger.warning(f"Storage delete warning: {e}")
+            supabase_url = (os.environ.get("SUPABASE_URL") or "").strip().rstrip("/")
+            if supabase_url:
+                supabase_url = supabase_url + "/"
+            sb = create_client(supabase_url, service_role_key) if service_role_key else None
+            if sb:
+                try:
+                    delete_artifact_dir(artifact_dir, sb)
+                except Exception as e:
+                    app.logger.warning(f"Storage delete warning: {e}")
 
     if delete_db_record(submission_id, owner_user_id=user_id, access_token=access_token, refresh_token=refresh_token):
         invalidate_db_stats_cache(user_id)

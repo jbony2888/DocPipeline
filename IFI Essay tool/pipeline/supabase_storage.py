@@ -183,6 +183,56 @@ def delete_file(file_path: str) -> bool:
         return False
 
 
+def _list_all_paths(sb, bucket: str, prefix: str) -> list:
+    """Recursively list all file paths under a prefix. Requires service-role client."""
+    paths = []
+    try:
+        result = sb.storage.from_(bucket).list(prefix or None, {"limit": 1000})
+    except Exception:
+        return paths
+    for item in result or []:
+        name = item.get("name", "")
+        if not name:
+            continue
+        full_path = f"{prefix}/{name}" if prefix else name
+        try:
+            children = sb.storage.from_(bucket).list(full_path, {"limit": 1})
+            if children:
+                paths.extend(_list_all_paths(sb, bucket, full_path))
+                continue
+        except Exception:
+            pass
+        paths.append(full_path)
+    return paths
+
+
+def delete_artifact_dir(artifact_dir: str, supabase_client) -> bool:
+    """
+    Delete all files in storage under artifact_dir (e.g. user_id/submission_id).
+    Use when deleting a submission so storage is cleaned up.
+    
+    Args:
+        artifact_dir: Path prefix in bucket (e.g. "user_id/sub_id" or "user_id/run_id/artifacts/...")
+        supabase_client: Supabase client with service role (for storage admin)
+        
+    Returns:
+        True if successful or nothing to delete, False on error
+    """
+    if not artifact_dir or not artifact_dir.strip():
+        return True
+    try:
+        paths = _list_all_paths(supabase_client, BUCKET_NAME, artifact_dir.strip().rstrip("/"))
+        if not paths:
+            return True
+        for i in range(0, len(paths), 100):
+            batch = paths[i : i + 100]
+            supabase_client.storage.from_(BUCKET_NAME).remove(batch)
+        return True
+    except Exception as e:
+        print(f"❌ Error deleting artifact dir {artifact_dir}: {e}")
+        return False
+
+
 def get_file_url(file_path: str, access_token: Optional[str] = None) -> Optional[str]:
     """
     Get public URL for a file in Supabase Storage.
