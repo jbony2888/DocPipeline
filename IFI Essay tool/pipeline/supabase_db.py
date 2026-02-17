@@ -10,6 +10,16 @@ from pipeline.schema import SubmissionRecord
 from auth.supabase_client import get_supabase_client, normalize_supabase_url
 
 
+def _get_service_role_client():
+    """Return a Supabase client using the service role key (bypasses RLS). Used for server-side ops scoped by owner_user_id."""
+    from supabase import create_client as create_supabase_client
+    supabase_url = normalize_supabase_url(os.environ.get("SUPABASE_URL"))
+    service_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+    if not supabase_url or not service_key:
+        return None
+    return create_supabase_client(supabase_url, service_key)
+
+
 def init_database():
     """Verify Supabase connection and table exists."""
     # Table should already be created via SQL script
@@ -87,7 +97,7 @@ def save_record(record: SubmissionRecord, filename: str, owner_user_id: str, acc
         if not supabase:
             raise Exception("Could not initialize Supabase client")
         
-        # Convert Pydantic model to dict
+        # Convert Pydantic model to dict (includes review_reason_codes from validation - do not overwrite)
         record_dict = record.model_dump() if hasattr(record, 'model_dump') else record.dict()
         
         # Add metadata
@@ -98,11 +108,15 @@ def save_record(record: SubmissionRecord, filename: str, owner_user_id: str, acc
         # Add batch tracking
         if upload_batch_id:
             record_dict["upload_batch_id"] = upload_batch_id
-        
-        # Set source tracking (default to 'extracted' for new records)
-        # These will be overridden by batch defaults or manual edits
-        # Note: Removed school_source, grade_source, teacher_source
-        # These columns don't exist in the database for simple bulk edit
+
+        # NOT NULL columns (migration 005): provide defaults so upsert never fails
+        # Records with missing name/school/grade are saved and flagged (needs_review), not rejected
+        if "school_source" not in record_dict:
+            record_dict["school_source"] = "extracted"
+        if "grade_source" not in record_dict:
+            record_dict["grade_source"] = "extracted"
+        if "teacher_source" not in record_dict:
+            record_dict["teacher_source"] = "extracted"
         
         # Check if this is an update (duplicate) or new record
         # We'll check this before upsert to return info about duplicates
@@ -120,12 +134,31 @@ def save_record(record: SubmissionRecord, filename: str, owner_user_id: str, acc
                 is_update = True
                 previous_owner = existing.data[0].get("owner_user_id")
         
-        # Insert or update (upsert)
-        result = supabase.table("submissions").upsert(
-            record_dict,
-            on_conflict="submission_id"
-        ).execute()
-        
+        # Insert or update (upsert). If schema lacks source columns (005 not run), retry without them.
+        try:
+            result = supabase.table("submissions").upsert(
+                record_dict,
+                on_conflict="submission_id"
+            ).execute()
+        except Exception as upsert_err:
+            err_str = str(upsert_err).lower()
+            # Schema lacks source columns (migration not applied): retry without them.
+            # PostgREST returns PGRST204 "Could not find the 'grade_source' column... in the schema cache"
+            missing_column = (
+                ("column" in err_str and ("does not exist" in err_str or "undefined_column" in err_str))
+                or ("grade_source" in err_str and "schema" in err_str)
+                or "pgrst204" in err_str
+            )
+            if ("school_source" in record_dict or "grade_source" in record_dict or "teacher_source" in record_dict) and missing_column:
+                for k in ("school_source", "grade_source", "teacher_source"):
+                    record_dict.pop(k, None)
+                result = supabase.table("submissions").upsert(
+                    record_dict,
+                    on_conflict="submission_id"
+                ).execute()
+            else:
+                raise
+
         if is_update:
             print(f"🔄 Updated existing record {record.submission_id} in Supabase database")
         else:
@@ -137,10 +170,11 @@ def save_record(record: SubmissionRecord, filename: str, owner_user_id: str, acc
             "previous_owner_user_id": previous_owner if is_update else None
         }
     except Exception as e:
-        print(f"❌ Error saving record to Supabase: {e}")
+        err_msg = str(e)
+        print(f"❌ Error saving record to Supabase: {err_msg}")
         import traceback
         traceback.print_exc()
-        return {"success": False, "is_update": False, "previous_owner_user_id": None}
+        return {"success": False, "error": err_msg, "is_update": False, "previous_owner_user_id": None}
 
 
 def get_records(
@@ -197,22 +231,24 @@ def get_records(
 
 
 def get_record_by_id(submission_id: str, owner_user_id: Optional[str] = None, access_token: Optional[str] = None, refresh_token: Optional[str] = None) -> Optional[Dict]:
-    """Get a single record by submission_id."""
+    """Get a single record by submission_id. Uses service role when owner_user_id is set so fetch works even if user JWT is expired."""
     try:
-        # Prefer an authenticated client when possible (RLS relies on auth.uid()).
-        supabase = get_supabase_client(access_token=access_token) if access_token else get_supabase_client()
-        
+        if owner_user_id:
+            supabase = _get_service_role_client()
+        else:
+            supabase = get_supabase_client(access_token=access_token) if access_token else get_supabase_client()
+
         if not supabase:
             print("❌ Error: Could not initialize Supabase client")
             return None
-        
+
         query = supabase.table("submissions").select("*").eq("submission_id", submission_id)
-        
+
         if owner_user_id:
             query = query.eq("owner_user_id", owner_user_id)
-        
+
         result = query.execute()
-        
+
         if result.data and len(result.data) > 0:
             return result.data[0]
         return None
@@ -255,20 +291,22 @@ def update_record(submission_id: str, updates: Dict, owner_user_id: Optional[str
 
 
 def delete_record(submission_id: str, owner_user_id: Optional[str] = None, access_token: Optional[str] = None, refresh_token: Optional[str] = None) -> bool:
-    """Delete a submission record."""
+    """Delete a submission record. Uses service role when owner_user_id is set so delete works even if user JWT is expired."""
     try:
-        # Prefer an authenticated client when possible (RLS relies on auth.uid()).
-        supabase = get_supabase_client(access_token=access_token) if access_token else get_supabase_client()
-        
+        if owner_user_id:
+            supabase = _get_service_role_client()
+        else:
+            supabase = get_supabase_client(access_token=access_token) if access_token else get_supabase_client()
+
         if not supabase:
             print("❌ Error: Could not initialize Supabase client")
             return False
-        
+
         query = supabase.table("submissions").delete().eq("submission_id", submission_id)
-        
+
         if owner_user_id:
             query = query.eq("owner_user_id", owner_user_id)
-        
+
         result = query.execute()
         return True
     except Exception as e:
@@ -277,10 +315,13 @@ def delete_record(submission_id: str, owner_user_id: Optional[str] = None, acces
 
 
 def get_stats(owner_user_id: Optional[str] = None, access_token: Optional[str] = None, refresh_token: Optional[str] = None) -> Dict:
-    """Get statistics about submissions."""
+    """Get statistics about submissions. Uses service role when owner_user_id is set so stats work even if user JWT is expired."""
     try:
-        # Prefer an authenticated client when possible (RLS relies on auth.uid()).
-        supabase = get_supabase_client(access_token=access_token) if access_token else get_supabase_client()
+        # When we have owner_user_id, use service role so stats don't depend on user JWT (avoids 401 when token expired).
+        if owner_user_id:
+            supabase = _get_service_role_client()
+        else:
+            supabase = get_supabase_client(access_token=access_token) if access_token else get_supabase_client()
 
         if not supabase:
             print("❌ Error: Could not initialize Supabase client")

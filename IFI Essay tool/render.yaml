@@ -32,7 +32,9 @@ services:
         sync: false  # Set manually in Render dashboard
       
       # Required: Redis Configuration (for background job queue)
-      # Format: redis://default:PASSWORD@HOST:PORT/0
+      # Render Key Value (internal): redis://red-XXXXXXXX:6379  (no password, same region)
+      # Render Key Value (external): rediss://red-XXXXXXXX:PASSWORD@REGION-kv.render.com:6379
+      # Redis Platform / Redis Cloud: redis://default:PASSWORD@HOST:PORT/0
       - key: REDIS_URL
         sync: false  # Set manually in Render dashboard
       

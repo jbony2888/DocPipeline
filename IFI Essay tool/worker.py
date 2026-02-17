@@ -101,7 +101,7 @@ def process_job(job):
                 error_message=error_msg,
                 service_role_key=SERVICE_ROLE_KEY
             )
-            logger.error(f"❌ Job {job_id} failed: {error_msg}")
+            logger.error(f"❌ FAILED document: {filename} (job {job_id}): {error_msg}")
             return False
         
         # Update progress: saving
@@ -129,7 +129,8 @@ def process_job(job):
     except Exception as e:
         import traceback
         error_traceback = traceback.format_exc()
-        
+        filename = job_data.get("filename", "unknown")
+
         update_job_status(
             job_id=job_id,
             status="failed",
@@ -139,8 +140,8 @@ def process_job(job):
             error_traceback=error_traceback,
             service_role_key=SERVICE_ROLE_KEY
         )
-        
-        logger.error(f"❌ Job {job_id} failed with exception: {e}")
+
+        logger.error(f"❌ FAILED document: {filename} (job {job_id}): {e}")
         logger.debug(error_traceback)
         return False
 

@@ -161,8 +161,8 @@ def invalidate_db_stats_cache(user_id: Optional[str]) -> None:
 
 
 def format_review_reasons(reason_codes: str) -> str:
-    """Convert review reason codes into human-readable format."""
-    if not reason_codes:
+    """Convert stored review reason codes into human-readable format. Display only explicitly recorded reasons."""
+    if not reason_codes or not (reason_codes or "").strip():
         return "Pending review"
     
     reason_map = {
@@ -172,16 +172,14 @@ def format_review_reasons(reason_codes: str) -> str:
         "EMPTY_ESSAY": "Empty Essay",
         "SHORT_ESSAY": "Short Essay (< 50 words)",
         "LOW_CONFIDENCE": "Low OCR Confidence",
+        "OCR_LOW_CONFIDENCE": "Low OCR Confidence",
+        "TEMPLATE_ONLY": "Template Only (no submission)",
+        "FIELD_ATTRIBUTION_RISK": "Field Attribution Risk",
         "PENDING_REVIEW": "Pending Manual Review"
     }
     
-    codes = reason_codes.split(";")
-    readable_reasons = []
-    for code in codes:
-        code = code.strip()
-        if code:
-            readable_reasons.append(reason_map.get(code, code.replace("_", " ").title()))
-    
+    codes = [c.strip() for c in (reason_codes or "").split(";") if c.strip()]
+    readable_reasons = [reason_map.get(c, c.replace("_", " ").title()) for c in codes]
     return " • ".join(readable_reasons) if readable_reasons else "Pending review"
 
 
@@ -556,6 +554,7 @@ def review():
             "phone",
             "email",
             "word_count",
+            "needs_review",
             "review_reason_codes",
             "artifact_dir"
         ]
@@ -912,6 +911,61 @@ def bulk_update_records():
     })
 
 
+@app.route("/api/bulk_delete_records", methods=["POST"])
+def bulk_delete_records():
+    """Delete selected submission records and their storage files."""
+    if not require_auth():
+        return jsonify({"success": False, "error": "Not authenticated"}), 401
+
+    user_id = session.get("user_id")
+    access_token = session.get("supabase_access_token")
+    refresh_token = session.get("supabase_refresh_token")
+    data = request.get_json() or {}
+    selected_ids = data.get("selected_ids", [])
+
+    if not selected_ids:
+        return jsonify({"success": False, "error": "No records selected for deletion."}), 400
+
+    service_role_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+    supabase_url = os.environ.get("SUPABASE_URL")
+    sb = create_client(supabase_url, service_role_key) if (service_role_key and supabase_url) else None
+
+    deleted_count = 0
+    errors = []
+
+    for submission_id in selected_ids:
+        record = get_record_by_id(submission_id, owner_user_id=user_id, access_token=access_token)
+        if record:
+            artifact_dir = record.get("artifact_dir", "")
+            if artifact_dir and sb:
+                try:
+                    paths = [f"{artifact_dir}/original.{ext}" for ext in ["pdf", "png", "jpg", "jpeg"]]
+                    sb.storage.from_("essay-submissions").remove(paths)
+                except Exception as e:
+                    app.logger.warning(f"Storage delete warning for {submission_id}: {e}")
+
+        if delete_db_record(submission_id, owner_user_id=user_id, access_token=access_token, refresh_token=refresh_token):
+            deleted_count += 1
+        else:
+            errors.append(submission_id)
+
+    invalidate_db_stats_cache(user_id)
+
+    if errors:
+        return jsonify({
+            "success": False,
+            "deleted_count": deleted_count,
+            "errors": errors,
+            "message": f"Deleted {deleted_count} records; failed to delete {len(errors)}."
+        }), 500
+
+    return jsonify({
+        "success": True,
+        "deleted_count": deleted_count,
+        "message": f"Successfully deleted {deleted_count} record(s)."
+    })
+
+
 @app.route("/record/<submission_id>/delete", methods=["POST"])
 def delete_record(submission_id):
     """Delete a record and its files from storage."""
@@ -1166,19 +1220,16 @@ def serve_pdf(file_path):
     """Serve PDF/image files from Supabase Storage."""
     if not require_auth():
         return "Unauthorized", 401
-    
-    # Get access token from session for authenticated storage access
+
     access_token = session.get("supabase_access_token")
-    
-    # file_path is like "user_id/submission_id/original.pdf"
-    # Try to download from Supabase Storage
+
+    # file_path can be chunk path (user_id/run_id/artifacts/run_id/chunk_0_xxx/original.pdf)
+    # but the original file is uploaded only at top level: user_id/run_id/original.pdf
+    # Try requested path first, then alternate extensions, then top-level path for chunk paths
     file_bytes = download_file(file_path, access_token=access_token)
-    
-    # If file not found, try alternative extensions
+
     if not file_bytes and file_path.endswith((".pdf", ".png", ".jpg", ".jpeg")):
-        # Extract base path without extension
         base_path = file_path.rsplit(".", 1)[0]
-        # Try other common extensions
         for ext in [".pdf", ".png", ".jpg", ".jpeg"]:
             if not file_path.endswith(ext):
                 alt_path = f"{base_path}{ext}"
@@ -1186,7 +1237,19 @@ def serve_pdf(file_path):
                 if file_bytes:
                     file_path = alt_path
                     break
-    
+
+    # Chunk artifact_dir points to a folder that has no original.pdf; the original is at user_id/run_id/original.*
+    if not file_bytes and "/artifacts/" in file_path:
+        parts = file_path.split("/")
+        if len(parts) >= 2:
+            top_level = f"{parts[0]}/{parts[1]}"
+            for ext in [".pdf", ".png", ".jpg", ".jpeg"]:
+                candidate = f"{top_level}/original{ext}"
+                file_bytes = download_file(candidate, access_token=access_token)
+                if file_bytes:
+                    file_path = candidate
+                    break
+
     if file_bytes:
         # Determine content type
         if file_path.endswith(".pdf"):

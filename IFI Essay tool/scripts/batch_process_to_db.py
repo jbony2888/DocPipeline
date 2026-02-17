@@ -119,6 +119,7 @@ def main() -> int:
         "total_files": len(files),
         "success_count": 0,
         "failed_count": 0,
+        "failed_files": [],
         "verified_count": 0,
     }
 
@@ -159,6 +160,7 @@ def main() -> int:
                     summary["success_count"] += 1
                 else:
                     summary["failed_count"] += 1
+                    summary["failed_files"].append(file_path.name)
                 if verify.get("verified"):
                     summary["verified_count"] += 1
             except Exception as exc:
@@ -166,6 +168,8 @@ def main() -> int:
                 entry["error"] = str(exc)
                 entry["duration_seconds"] = round(time.time() - started, 3)
                 summary["failed_count"] += 1
+                summary["failed_files"].append(file_path.name)
+                print(f"  ❌ FAILED: {file_path.name}: {exc}")
 
             log_file.write(json.dumps(entry, ensure_ascii=True) + "\n")
             log_file.flush()
@@ -175,8 +179,18 @@ def main() -> int:
     summary_path = out_path.with_suffix(".summary.json")
     summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
 
+    # Write failed-files list for easy review
+    failed_path = out_path.with_suffix(".failed.txt")
+    if summary["failed_files"]:
+        failed_path.write_text("\n".join(summary["failed_files"]) + "\n", encoding="utf-8")
+
     print("\nSummary")
     print(json.dumps(summary, indent=2))
+    if summary["failed_files"]:
+        print("\n--- Failed documents (for review) ---")
+        for f in summary["failed_files"]:
+            print(f"  {f}")
+        print(f"Failed list also saved to: {failed_path}")
     print(f"\nPer-file log: {out_path}")
     print(f"Summary log: {summary_path}")
 

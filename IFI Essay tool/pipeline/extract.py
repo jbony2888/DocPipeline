@@ -115,6 +115,9 @@ _ESSAY_FRAGMENT_STARTERS = (
     "it ", "we ", "they ", "this ", "what ", "and if ", "of ", "as ", "by ", "from ",
 )
 
+# Sentence starters / essay fragments to reject as student name (reduce false positives)
+_STUDENT_NAME_REJECT_WORDS = frozenset({"porque", "estar", "yo", "mi", "se"})
+
 
 def looks_like_essay_fragment(text: str) -> bool:
     """
@@ -125,6 +128,33 @@ def looks_like_essay_fragment(text: str) -> bool:
         return False
     low = text.strip().lower()
     return any(low.startswith(s) for s in _ESSAY_FRAGMENT_STARTERS)
+
+
+def is_plausible_student_name(value: str, max_line_length: int = 40) -> bool:
+    """
+    Structural checks so we don't accept essay fragments as student name.
+    Position (top 20%, within 3 lines of anchor) is enforced by callers; here we check shape.
+
+    - 2–4 tokens (words)
+    - At least one token capitalized (or title-case)
+    - Reject common sentence starters: porque, estar, yo, mi, se
+    - Reject lines > max_line_length (default 40)
+    """
+    if not value or not value.strip():
+        return False
+    s = value.strip()
+    if len(s) > max_line_length:
+        return False
+    tokens = s.split()
+    if not (2 <= len(tokens) <= 4):
+        return False
+    low_tokens = [t.lower() for t in tokens if t]
+    if any(t in _STUDENT_NAME_REJECT_WORDS for t in low_tokens):
+        return False
+    # At least one token should look like a name (starts with uppercase or is title-case)
+    if not any(t and t[0].isupper() for t in tokens):
+        return False
+    return True
 
 
 def is_valid_value_candidate(text: str, max_length: int = 60, min_alpha_ratio: float = 0.4) -> bool:
@@ -331,104 +361,119 @@ def extract_value_near_label(
     return None
 
 
+# Reject years and out-of-range: grade valid only as single token 1-12 or K near anchor
+_YEAR_PATTERN = re.compile(r"\b(19|20)\d{2}\b")
+# Single token: only 1-12, K, or ordinal (5th, 3rd). No years, no two-digit > 12.
+_SINGLE_GRADE_DIGIT = re.compile(r"^([1-9]|1[0-2])$")
+_SINGLE_GRADE_ORDINAL = re.compile(r"^([1-9]|1[0-2])(?:st|nd|rd|th)$", re.IGNORECASE)
+
+
 def parse_grade(text: Optional[str]) -> Optional[Union[int, str]]:
     """
-    Parse grade from text, handling various formats.
-    
+    Parse grade from text. Valid only when:
+    - Near anchor label ("Grade", "Grado") – caller must restrict to label-proximate text.
+    - Single numeric token 1–12, or K.
+    - Not part of a sentence (no years, no two-digit > 12).
+
+    Rejects: years (2022, 2023), two-digit > 12, numbers embedded in paragraphs.
+    Returns None when not confidently a grade.
+
     Formats supported:
-    - "8", "2" -> integer
-    - "2nd", "3rd", "4th" -> integer
-    - "2nd grade", "grado 2" -> integer
-    - "Kindergarten", "K", "Kinder" -> "K"
-    - OCR noise like "Grade / Grado 8" -> integer
-    
-    Args:
-        text: Text potentially containing grade
-        
-    Returns:
-        Grade as integer (1-12), string ("K", "Kindergarten"), or None
+    - "8", "2", "12" -> integer
+    - "Grade 5", "Grado 3", "Grade: 5", "Grade: 5th" -> integer
+    - "5th", "3rd" (single token or with grade/grado) -> integer
+    - "K", "Kinder", "Kindergarten" -> "K"
     """
     if not text:
         return None
-    
+
     text = text.strip()
+    if not text:
+        return None
+
     text_upper = text.upper()
-    
-    # Check for kindergarten variants first
-    kindergarten_variants = ['K', 'KINDER', 'KINDERGARTEN', 'KINDERGARTEN']
-    for variant in kindergarten_variants:
-        if variant in text_upper:
-            # Return "K" as standardized kindergarten value
+    tokens = text.split()
+
+    # Reject years (e.g. 2022, 2023) anywhere in text
+    if _YEAR_PATTERN.search(text):
+        return None
+
+    # Reject any two-digit number > 12 (e.g. 22, 99)
+    two_digit = re.findall(r"\b(\d{2})\b", text)
+    for num_str in two_digit:
+        n = int(num_str)
+        if n > 12:
+            return None
+
+    # Reject 4-digit numbers (years) as single token
+    if len(tokens) == 1 and re.match(r"^\d{4}$", tokens[0]):
+        return None
+
+    # Kindergarten: only accept as single token or short phrase with K/kinder
+    kindergarten_variants = ("K", "KINDER", "KINDERGARTEN", "PRE-K", "PRE-KINDERGARTEN")
+    if text_upper in kindergarten_variants or (
+        len(tokens) <= 2 and any(v in text_upper for v in kindergarten_variants)
+    ):
+        return "K"
+
+    # Single numeric token 1–12 only (digit or ordinal)
+    if len(tokens) == 1:
+        tok = tokens[0]
+        if _SINGLE_GRADE_DIGIT.match(tok):
+            return int(tok)
+        ordinal = _SINGLE_GRADE_ORDINAL.match(tok)
+        if ordinal:
+            return int(ordinal.group(1))
+        if tok.upper() in kindergarten_variants:
             return "K"
-    
-    # Extract first 1-2 digit number
-    numbers = re.findall(r'\b(\d{1,2})\b', text)
-    for num_str in numbers:
-        try:
-            grade = int(num_str)
-            # Validate grade range
-            if 1 <= grade <= 12:
-                return grade
-        except ValueError:
-            continue
-    
-    # If no number found but text looks like a grade description, return as-is
-    # This handles cases like "Pre-K", "Pre-Kindergarten", etc.
-    if len(text) < 30 and any(word in text_upper for word in ['GRADE', 'GRADO', 'K', 'PRE']):
-        return text.strip()
-    
+        return None
+
+    # Multi-token: accept only anchor-adjacent patterns (Grade/Grado followed by 1–12 or ordinal)
+    if len(tokens) > 4:
+        return None  # Likely sentence, not label value
+    # Grade/Grado : 5 or 5th
+    grade_grado = re.search(
+        r"(?:grade|grado)\s*[:\-/]?\s*([1-9]|1[0-2])(?:st|nd|rd|th)?\b", text, re.IGNORECASE
+    )
+    if grade_grado:
+        return int(grade_grado.group(1))
+    # 5 or 5th after Grade/Grado (same line)
+    num_after = re.search(
+        r"\b([1-9]|1[0-2])(?:st|nd|rd|th)?\s*(?:grade|grado)\b", text, re.IGNORECASE
+    )
+    if num_after:
+        return int(num_after.group(1))
+
     return None
 
 
 def find_grade_fallback(lines: list[str]) -> Optional[Union[int, str]]:
     """
-    Fallback grade search - look for standalone digit in contact block.
-    Searches near grade labels first, then scans entire contact block.
-    
-    Args:
-        lines: List of text lines
-        
-    Returns:
-        Grade as integer, or None
+    Fallback grade search only near "Grade" or "Grado" anchor.
+    Does not scan the full block to avoid essay-number contamination
+    (e.g. years, numbers in paragraphs).
+
+    Only considers lines within a few lines of a Grade/Grado label.
+    Returns None when no grade is confidently found near anchor.
     """
-    # First pass: Look within 5 lines of "Grade" or "Grado" labels
     for i, line in enumerate(lines):
         line_norm = normalize_text(line)
-        if 'grade' in line_norm or 'grado' in line_norm:
-            # Check 5 lines before and after
-            search_start = max(0, i - 5)
-            search_end = min(len(lines), i + 6)
-            for j in range(search_start, search_end):
-                check_line = lines[j].strip()
-                # Look for single digit or two-digit number on its own line
-                if re.match(r'^\d{1,2}$', check_line):
-                    grade = parse_grade(check_line)
-                    if grade:
-                        return grade
-    
-    # Second pass: Look for any standalone digit in entire contact block
-    for line in lines:
-        line_stripped = line.strip()
-        
-        # Skip lines that are obviously not grades
-        if is_likely_label_line(line):
+        if "grade" not in line_norm and "grado" not in line_norm:
             continue
-        
-        # Look for lines that are JUST a number (1-2 digits)
-        if re.match(r'^\d{1,2}$', line_stripped):
-            grade = parse_grade(line_stripped)
-            if grade:
+        # Search only within 3 lines before and 3 lines after the anchor
+        search_start = max(0, i - 3)
+        search_end = min(len(lines), i + 4)
+        for j in range(search_start, search_end):
+            check_line = lines[j].strip()
+            # Prefer standalone single token 1-12 on its own line
+            if re.match(r"^([1-9]|1[0-2])$", check_line):
+                grade = parse_grade(check_line)
+                if grade is not None:
+                    return grade
+            # Same line as label: "Grade 5" or "Grade: 5"
+            grade = parse_grade(check_line)
+            if grade is not None:
                 return grade
-    
-    # Third pass: Look for grade in any line
-    for line in lines:
-        if is_likely_label_line(line):
-            continue
-        
-        grade = parse_grade(line)
-        if grade:
-            return grade
-    
     return None
 
 
@@ -490,16 +535,8 @@ def extract_fields_rules(contact_block: str, return_debug: bool = False) -> dict
     # Extract grade
     grade_text = extract_value_near_label(lines, GRADE_ALIASES, max_length=30)
     grade = parse_grade(grade_text)
-    
-    # If grade_text contains text like "Kindergarten" but parse_grade didn't catch it,
-    # preserve the original text
-    if grade is None and grade_text:
-        grade_text_upper = grade_text.upper()
-        if any(word in grade_text_upper for word in ["KINDER", "PRE", "GRADE", "K"]):
-            # Keep the original text as grade
-            grade = grade_text.strip()
-    
-    # Fallback: scan for standalone grade number if not found
+
+    # Fallback: only near Grade/Grado anchor (no full-block scan, no essay-body numbers)
     if grade is None:
         grade = find_grade_fallback(lines)
         debug["matches"]["grade"] = {
@@ -507,7 +544,7 @@ def extract_fields_rules(contact_block: str, return_debug: bool = False) -> dict
             "grade_text_found": grade_text,
             "parsed_grade": grade,
             "matched": grade is not None,
-            "method": "fallback_scan"
+            "method": "fallback_near_anchor"
         }
     else:
         debug["matches"]["grade"] = {

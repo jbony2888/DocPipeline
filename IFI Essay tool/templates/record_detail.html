@@ -67,10 +67,10 @@
                         <label class="form-label">Word Count</label>
                         <input type="text" class="form-control" value="{{ record.word_count or 0 }}" disabled>
                     </div>
-                    {% if record.review_reason_codes %}
+                    {% if record.needs_review %}
                     <div class="alert alert-warning">
                         <strong>⚠️ Review Reasons:</strong><br>
-                        {{ format_review_reasons(record.review_reason_codes) }}
+                        {{ format_review_reasons(record.review_reason_codes or '') }}
                     </div>
                     {% endif %}
                     

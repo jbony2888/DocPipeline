@@ -12,7 +12,7 @@ from pipeline.schema import SubmissionRecord
 from pipeline.ocr import get_ocr_provider, ocr_pdf_pages, get_ocr_result_from_pdf_text_layer, extract_pdf_text_layer
 from pipeline.segment import split_contact_vs_essay
 from pipeline.extract import extract_fields_rules, compute_essay_metrics
-from pipeline.validate import validate_record
+from pipeline.validate import validate_record, _is_effectively_missing_student_name, _is_effectively_missing_school_name
 from pipeline.normalize import normalize_grade, normalize_school_name, sanitize_grade
 import logging
 
@@ -30,6 +30,7 @@ def _extract_header_fields_from_text(text: str) -> dict:
             r"(?im)\b(?:school(?:\s+name)?|escuela|campus)\s*[:\-]?\s*([^\n\r]{2,120})",
         ],
         "grade": [
+            r"(?im)\b(?:grade\s*/\s*grado|grado\s*/\s*grade|grade|grado)\s*[:\-]?\s*(pre[\s\-]?k|k|[0-9]{1,2})\b",
             r"(?im)\b(?:grade|grado)\s*[:\-]?\s*(pre[\s\-]?k|k|[0-9]{1,2})\b",
         ],
     }
@@ -177,7 +178,12 @@ def process_submission(
         
         # Stage 3: Extraction (IFI-specific two-phase extraction)
         from pipeline.extract_ifi import extract_fields_ifi
-        contact_fields = extract_fields_ifi(contact_block, ocr_result.text, original_filename)
+        form_field_values = getattr(ocr_result, "form_field_values", None)
+        contact_fields = extract_fields_ifi(
+            contact_block, ocr_result.text, original_filename,
+            form_field_values=form_field_values,
+            doc_format=doc_format,
+        )
 
         chunk_meta = chunk_metadata or {}
         field_attribution = {
@@ -187,10 +193,50 @@ def process_submission(
             "attribution_risk_fields": [],
         }
 
-        # Guardrail: for chunked PDFs, source student/school/grade from the chunk start page only.
-        # Skip for IFI typed forms (rule-based extraction; guardrail would overwrite with None)
         ifi_meta = contact_fields.get("_ifi_metadata", {})
         is_typed_form = ifi_meta.get("extraction_method") == "typed_form_rule_based"
+        # 0-based: end=1, start=0 means 2 pages; end-start>=1 = multi-page
+        chunk_start = chunk_meta.get("chunk_page_start")
+        chunk_end = chunk_meta.get("chunk_page_end")
+        chunk_span = (chunk_end if chunk_end is not None else 0) - (chunk_start if chunk_start is not None else 0)
+        multi_page_typed = is_typed_form and chunk_span >= 1 and str(image_path).lower().endswith(".pdf")
+
+        # For multi-page typed forms (e.g. 26-IFI: page 1 = essay details, page 2 = contest),
+        # re-run header extraction on page-1 text only so grade/name/school come from essay page.
+        if multi_page_typed:
+            try:
+                per_page_stats, _ = extract_pdf_text_layer(
+                    image_path, pages=None, mode="full", include_text=True
+                )
+                if per_page_stats:
+                    per_page_sorted = sorted(per_page_stats, key=lambda r: int(r.get("page_index", 0)))
+                    page0_text = (per_page_sorted[0].get("text") or "").strip()
+                    if page0_text:
+                        absolute_start = chunk_meta.get("chunk_page_start")
+                        if absolute_start is None:
+                            absolute_start = 0
+                        p0_contact, _ = split_contact_vs_essay(page0_text)
+                        page0_fields = extract_fields_ifi(
+                            p0_contact, page0_text, original_filename,
+                            form_field_values=getattr(ocr_result, "form_field_values", None),
+                            doc_format=doc_format,
+                        )
+                        for key in ("student_name", "school_name", "grade"):
+                            if page0_fields.get(key) is not None:
+                                contact_fields[key] = page0_fields[key]
+                                field_attribution["field_source_pages"][key] = absolute_start
+                        # Fallback: if grade/name/school still missing, use header regex on page-0 text
+                        start_fields = _extract_header_fields_from_text(page0_text)
+                        for key in ("student_name", "school_name", "grade"):
+                            if start_fields.get(key) is not None and contact_fields.get(key) is None:
+                                contact_fields[key] = start_fields[key]
+                                field_attribution["field_source_pages"][key] = absolute_start
+                        field_attribution["chunk_scoped_enforced"] = True
+            except Exception as exc:
+                logger.warning(f"Multi-page typed page-1 extraction failed for {submission_id}: {exc}")
+
+        # Guardrail: for chunked PDFs (non-typed), source student/school/grade from the chunk start page only.
+        # Typed multi-page is handled above with page-1-only extraction.
         if chunk_meta.get("is_chunk") and str(image_path).lower().endswith(".pdf") and not is_typed_form:
             try:
                 # Prefer text layer for typed PDFs (no OCR)
@@ -225,7 +271,8 @@ def process_submission(
                         contact_fields[key] = start_fields[key]
                         field_attribution["field_source_pages"][key] = absolute_start_page
                     else:
-                        contact_fields[key] = None
+                        if not multi_page_typed:
+                            contact_fields[key] = None
                         if found_on_non_start[key]:
                             field_attribution["attribution_risk_fields"].append(key)
 
@@ -244,12 +291,12 @@ def process_submission(
         contact_fields["school_raw"] = school_raw
         contact_fields["school_normalized"] = school_norm
         contact_fields["school_canonical_key"] = school_key
+        # Use cleaned school in structured output; null when confidence too low (< 3 chars)
+        contact_fields["school_name"] = school_norm
         
-        # Determine which model was used
-        if os.environ.get("OPENAI_API_KEY"):
-            model_used = "gpt-4o-mini (OpenAI)"
-        elif os.environ.get("GROQ_API_KEY"):
-            model_used = "mixtral-8x7b-32768 (Groq)"
+        # Determine which model was used (Groq for normalization; OpenAI not used)
+        if os.environ.get("GROQ_API_KEY"):
+            model_used = "llama-3.3-70b-versatile (Groq)"
         else:
             model_used = "none (no API key)"
         
@@ -286,7 +333,10 @@ def process_submission(
                 "is_off_prompt": ifi_metadata.get("is_off_prompt"),
                 "notes": ifi_metadata.get("notes", [])
             }
-        
+        # Doc class (for review / improving the system)
+        dc = chunk_meta.get("doc_class") if chunk_meta else None
+        extraction_debug["doc_class"] = dc.value if dc and hasattr(dc, "value") else (str(dc) if dc else None)
+
         # Priority 1 Fix: Use best available essay text source
         # If segmentation failed (essay_block too short), try LLM-extracted essay_text as fallback
         final_essay_text, essay_source = _get_best_essay_text(
@@ -327,6 +377,7 @@ def process_submission(
             "fields_extracted": sum(1 for v in contact_fields.values() if v is not None),
             "word_count": essay_metrics["word_count"]
         }
+        processing_report["extraction_debug"] = extraction_debug  # For review: doc_class, extraction method, normalization
         processing_report["normalization"] = {
             "grade_raw": grade_raw,
             "grade_normalized": grade_norm,
@@ -339,7 +390,15 @@ def process_submission(
         # Stage 4: Validation
         # Choose grade to store (prefer normalized). Reject out-of-range (e.g. 40, 0, 13).
         grade_for_record = grade_norm if grade_norm is not None else sanitize_grade(grade_raw)
-        school_for_record = school_norm if school_norm else school_raw
+        school_for_record = school_norm  # cleaned only; null when sanitize rejected (e.g. < 3 chars)
+        # Never pass label/sentinel strings into the record (pipeline stays clean)
+        if school_for_record and _is_effectively_missing_school_name(school_for_record):
+            school_for_record = None
+
+        if contact_fields.get("student_name") and _is_effectively_missing_student_name(contact_fields["student_name"]):
+            contact_fields = {**contact_fields, "student_name": None}
+        if contact_fields.get("school_name") and _is_effectively_missing_school_name(contact_fields["school_name"]):
+            contact_fields = {**contact_fields, "school_name": None}
 
         partial_record = {
             "submission_id": submission_id,
@@ -361,6 +420,7 @@ def process_submission(
             "template_detected": chunk_meta.get("template_detected", False),
             "template_blocked_low_confidence": chunk_meta.get("template_blocked_low_confidence", False),
             "field_attribution_risk": bool(field_attribution["attribution_risk_fields"]),
+            "doc_class": chunk_meta.get("doc_class"),
         }
         
         record, validation_report = validate_record(partial_record)

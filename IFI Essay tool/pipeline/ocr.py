@@ -53,14 +53,18 @@ def extract_pdf_text_layer(
         else:
             text = page.get_text("text")
         text = (text or "").strip()
-        # Merge form field values into text so extraction sees them (filled AcroForm fields)
+        # Merge form field values into text so extraction sees them (filled AcroForm fields).
+        # Match exact 26-IFI form widget names so prepended lines are at top of text for extraction.
+        form_field_values = None
         if idx == 0 and mode == "full":
             form_lines = []
+            form_field_values = {}
             for w in page.widgets():
                 v = (w.field_value or "").strip()
                 if not v or w.field_type == 5:  # skip radio/checkbox unless we need state
                     continue
                 name = w.field_name
+                form_field_values[name] = v
                 if name in ("Student's Name", "Grade", "School", "Essay", "Dad's Response"):
                     form_lines.append(f"{name}: {v}")
                 elif name == "Dad's Name":
@@ -71,6 +75,8 @@ def extract_pdf_text_layer(
                     form_lines.append(f"Phone: {v}")
             if form_lines:
                 text = "\n".join(form_lines) + "\n\n" + text
+            if not form_field_values:
+                form_field_values = None
         char_count = len(text)
         # Native text = high confidence
         entry = {
@@ -83,6 +89,8 @@ def extract_pdf_text_layer(
         }
         if include_text:
             entry["text"] = text
+        if form_field_values is not None:
+            entry["form_field_values"] = form_field_values
         results.append(entry)
     doc.close()
     return results, len(results)
@@ -91,7 +99,8 @@ def extract_pdf_text_layer(
 def get_ocr_result_from_pdf_text_layer(pdf_path: str) -> OcrResult | None:
     """
     Build an OcrResult from the PDF text layer only (no OCR).
-    Returns None if the PDF has no pages or any page has no text (caller should use OCR).
+    Returns None only if the PDF has no pages or page 0 has no text (caller should use OCR).
+    Other pages may be empty (e.g. image-only); we still use page-0 form fields and text.
     Use for typed form submissions (native_text) to avoid OCR.
     """
     try:
@@ -100,12 +109,18 @@ def get_ocr_result_from_pdf_text_layer(pdf_path: str) -> OcrResult | None:
         return None
     if not per_page:
         return None
+    sorted_pages = sorted(per_page, key=lambda x: int(x.get("page_index", 0)))
+    # Require only page 0 to have text so we can use form fields and avoid OCR when page 2 is image-only
+    page0_text = (sorted_pages[0].get("text") or "").strip()
+    if not page0_text:
+        return None
     texts = []
-    for p in sorted(per_page, key=lambda x: int(x.get("page_index", 0))):
+    form_field_values = None
+    for p in sorted_pages:
         t = (p.get("text") or "").strip()
-        if not t:
-            return None  # require text on every page
-        texts.append(t)
+        texts.append(t if t else "")
+        if form_field_values is None and p.get("form_field_values"):
+            form_field_values = p["form_field_values"]
     full_text = "\n\n".join(texts)
     lines = full_text.split("\n") if full_text else []
     return OcrResult(
@@ -115,6 +130,7 @@ def get_ocr_result_from_pdf_text_layer(pdf_path: str) -> OcrResult | None:
         confidence_p10=1.0,
         low_conf_page_count=0,
         lines=lines,
+        form_field_values=form_field_values,
     )
 
 
@@ -566,6 +582,58 @@ class EasyOcrProvider:
         return png_bytes
 
 
+def _require_google_credentials() -> None:
+    """
+    Ensure Google Cloud Vision API credentials are configured.
+    Accepts either a file path or inline JSON (the key itself) in GOOGLE_APPLICATION_CREDENTIALS.
+    Raises RuntimeError with setup instructions if missing or invalid.
+    """
+    raw = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS") or ""
+    raw = raw.strip()
+    if not raw:
+        raise RuntimeError(
+            "Google Cloud Vision API requires GOOGLE_APPLICATION_CREDENTIALS to be set. "
+            "In the terminal export the key (inline JSON) or a file path: "
+            "export GOOGLE_APPLICATION_CREDENTIALS='{\"type\":\"service_account\", ...}'"
+        )
+    # Inline JSON: value is the key itself (starts with {)
+    if raw.startswith("{"):
+        try:
+            json.loads(raw)
+        except json.JSONDecodeError as e:
+            raise RuntimeError(
+                f"GOOGLE_APPLICATION_CREDENTIALS looks like JSON but is invalid: {e}"
+            ) from e
+        fd, path = tempfile.mkstemp(suffix=".json", prefix="gcreds_")
+        try:
+            with os.fdopen(fd, "w") as f:
+                f.write(raw)
+            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = path
+        except Exception:
+            os.close(fd)
+            if os.path.exists(path):
+                try:
+                    os.unlink(path)
+                except Exception:
+                    pass
+            raise
+        return
+    # File path
+    if not os.path.isfile(raw):
+        raise RuntimeError(
+            f"GOOGLE_APPLICATION_CREDENTIALS is set to a path that does not exist or is not a file. "
+            "Use a file path or export the key JSON directly."
+        )
+
+
+def ensure_google_credentials() -> None:
+    """
+    Verify Google Cloud Vision API credentials are set and the key file exists.
+    Call this at startup or before using Google OCR. Raises RuntimeError if not configured.
+    """
+    _require_google_credentials()
+
+
 def get_ocr_provider(name: str = "stub") -> OcrProvider:
     """
     Factory function to get OCR provider by name.
@@ -579,8 +647,21 @@ def get_ocr_provider(name: str = "stub") -> OcrProvider:
     if name == "stub":
         return StubOcrProvider()
     elif name == "google":
+        _require_google_credentials()
         return GoogleVisionOcrProvider()
     elif name == "easyocr":
         return EasyOcrProvider()
     else:
         raise ValueError(f"Unknown OCR provider: {name}")
+
+
+if __name__ == "__main__":
+    import sys
+    try:
+        ensure_google_credentials()
+        path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "")
+        print(f"OK: GOOGLE_APPLICATION_CREDENTIALS is set")
+        sys.exit(0)
+    except RuntimeError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)

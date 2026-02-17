@@ -18,10 +18,10 @@ class _RaisingClient:
 def test_llm_failure_disables_retries_and_falls_back(monkeypatch, caplog):
     extract_ifi._reset_llm_runtime_state_for_tests()
 
-    fake_openai = types.SimpleNamespace(OpenAI=_RaisingClient)
-    monkeypatch.setitem(sys.modules, "openai", fake_openai)
-    monkeypatch.setenv("OPENAI_API_KEY", "fake-key")
-    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    fake_groq = types.SimpleNamespace(Groq=_RaisingClient)
+    monkeypatch.setitem(sys.modules, "groq", fake_groq)
+    monkeypatch.setenv("GROQ_API_KEY", "fake-key")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
     with caplog.at_level("WARNING"):
         first = extract_ifi.extract_ifi_submission("School: Lincoln\nGrade: 8")
@@ -54,4 +54,4 @@ def test_no_key_warning_emitted_once(monkeypatch, caplog):
         extract_ifi.extract_ifi_submission("short")
 
     warning_messages = [r.message for r in caplog.records if r.levelname == "WARNING"]
-    assert sum(1 for m in warning_messages if "No LLM API keys set" in m) == 1
+    assert sum(1 for m in warning_messages if "GROQ_API_KEY not set" in m) == 1

@@ -3,8 +3,20 @@ Data models for essay contest submissions.
 Uses Pydantic for validation and type safety.
 """
 
-from typing import Optional, List, Union
+from enum import Enum
+from typing import Optional, List, Union, Dict
 from pydantic import BaseModel, Field
+
+
+class DocClass(str, Enum):
+    """
+    Formal document classification. Every submission has exactly one.
+    Classification runs before field extraction.
+    """
+    SINGLE_TYPED = "SINGLE_TYPED"          # Native PDF text, single page, one submission
+    SINGLE_SCANNED = "SINGLE_SCANNED"      # Scanned/image, single page, one submission
+    MULTI_PAGE_SINGLE = "MULTI_PAGE_SINGLE"  # One submission spanning multiple pages
+    BULK_SCANNED_BATCH = "BULK_SCANNED_BATCH"  # Multiple submissions in one scanned file
 
 
 class OcrResult(BaseModel):
@@ -15,6 +27,8 @@ class OcrResult(BaseModel):
     confidence_p10: Optional[float] = None
     low_conf_page_count: Optional[int] = None
     lines: List[str] = []
+    # When PDF has AcroForm widgets, field_name -> value (e.g. "Student's Name" -> "Test Student Garcia")
+    form_field_values: Optional[Dict[str, str]] = None
 
 
 class SubmissionRecord(BaseModel):
@@ -23,7 +37,10 @@ class SubmissionRecord(BaseModel):
     Used for validation and CSV export.
     """
     submission_id: str
-    
+
+    # Document classification (assigned before extraction)
+    doc_class: DocClass = DocClass.SINGLE_TYPED
+
     # Contact fields (optional, may be missing or illegible)
     student_name: Optional[str] = None
     school_name: Optional[str] = None

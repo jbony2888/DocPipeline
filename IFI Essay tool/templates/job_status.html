@@ -79,19 +79,20 @@
                     document.getElementById('finished-at').textContent = new Date(data.finished_at).toLocaleString();
                 }
                 
-                // Update filename from result or error
-                if (data.result && data.result.filename) {
-                    document.getElementById('filename').textContent = data.result.filename;
-                } else if (data.filename) {
-                    document.getElementById('filename').textContent = data.filename;
+                // Update filename (so failed jobs show which document to review)
+                const filenameEl = document.getElementById('filename');
+                const fn = data.failed_document || (data.result && data.result.filename) || data.filename;
+                if (fn) {
+                    filenameEl.textContent = fn;
                 }
                 
-                // Show error if failed
+                // Show error if failed; include document name so it's clear which file failed for review
                 if (status === 'failed' || status === 'error') {
                     const errorMsg = document.getElementById('error-message');
                     const errorText = document.getElementById('error-text');
                     errorMsg.style.display = 'block';
-                    errorText.textContent = data.error || data.error_message || 'Unknown error';
+                    const docLabel = data.failed_document || data.filename ? `Document: ${data.failed_document || data.filename}. ` : '';
+                    errorText.textContent = docLabel + (data.error || data.error_message || 'Unknown error');
                 }
                 
                 // Show result link if completed
@@ -103,11 +104,10 @@
                         clearInterval(pollInterval);
                         pollInterval = null;
                     }
-                } else {
-                    // Continue polling if not finished
-                    if (!pollInterval) {
-                        pollInterval = setInterval(updateJobStatus, 2000);
-                    }
+                } else if (status === 'failed' || status === 'error') {
+                    if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+                } else if (!pollInterval) {
+                    pollInterval = setInterval(updateJobStatus, 2000);
                 }
             })
             .catch(error => {

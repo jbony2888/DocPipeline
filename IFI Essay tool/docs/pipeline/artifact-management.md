@@ -1,8 +1,29 @@
 # Artifact Management Guide
 
-## What Are Artifacts?
+## Logs Saved to Supabase Storage (for review later)
 
-Each processed submission generates an **artifact directory** containing:
+When submissions are processed via the app (worker), **logs and artifacts are persisted to Supabase Storage** so you can review them later to improve the system. Per submission/chunk you get:
+
+| File | Contents |
+|------|----------|
+| **`pipeline_log.json`** | Single file with **doc_class**, **extraction_debug** (extraction method, IFI classification, normalization), **validation** (issues, review_reason_codes), **chunk_metadata**. Use this for review and tuning. |
+| **`validation.json`** | Validation report: issues, needs_review, review_reason_codes. |
+| **`extracted_fields.json`** | Final extracted fields: student_name, school_name, grade, word_count, needs_review. |
+| **`ocr_summary.json`** | OCR confidence summary (when available). |
+| **`traceability.json`** | Chunk/parent linkage and artifact paths. |
+| **`analysis.json`** (run-level) | Document analysis: **doc_class**, format, structure, chunk ranges, classifier version. |
+
+**Paths:** Under the submission’s artifact prefix, e.g.  
+`{owner_user_id}/{submission_id}/artifacts/{run_id}/chunk_{idx}_{chunk_id}/pipeline_log.json`  
+and run-level `.../artifacts/{submission_id}/analysis.json`.
+
+**Purpose:** All logs (doc type, extraction method, validation reasons, normalization) are saved so you can review later and improve the system.
+
+---
+
+## What Are Artifacts? (local / harness)
+
+When running the pipeline locally (e.g. regression harness), each processed submission generates an **artifact directory** containing:
 - `original.pdf` / `original.jpg` - Original uploaded file
 - `ocr.json` - Raw OCR output with confidence scores
 - `raw_text.txt` - Full extracted text

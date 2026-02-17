@@ -9,7 +9,9 @@ This guide covers deploying the IFI Essay Gateway application to Render with Red
 You need **3 services** on Render:
 1. **Web Service** - Flask application (handles uploads, serves UI)
 2. **Worker Service** - RQ worker (processes jobs in background)
-3. **Redis** - Job queue (can use Redis Cloud, Upstash, or Render addon)
+3. **Redis** - Job queue (Redis Cloud, Upstash, or **Render Key Value**)
+
+**Switching from Redis Platform to Render Redis?** See [Switch Redis to Render](switch-redis-to-render.md).
 
 ---
 

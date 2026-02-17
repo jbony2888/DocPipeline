@@ -16,6 +16,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.flask
+    env_file:
+      - .env
     ports:
       - "5000:5000"
     volumes:
@@ -54,6 +56,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.flask
+    env_file:
+      - .env
     command: python worker_rq.py
     volumes:
       # Mount artifacts and outputs for persistence

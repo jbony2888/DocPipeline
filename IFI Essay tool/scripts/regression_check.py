@@ -97,7 +97,7 @@ def chunk_paths(pdf_path: Path, chunks: List[ChunkRange], tmpdir: Path) -> List[
     results: List[Tuple[int, Path]] = []
     for idx, c in enumerate(chunks):
         chunk_doc = fitz.open()
-        chunk_doc.insert_pdf(doc, from_page=c.start_page, to_page=c.end_page)
+        chunk_doc.insert_pdf(doc, from_page=c.start_page, to_page=c.end_page, widgets=0)
         out_path = tmpdir / f"chunk_{idx}.pdf"
         chunk_doc.save(out_path)
         results.append((idx, out_path))
@@ -178,6 +178,23 @@ def extract_doc_fields_from_final_text(final_text: str) -> Dict[str, str | None]
                 break
 
     return extracted
+
+
+def aggregate_parent_status_from_children(chunk_diagnostics: List[dict]) -> tuple[bool, set[str]]:
+    """
+    Derive parent needs_review and reason_codes from children using logical OR.
+    Ensures parent never shows clean when any child has errors.
+    """
+    if not chunk_diagnostics:
+        return False, set()
+    needs_review = any(d.get("chunk_needs_review", False) for d in chunk_diagnostics)
+    reason_codes: set[str] = set()
+    for d in chunk_diagnostics:
+        codes = d.get("chunk_reason_codes") or []
+        if isinstance(codes, str):
+            codes = [c.strip() for c in codes.split(";") if c.strip()]
+        reason_codes.update(codes)
+    return needs_review, reason_codes
 
 
 def compute_doc_reason_codes(
@@ -279,24 +296,28 @@ def run_chunk_pipeline(
     chunk_page_start: int | None = None,
     chunk_page_end: int | None = None,
     template_blocked_low_conf: bool = False,
+    doc_class=None,
 ):
     """Process a single chunk through the pipeline runner using selected OCR provider."""
     submission_id = build_chunk_submission_id(parent_id, chunk_idx, original_filename)
+    meta = {
+        "parent_submission_id": parent_id,
+        "chunk_index": chunk_idx,
+        "chunk_page_start": chunk_page_start,
+        "chunk_page_end": chunk_page_end,
+        "is_chunk": True,
+        "template_detected": template_flag,
+        "template_blocked_low_confidence": template_blocked_low_conf,
+    }
+    if doc_class is not None:
+        meta["doc_class"] = doc_class
     record, report = process_submission(
         image_path=str(chunk_path),
         submission_id=submission_id,
         artifact_dir=f"local/{parent_id}/{submission_id}",
         ocr_provider_name=ocr_provider_name,
         original_filename=original_filename,
-        chunk_metadata={
-            "parent_submission_id": parent_id,
-            "chunk_index": chunk_idx,
-            "chunk_page_start": chunk_page_start,
-            "chunk_page_end": chunk_page_end,
-            "is_chunk": True,
-            "template_detected": template_flag,
-            "template_blocked_low_confidence": template_blocked_low_conf,
-        },
+        chunk_metadata=meta,
         doc_format=doc_format,
     )
     return record, report
@@ -323,6 +344,61 @@ def compute_submission_id(pdf_path: Path) -> str:
     with open(pdf_path, "rb") as f:
         h = hashlib.sha256(f.read()).hexdigest()
     return h[:12]
+
+
+# Expected reason codes for typed-form test cases with one required field missing (flag for review, never fail).
+TYPED_FORM_MISSING_FIELD_EXPECTATIONS = {
+    "tc06_standard_form_missing_grade.pdf": "MISSING_GRADE",
+    "tc07_standard_form_missing_student_name.pdf": "MISSING_STUDENT_NAME",
+    "tc08_standard_form_missing_school_name.pdf": "MISSING_SCHOOL_NAME",
+}
+
+
+def validate_typed_form_missing_field_expectations(
+    pdf_paths: List[Path], docs_dir: Path
+) -> List[str]:
+    """
+    When running the 8 typed-form tc PDFs: assert missing-field cases are flagged for review,
+    not failed, and every doc produced a record (so a human can fill in missing data).
+    """
+    failures: List[str] = []
+    if len(pdf_paths) != 8:
+        return failures
+    names = [p.name for p in pdf_paths]
+    if not all(re.match(r"tc0[1-8]_.*\.pdf", n) for n in names):
+        return failures
+
+    for pdf_path in pdf_paths:
+        submission_id = compute_submission_id(pdf_path)
+        summary_path = docs_dir / submission_id / "doc_summary.json"
+        if not summary_path.exists():
+            failures.append(
+                f"Typed-form doc must not fail: no record produced for {pdf_path.name} (expected record for human review)."
+            )
+            continue
+        with open(summary_path, "r", encoding="utf-8") as f:
+            doc_summary = json.load(f)
+        filename = doc_summary.get("filename", "")
+        chunk_count = doc_summary.get("chunk_count", 0)
+        needs_review = doc_summary.get("needs_review", False)
+        reason_codes = doc_summary.get("reason_codes") or []
+
+        if chunk_count < 1:
+            failures.append(
+                f"Typed-form doc must produce a record: {filename} has chunk_count={chunk_count} (needs review, not fail)."
+            )
+        expected_code = TYPED_FORM_MISSING_FIELD_EXPECTATIONS.get(filename)
+        if expected_code:
+            if not needs_review:
+                failures.append(
+                    f"Missing-field case must be flagged for review: {filename} has needs_review=false (human must fill in missing data)."
+                )
+            if expected_code not in reason_codes:
+                failures.append(
+                    f"Missing-field case must have reason code {expected_code}: {filename} has reason_codes={reason_codes}."
+                )
+
+    return failures
 
 
 def has_multiple_header_peaks(analysis) -> bool:
@@ -490,7 +566,7 @@ def run_on_pdfs(
                 from_page = chunk.start_page
                 to_page = chunk.end_page
             chunk_doc = fitz.open()
-            chunk_doc.insert_pdf(doc, from_page=from_page, to_page=to_page)
+            chunk_doc.insert_pdf(doc, from_page=from_page, to_page=to_page, widgets=0)
             tmp_chunk = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
             chunk_doc.save(tmp_chunk.name)
             chunk_doc.close()
@@ -506,6 +582,7 @@ def run_on_pdfs(
                 chunk_page_start=from_page,
                 chunk_page_end=to_page,
                 template_blocked_low_conf=analysis.low_confidence_for_template,
+                doc_class=analysis.doc_class,
             )
             chunk_count += 1
             chunk_codes = [c for c in rec.review_reason_codes.split(";") if c]
@@ -523,7 +600,9 @@ def run_on_pdfs(
                     "chunk_page_start": from_page,
                     "chunk_page_end": to_page,
                     "chunk_submission_id": rec.submission_id,
+                    "doc_class": rec.doc_class.value if hasattr(rec.doc_class, "value") else str(rec.doc_class),
                     "chunk_reason_codes": chunk_codes,
+                    "chunk_needs_review": rec.needs_review,
                     "extracted_fields": rep_extracted,
                     "field_source_pages": rep_source_pages,
                 }
@@ -556,14 +635,15 @@ def run_on_pdfs(
         if extracted.get("school_name"):
             summary["docs_with_school_found_count"] += 1
 
-        doc_reason_codes, missing_field_evidence = compute_doc_reason_codes(
+        _, missing_field_evidence = compute_doc_reason_codes(
             extracted=extracted,
             final_text=final_text,
             submission_id=submission_id,
             is_template_doc=(analysis.structure == "template"),
             template_blocked_low_conf=analysis.low_confidence_for_template,
         )
-        doc_needs_review = bool(doc_reason_codes)
+        # Parent status must derive from children (logical OR) to prevent silent success masking child failures.
+        doc_needs_review, doc_reason_codes = aggregate_parent_status_from_children(chunk_diagnostics)
 
         for code in doc_reason_codes:
             summary["reason_code_counts"][code] = summary["reason_code_counts"].get(code, 0) + 1
@@ -593,6 +673,7 @@ def run_on_pdfs(
             "format": analysis.format,
             "structure": analysis.structure,
             "form_layout": getattr(analysis, "form_layout", "unknown"),
+            "doc_class": analysis.doc_class.value if hasattr(analysis.doc_class, "value") else str(analysis.doc_class),
             "chunk_count": chunk_count,
             "needs_review": doc_needs_review,
             "reason_codes": sorted(list(doc_reason_codes)),
@@ -695,6 +776,8 @@ def main() -> int:
     try:
         from dotenv import load_dotenv
         load_dotenv(REPO_ROOT / ".env")
+        # Allow override from cwd .env or shell (e.g. export GROQ_API_KEY=valid_key)
+        load_dotenv(Path.cwd() / ".env")
     except ImportError:
         pass
 
@@ -730,7 +813,11 @@ def main() -> int:
         with open(current_dir / "batch_summary.current.json", "w", encoding="utf-8") as f:
             json.dump(current_summary, f, indent=2)
 
-        all_failures = failures_current
+        all_failures = list(failures_current)
+        # Typed-form tc01–tc08: missing fields must be flagged for review, never fail; record always produced.
+        all_failures.extend(
+            validate_typed_form_missing_field_expectations(pdf_paths, current_dir / "docs")
+        )
 
         if args.simulate_legacy_page1:
             legacy_dir = out_base / "legacy"
@@ -810,6 +897,7 @@ def main() -> int:
             multi_analysis.format,
             False,
             args.ocr_provider,
+            doc_class=multi_analysis.doc_class,
         )
         summary["chunks_total"] += 1
         if "EMPTY_ESSAY" in rec.review_reason_codes:
@@ -834,6 +922,7 @@ def main() -> int:
         template_analysis.format,
         template_analysis.structure == "template",
         args.ocr_provider,
+        doc_class=template_analysis.doc_class,
     )
     if "TEMPLATE_ONLY" not in rec.review_reason_codes:
         failures.append("Template record missing TEMPLATE_ONLY code.")
@@ -857,6 +946,7 @@ def main() -> int:
         scanned_analysis.format,
         False,
         args.ocr_provider,
+        doc_class=scanned_analysis.doc_class,
     )
     ocr_summary = report.get("ocr_summary", {})
     if ocr_summary.get("confidence_min") is None or ocr_summary.get("confidence_p10") is None:
@@ -881,6 +971,7 @@ def main() -> int:
         hybrid_analysis.format,
         False,
         args.ocr_provider,
+        doc_class=hybrid_analysis.doc_class,
     )
     if rec.word_count == 0:
         failures.append("Hybrid chunk produced EMPTY_ESSAY.")
@@ -912,6 +1003,7 @@ def main() -> int:
             low_conf_analysis.structure == "template",
             "stub",
             template_blocked_low_conf=low_conf_analysis.low_confidence_for_template,
+            doc_class=low_conf_analysis.doc_class,
         )
         if "OCR_LOW_CONFIDENCE" not in rec.review_reason_codes:
             failures.append("Low-confidence template missing OCR_LOW_CONFIDENCE code.")

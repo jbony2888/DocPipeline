@@ -99,13 +99,13 @@
             {% if records %}
             <p class="text-muted">Found <strong>{{ records|length }}</strong> record(s) needing review</p>
             
-            {# Bulk Edit Panel - ALWAYS SHOWN #}
+            {# Bulk Edit / Bulk Delete Panel - ALWAYS SHOWN when there are records #}
             <div class="card mb-4 border-info shadow-sm" style="border-width: 2px !important;">
                 <div class="card-header bg-info text-white">
-                    <h5 class="mb-0"><i class="bi bi-pencil-square"></i> Bulk Edit Selected Records</h5>
+                    <h5 class="mb-0"><i class="bi bi-pencil-square"></i> Bulk Edit &amp; Delete Selected Records</h5>
                 </div>
                 <div class="card-body">
-                    <p class="text-muted small">Select records below, then set school name or grade to apply to all selected records.</p>
+                    <p class="text-muted small mb-2">Select records below with the checkboxes. Then either: set School Name or Grade and click <strong>Apply to Selected</strong>, or click <strong>Delete Selected</strong> to remove them permanently.</p>
                     <div class="row mb-3">
                         <div class="col-md-6">
                             <label for="bulk_school_name" class="form-label">School Name</label>
@@ -118,17 +118,24 @@
                                    placeholder="e.g., 5, K, or Kindergarten">
                         </div>
                     </div>
-                    <div class="d-flex gap-2 align-items-center">
-                        <button type="button" class="btn btn-primary" onclick="applyBulkEdit()">
+                    <div class="d-flex flex-wrap gap-2 align-items-center" id="bulkActionsRow">
+                        <button type="button" class="btn btn-primary bulk-action-btn" onclick="applyBulkEdit()">
                             <i class="bi bi-check-circle"></i> Apply to Selected (<span id="selectedCount">0</span>)
                         </button>
-                        <button type="button" class="btn btn-outline-secondary" onclick="selectAllRecords()">
+                        <button type="button" class="btn btn-outline-secondary bulk-action-btn" onclick="selectAllRecords()">
                             <i class="bi bi-check-all"></i> Select All
                         </button>
-                        <button type="button" class="btn btn-outline-secondary" onclick="deselectAllRecords()">
+                        <button type="button" class="btn btn-outline-secondary bulk-action-btn" onclick="deselectAllRecords()">
                             <i class="bi bi-x-square"></i> Deselect All
                         </button>
+                        <button type="button" class="btn btn-danger bulk-action-btn" id="bulkDeleteBtn" onclick="bulkDeleteSelected()">
+                            <i class="bi bi-trash"></i> Delete Selected
+                        </button>
                         <span id="bulkEditStatus" class="ms-3"></span>
+                    </div>
+                    <div id="bulkDeleteLoader" class="mt-2 text-center py-3" style="display: none;">
+                        <div class="spinner-border text-danger" role="status"><span class="visually-hidden">Loading...</span></div>
+                        <p class="mb-0 mt-2 text-muted">Deleting selected records… please wait.</p>
                     </div>
                 </div>
             </div>
@@ -367,6 +374,63 @@ function selectAllRecords() {
 function deselectAllRecords() {
     document.querySelectorAll('.record-checkbox').forEach(cb => cb.checked = false);
     updateSelectedCount();
+}
+
+function setBulkDeleteInProgress(inProgress) {
+    const buttons = document.querySelectorAll('.bulk-action-btn');
+    const checkboxes = document.querySelectorAll('.record-checkbox');
+    const loaderEl = document.getElementById('bulkDeleteLoader');
+    const cardBody = document.querySelector('.card.border-info .card-body');
+    buttons.forEach(btn => { btn.disabled = inProgress; });
+    checkboxes.forEach(cb => { cb.disabled = inProgress; });
+    if (loaderEl) loaderEl.style.display = inProgress ? 'block' : 'none';
+    if (cardBody) cardBody.style.pointerEvents = inProgress ? 'none' : '';
+    if (cardBody) cardBody.style.opacity = inProgress ? '0.7' : '1';
+}
+
+function bulkDeleteSelected() {
+    const checkboxes = document.querySelectorAll('.record-checkbox:checked');
+    const selectedIds = Array.from(checkboxes).map(cb => cb.value);
+    const statusEl = document.getElementById('bulkEditStatus');
+
+    if (selectedIds.length === 0) {
+        showToastModal('Please select at least one record to delete.', 'error');
+        return;
+    }
+
+    showConfirmModal(
+        'Delete Selected Records',
+        `Are you sure you want to permanently delete ${selectedIds.length} selected record(s)? This cannot be undone.`,
+        'Delete',
+        'btn-danger',
+        function() {
+            setBulkDeleteInProgress(true);
+            statusEl.innerHTML = '<span class="text-info"><i class="bi bi-arrow-clockwise spin"></i> Deleting...</span>';
+            fetch('/api/bulk_delete_records', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ selected_ids: selectedIds })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showToastModal(data.message, 'success');
+                    statusEl.innerHTML = '<span class="text-success">✅ Deleted!</span>';
+                    setTimeout(() => location.reload(), 1500);
+                } else {
+                    showToastModal('Error: ' + (data.error || data.message || 'Unknown error'), 'error');
+                    statusEl.innerHTML = '<span class="text-danger">❌ Error!</span>';
+                    setBulkDeleteInProgress(false);
+                }
+            })
+            .catch(error => {
+                console.error('Bulk delete error:', error);
+                showToastModal('Network error during bulk delete.', 'error');
+                statusEl.innerHTML = '<span class="text-danger">❌ Network Error!</span>';
+                setBulkDeleteInProgress(false);
+            });
+        }
+    );
 }
 
 function applyBulkEdit() {

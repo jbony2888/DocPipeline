@@ -4,7 +4,7 @@
 
 **Typed form submission** = official IFI essay form where content is **native PDF text** (typed, not scanned). No OCR is required; text can be extracted directly from the PDF text layer (and, when present, from AcroForm field values).
 
-**Canonical form (used for this doc type from now on):** **26-IFI-Essay-Form-Eng-and-Spanish** (e.g. `26-IFI-Essay-Form-Eng-and-Spanish.pdf`, filled: `26-IFI-Essay-Form-Eng-and-Spanish-filled.pdf`). Legacy 22-IFI forms (e.g. `22-IFI-Essay-Form-34.pdf`, Kami exports) are still supported.
+**Standard layout (reference for all processing):** **26-IFI-Essay-Form-Eng-and-Spanish** — whether the submission is a **PDF** (native text) or a **scanned image**, this is the layout we work from. Filled reference: `26-IFI-Essay-Form-Eng-and-Spanish-filled.pdf`. Blank: `26-IFI-Essay-Form-Eng-and-Spanish.pdf`. Legacy 22-IFI forms (e.g. `22-IFI-Essay-Form-34.pdf`, Kami exports) are still supported.
 
 **Bilingual (English + Spanish):** Metadata labels are accounted for in both languages. Detection and extraction use Spanish aliases (e.g. Nombre del Estudiante, Grado, Escuela, Nombre del Padre/Figura Paterna, Teléfono, correo) in `document_analysis` and `extract.py`.
 

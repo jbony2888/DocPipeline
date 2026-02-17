@@ -15,27 +15,12 @@ from rq.exceptions import NoSuchJobError
 
 
 def get_redis_client() -> Redis:
-    """Get Redis client connection."""
+    """Get Redis client connection. Supports redis:// and rediss:// (TLS, e.g. Render external)."""
     redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
-    
-    # Parse Redis URL
-    if redis_url.startswith("redis://"):
-        # Extract connection details from URL
-        # Format: redis://[:password@]host[:port][/db]
-        import urllib.parse
-        parsed = urllib.parse.urlparse(redis_url)
-        host = parsed.hostname or "localhost"
-        port = parsed.port or 6379
-        db = int(parsed.path.lstrip('/')) if parsed.path else 0
-        password = parsed.password
-        
-        if password:
-            return Redis(host=host, port=port, db=db, password=password, decode_responses=False)
-        else:
-            return Redis(host=host, port=port, db=db, decode_responses=False)
-    else:
-        # Fallback to default
-        return Redis(host="localhost", port=6379, db=0, decode_responses=False)
+    # Redis.from_url handles both redis:// and rediss:// (TLS); use it for Render and Redis Platform
+    if redis_url.startswith("redis://") or redis_url.startswith("rediss://"):
+        return Redis.from_url(redis_url, decode_responses=False)
+    return Redis(host="localhost", port=6379, db=0, decode_responses=False)
 
 
 def get_queue() -> Queue:
@@ -118,9 +103,16 @@ def get_job_status(job_id: str, access_token: Optional[str] = None) -> Dict[str,
         }
         status = status_map.get(rq_status, "unknown")
         
+        # Include document filename so failed jobs show which document to review
+        filename = None
+        if hasattr(job, "kwargs") and job.kwargs:
+            filename = job.kwargs.get("filename")
+        elif hasattr(job, "args") and job.args and isinstance(job.args, (list, tuple)) and len(job.args) >= 2:
+            filename = job.args[1] if len(job.args) > 1 else None  # filename is second positional in process_submission_job
         result = {
             "job_id": job_id,
             "status": status,
+            "filename": filename,
             "created_at": job.created_at.isoformat() if job.created_at else None,
             "started_at": job.started_at.isoformat() if job.started_at else None,
             "finished_at": job.ended_at.isoformat() if job.ended_at else None,
@@ -130,8 +122,13 @@ def get_job_status(job_id: str, access_token: Optional[str] = None) -> Dict[str,
         
         if status == "finished" and job.result:
             result["result"] = job.result
+            if filename and isinstance(job.result, dict) and "filename" not in job.result:
+                result["result"] = {**job.result, "filename": filename}
         elif status == "failed":
             result["error"] = str(job.exc_info) if job.exc_info else "Unknown error"
+            # So logs/UI can show: "Document X failed for review"
+            if filename:
+                result["failed_document"] = filename
             
         return result
         

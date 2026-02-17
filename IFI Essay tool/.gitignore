@@ -51,3 +51,5 @@ render_google_creds.txt
 *.credentials.json
 credentials_vision.json
 credentials.json
+google-credentials.json
+scripts/export_google_credentials.sh

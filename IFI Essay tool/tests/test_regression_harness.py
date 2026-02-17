@@ -3,6 +3,7 @@ import fitz
 from pipeline.ocr import ocr_pdf_pages
 from pipeline.schema import OcrResult
 from scripts.regression_check import (
+    aggregate_parent_status_from_children,
     build_chunk_submission_id,
     compute_doc_reason_codes,
     extract_doc_fields_from_final_text,
@@ -100,3 +101,52 @@ def test_chunk_submission_id_namespaces_by_submission_id_for_same_filename():
     assert id_a != id_b
     assert "submission_A" in id_a
     assert "submission_B" in id_b
+
+
+def test_aggregate_parent_status_from_children_flags_parent_when_any_chunk_has_errors():
+    """Regression: parent must not show clean when any chunk has errors (e.g. EMPTY_ESSAY)."""
+    chunk_diagnostics = [
+        {
+            "chunk_index": 0,
+            "chunk_needs_review": False,
+            "chunk_reason_codes": [],
+        },
+        {
+            "chunk_index": 1,
+            "chunk_needs_review": True,
+            "chunk_reason_codes": ["EMPTY_ESSAY"],
+        },
+    ]
+    needs_review, reason_codes = aggregate_parent_status_from_children(chunk_diagnostics)
+    assert needs_review is True
+    assert "EMPTY_ESSAY" in reason_codes
+
+
+def test_aggregate_parent_status_from_children_union_of_reason_codes():
+    """Parent reason_codes must be union of all child reason_codes."""
+    chunk_diagnostics = [
+        {"chunk_index": 0, "chunk_needs_review": True, "chunk_reason_codes": ["MISSING_GRADE"]},
+        {"chunk_index": 1, "chunk_needs_review": True, "chunk_reason_codes": ["EMPTY_ESSAY"]},
+    ]
+    needs_review, reason_codes = aggregate_parent_status_from_children(chunk_diagnostics)
+    assert needs_review is True
+    assert "MISSING_GRADE" in reason_codes
+    assert "EMPTY_ESSAY" in reason_codes
+
+
+def test_aggregate_parent_status_from_children_clean_when_all_clean():
+    """Parent shows clean only when all children are clean."""
+    chunk_diagnostics = [
+        {"chunk_index": 0, "chunk_needs_review": False, "chunk_reason_codes": []},
+        {"chunk_index": 1, "chunk_needs_review": False, "chunk_reason_codes": []},
+    ]
+    needs_review, reason_codes = aggregate_parent_status_from_children(chunk_diagnostics)
+    assert needs_review is False
+    assert len(reason_codes) == 0
+
+
+def test_aggregate_parent_status_from_children_empty_returns_clean():
+    """Empty chunk list returns clean (no children = no child failures)."""
+    needs_review, reason_codes = aggregate_parent_status_from_children([])
+    assert needs_review is False
+    assert len(reason_codes) == 0
