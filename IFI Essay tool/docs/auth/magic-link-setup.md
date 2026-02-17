@@ -7,13 +7,16 @@ The IFI Essay Gateway now uses **passwordless authentication** via magic links (
 
 ### 1. Configure Redirect URLs
 
-You must add your app's URL to Supabase's allowed redirect URLs:
+You must add your app's callback URL to Supabase's allowed redirect URLs:
 
-1. Go to: https://supabase.com/dashboard/project/escbcdjlafzjxzqiephc/auth/url-configuration
-2. Under **Redirect URLs**, add:
-   - For local development: `http://localhost:8501`
-   - For production: `https://your-production-domain.com` (replace with your actual domain)
-3. Click **Save**
+1. Go to: **Authentication** → **URL Configuration** in your Supabase project.
+2. Set **Site URL** to your app root (e.g. `http://localhost:5000` or `https://your-production-domain.com`).
+3. Under **Redirect URLs**, add:
+   - For local: `http://localhost:5000/auth/callback`
+   - For production: `https://your-production-domain.com/auth/callback`
+4. Click **Save**.
+
+The app uses `APP_URL` from `.env` when set to build the magic link redirect; set `APP_URL` in production so links point to your public URL.
 
 ### 2. Enable Magic Link Authentication
 
@@ -23,7 +26,11 @@ You must add your app's URL to Supabase's allowed redirect URLs:
 4. Under **Email Auth**, ensure **Enable email confirmations** is configured as needed
 5. For magic links, you can disable email confirmations or set them to optional
 
-### 3. Email Templates (Optional)
+### 3. Send Magic Links From Your Gmail (Recommended)
+
+To send magic link emails **from** your GSuite Gmail (e.g. the address in `EMAIL` / `GMAIL_PASSWORD` in `.env`), configure Supabase custom SMTP. See **[Magic link SMTP (Gmail)](./magic-link-smtp-gmail.md)** for step-by-step setup.
+
+### 4. Email Templates (Optional)
 
 You can customize the magic link email template:
 
@@ -43,18 +50,18 @@ You can customize the magic link email template:
 
 ### Local Development
 
-1. Start the app: `docker-compose up` or `streamlit run app.py`
-2. Open: http://localhost:8501
-3. Enter your email address
-4. Check your email for the magic link
-5. Click the link - you should be redirected back and logged in
+1. Start the app: `docker-compose up` or `flask run` (see project README).
+2. Open: http://localhost:5000/login
+3. Enter your email address.
+4. Check your email for the magic link (from Supabase or your custom Gmail SMTP).
+5. Click the link — you should be redirected to `/auth/callback` and then logged in.
 
 ### Production Deployment
 
-1. Update `redirect_url` in `auth/auth_ui.py` to your production domain
-2. Add your production URL to Supabase redirect URLs (see step 1 above)
-3. Rebuild and deploy your app
-4. Test the magic link flow
+1. Set `APP_URL` in `.env` (or Render env) to your production URL (e.g. `https://your-app.onrender.com`).
+2. Add `https://your-app.onrender.com/auth/callback` to Supabase **Redirect URLs** (see step 1 above).
+3. Optionally configure [custom SMTP with Gmail](./magic-link-smtp-gmail.md) so magic links are sent from your Gmail.
+4. Deploy and test the magic link flow.
 
 ## Troubleshooting
 
@@ -73,7 +80,7 @@ You can customize the magic link email template:
 
 ### Session not persisting
 - Check that cookies are enabled in the browser
-- Verify Supabase session is being stored in `st.session_state`
+- Verify Flask session is configured (e.g. `FLASK_SECRET_KEY` set)
 
 ## Security Notes
 

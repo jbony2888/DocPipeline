@@ -236,11 +236,8 @@ def send_smtp_email(
         True if email sent successfully, False otherwise
     """
     try:
-        # Defaults used when .env is not set (override with EMAIL / GMAIL_PASSWORD in .env)
-        _default_email = "scotmarcotte@4dads.org"
-        _default_app_password = "nhrksarzmxymssre"
-        gmail_password = (os.environ.get("GMAIL_PASSWORD") or _default_app_password).strip().replace(" ", "")
-        smtp_user = (os.environ.get("EMAIL") or _default_email).strip()
+        gmail_password = (os.environ.get("GMAIL_PASSWORD") or "").strip().replace(" ", "")
+        smtp_user = (os.environ.get("EMAIL") or "").strip()
         if not gmail_password or not smtp_user:
             print("⚠️ Email not configured. Set EMAIL (Gmail or G Suite address) and GMAIL_PASSWORD (16-char app password).")
             return False

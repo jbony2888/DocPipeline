@@ -244,14 +244,12 @@ def login():
             return render_template("login.html")
         
         try:
-            # Get redirect URL - Flask handles the callback
-            # Use full URL including port if specified
-            port = request.environ.get('SERVER_PORT', '')
-            host = request.host
-            if port and port not in ['80', '443']:
-                redirect_url = f"{request.scheme}://{host}/auth/callback"
+            # Redirect URL for magic link: use APP_URL in production so the link points to the public app URL
+            app_url = (os.environ.get("APP_URL") or "").strip().rstrip("/")
+            if app_url:
+                redirect_url = f"{app_url}/auth/callback"
             else:
-                redirect_url = f"{request.scheme}://{host}/auth/callback"
+                redirect_url = f"{request.scheme}://{request.host}/auth/callback"
             
             supabase.auth.sign_in_with_otp({
                 "email": email,
