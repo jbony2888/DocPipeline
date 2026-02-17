@@ -35,7 +35,8 @@ def enqueue_submission(
     owner_user_id: str,
     access_token: str,
     ocr_provider: str = "google",
-    upload_batch_id: Optional[str] = None
+    upload_batch_id: Optional[str] = None,
+    batch_run_id: Optional[str] = None,
 ) -> str:
     """
     Enqueue a submission for background processing using Redis/RQ.
@@ -49,17 +50,6 @@ def enqueue_submission(
     try:
         from jobs.process_submission import process_submission_job
         
-        # Prepare job data
-        job_data = {
-            "file_bytes_base64": base64.b64encode(file_bytes).decode('utf-8'),
-            "filename": filename,
-            "owner_user_id": owner_user_id,
-            "access_token": access_token,
-            "ocr_provider": ocr_provider,
-            "upload_batch_id": upload_batch_id
-        }
-        
-        # Enqueue job to Redis
         queue = get_queue()
         job = queue.enqueue(
             process_submission_job,
@@ -69,6 +59,7 @@ def enqueue_submission(
             access_token=access_token,
             ocr_provider=ocr_provider,
             upload_batch_id=upload_batch_id,
+            batch_run_id=batch_run_id,
             job_timeout=600,  # 10 minutes timeout
             result_ttl=3600,  # Keep result for 1 hour
             failure_ttl=86400  # Keep failed jobs for 24 hours

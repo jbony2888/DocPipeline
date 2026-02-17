@@ -11,13 +11,25 @@ from typing import Dict, Any, Optional
 from datetime import datetime
 
 
+def get_review_url(upload_batch_id: Optional[str] = None) -> str:
+    """
+    Generate URL to the review page (needs_review). Optionally include batch for direct link.
+    """
+    base_url = os.environ.get("APP_URL", "http://localhost:5000")
+    url = f"{base_url}/review?mode=needs_review"
+    if upload_batch_id:
+        url += f"&upload_batch_id={upload_batch_id}"
+    return url
+
+
 def send_job_completion_email(
     user_email: str,
     job_id: str,
     job_status: str,
     filename: str,
     job_url: Optional[str] = None,
-    error_message: Optional[str] = None
+    error_message: Optional[str] = None,
+    review_url: Optional[str] = None,
 ) -> bool:
     """
     Send email notification when a job completes or fails.
@@ -29,6 +41,7 @@ def send_job_completion_email(
         filename: Name of the processed file
         job_url: URL to view job details (optional)
         error_message: Error message if job failed (optional)
+        review_url: URL to review page (optional; preferred CTA when provided)
         
     Returns:
         True if email sent successfully, False otherwise
@@ -76,7 +89,7 @@ def send_job_completion_email(
                     
                     {f'<div class="error"><strong>Error:</strong> {error_message}</div>' if error_message else ''}
                     
-                    {f'<p><a href="{job_url}" class="button">View Job Details</a></p>' if job_url else ''}
+                    {f'<p><a href="{review_url or job_url}" class="button">View in Review Page</a></p>' if (review_url or job_url) else ''}
                     
                     <p>If you have any questions, please contact support.</p>
                 </div>
@@ -104,7 +117,7 @@ def send_job_completion_email(
         
         {f'Error: {error_message}' if error_message else ''}
         
-        {f'View job details: {job_url}' if job_url else ''}
+        {f'View in Review Page: {review_url or job_url}' if (review_url or job_url) else ''}
         
         If you have any questions, please contact support.
         
@@ -124,6 +137,62 @@ def send_job_completion_email(
         print(f"❌ Error sending email notification: {e}")
         import traceback
         traceback.print_exc()
+        return False
+
+
+def send_batch_completion_email(
+    user_email: str,
+    total_count: int,
+    review_url: str,
+    failed_count: int = 0,
+) -> bool:
+    """
+    Send one email after all submissions in a batch have been processed.
+    """
+    try:
+        completed = total_count - failed_count
+        is_multi = total_count > 1
+        if is_multi:
+            subject = "Your essays have been processed"
+            header_text = "All files processed"
+            intro = "Your essays have been processed. All files processed."
+        else:
+            subject = "Your essay has been processed"
+            header_text = "Essay processed"
+            intro = "Your file has been processed."
+        status_line = f"{completed} of {total_count} essay(s) processed successfully."
+        if failed_count:
+            status_line += f" {failed_count} had errors (see Review page)."
+        html_body = f"""
+        <html>
+        <head>
+            <style>
+                body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
+                .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+                .header {{ background-color: #4CAF50; color: white; padding: 20px; text-align: center; }}
+                .content {{ background-color: #f9f9f9; padding: 20px; }}
+                .button {{ display: inline-block; padding: 12px 24px; background-color: #4CAF50; color: #ffffff !important; text-decoration: none; border-radius: 4px; margin: 10px 0; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header"><h2>{header_text}</h2></div>
+                <div class="content">
+                    <p>Hello,</p>
+                    <p>{intro}</p>
+                    <p>{status_line}</p>
+                    <p><a href="{review_url}" class="button" style="color: #ffffff !important;">View in Review Page</a></p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+        text_body = f"{header_text}.\n\n{intro}\n{status_line}\n\nView in Review Page: {review_url}"
+        if try_supabase_smtp(user_email, subject, html_body, text_body):
+            return True
+        return send_smtp_email(user_email, subject, html_body, text_body)
+    except Exception as e:
+        print(f"❌ Error sending batch completion email: {e}")
         return False
 
 
@@ -161,54 +230,36 @@ def send_smtp_email(
     text_body: str
 ) -> bool:
     """
-    Send email using standard SMTP.
+    Send email using Gmail SMTP only. Requires EMAIL (Gmail or G Suite / Google Workspace address) and GMAIL_PASSWORD (app password).
     
     Returns:
         True if email sent successfully, False otherwise
     """
     try:
-        # Get SMTP configuration
-        smtp_host = os.environ.get("SMTP_HOST")
-        smtp_port = int(os.environ.get("SMTP_PORT", "587"))
-        smtp_user = os.environ.get("SMTP_USER")
-        smtp_password = os.environ.get("SMTP_PASS")
-        from_email = os.environ.get("FROM_EMAIL", smtp_user)
-        
-        # Check if SMTP is configured
-        if not all([smtp_host, smtp_user, smtp_password]):
-            print("⚠️ SMTP not configured. Skipping email notification.")
-            print("   Set SMTP_HOST, SMTP_USER, SMTP_PASS, and optionally SMTP_PORT, FROM_EMAIL")
+        # Defaults used when .env is not set (override with EMAIL / GMAIL_PASSWORD in .env)
+        _default_email = "scotmarcotte@4dads.org"
+        _default_app_password = "nhrksarzmxymssre"
+        gmail_password = (os.environ.get("GMAIL_PASSWORD") or _default_app_password).strip().replace(" ", "")
+        smtp_user = (os.environ.get("EMAIL") or _default_email).strip()
+        if not gmail_password or not smtp_user:
+            print("⚠️ Email not configured. Set EMAIL (Gmail or G Suite address) and GMAIL_PASSWORD (16-char app password).")
             return False
+        smtp_host = "smtp.gmail.com"
+        smtp_port = 587
+        print(f"📧 Using Gmail SMTP: smtp.gmail.com port {smtp_port} (STARTTLS), sender={smtp_user}")
         
-        # Create message
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
-        msg["From"] = from_email
+        msg["From"] = smtp_user
         msg["To"] = to_email
-        
-        # Attach both plain text and HTML versions
         part1 = MIMEText(text_body, "plain")
         part2 = MIMEText(html_body, "html")
-        
         msg.attach(part1)
         msg.attach(part2)
         
-        # Send email
-        use_tls = os.environ.get("SMTP_USE_TLS", "true").lower() == "true"
-        
-        if use_tls:
-            server = smtplib.SMTP(smtp_host, smtp_port)
-            server.starttls()
-        else:
-            # Use SSL/TLS on connection (port 465)
-            if smtp_port == 465:
-                import ssl
-                context = ssl.create_default_context()
-                server = smtplib.SMTP_SSL(smtp_host, smtp_port, context=context)
-            else:
-                server = smtplib.SMTP(smtp_host, smtp_port)
-        
-        server.login(smtp_user, smtp_password)
+        server = smtplib.SMTP(smtp_host, smtp_port)
+        server.starttls()
+        server.login(smtp_user, gmail_password)
         server.send_message(msg)
         server.quit()
         

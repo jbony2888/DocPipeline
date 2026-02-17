@@ -571,9 +571,13 @@ def run_on_pdfs(
             chunk_doc.save(tmp_chunk.name)
             chunk_doc.close()
 
+            # Single-chunk: use original PDF so AcroForm widgets (Student's Name, School, Grade) are present
+            chunk_count_total = len(analysis.chunk_ranges)
+            pipeline_input_path = pdf_path if chunk_count_total == 1 else Path(tmp_chunk.name)
+
             rec, rep = run_chunk_pipeline(
                 idx,
-                Path(tmp_chunk.name),
+                pipeline_input_path,
                 submission_id,
                 pdf_path.name,
                 analysis.format,

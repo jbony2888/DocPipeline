@@ -68,7 +68,7 @@
                         <input type="text" class="form-control" value="{{ record.word_count or 0 }}" disabled>
                     </div>
                     {% if record.needs_review %}
-                    <div class="alert alert-warning">
+                    <div class="alert alert-danger">
                         <strong>⚠️ Review Reasons:</strong><br>
                         {{ format_review_reasons(record.review_reason_codes or '') }}
                     </div>

@@ -34,9 +34,8 @@ OPTIONAL = [
     "GOOGLE_CREDENTIALS_PATH",
     "WORKER_ID",
     "APP_URL",
-    "SMTP_HOST",
-    "SMTP_USER",
-    "SMTP_PASS",
+    "EMAIL",
+    "GMAIL_PASSWORD",
 ]
 
 

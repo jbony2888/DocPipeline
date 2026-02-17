@@ -3,7 +3,7 @@ Flask application for IFI Essay Gateway.
 Replaces Streamlit with better redirect handling for Supabase magic links.
 """
 
-from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, send_file
+from flask import Flask, make_response, render_template, request, redirect, url_for, session, flash, jsonify, send_file
 from werkzeug.utils import secure_filename
 import os
 from pathlib import Path
@@ -11,6 +11,7 @@ import json
 import io
 import csv
 import re
+import uuid
 from typing import Optional, List, Dict, Any
 import logging
 import time
@@ -42,6 +43,9 @@ from pipeline.validate import can_approve_record
 # from pipeline.batch_defaults import create_upload_batch, get_batch_with_submissions, apply_batch_defaults
 from auth.supabase_client import get_supabase_client, get_user_id
 from jobs.queue import enqueue_submission, get_job_status, get_queue_status
+from jobs.process_submission import process_submission_job
+from jobs.redis_queue import get_redis_client
+from utils.email_notification import get_review_url, send_batch_completion_email, get_user_email_from_token, send_smtp_email
 from supabase import create_client
 
 app = Flask(__name__)
@@ -213,9 +217,11 @@ def index():
     user_id = session.get("user_id")
     db_stats = get_cached_db_stats_cached_only(user_id)
     
-    return render_template("dashboard.html",
+    resp = make_response(render_template("dashboard.html",
                          user_email=session.get("user_email"),
-                         db_stats=db_stats)
+                         db_stats=db_stats))
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return resp
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -375,6 +381,30 @@ def clear_jobs():
     return jsonify({"success": True})
 
 
+@app.route("/api/test-email", methods=["POST"])
+def api_test_email():
+    """Send a test email to verify Gmail (EMAIL + GMAIL_PASSWORD) is configured."""
+    if not require_auth():
+        return jsonify({"error": "Unauthorized"}), 401
+
+    to_email = None
+    if request.is_json:
+        to_email = (request.get_json() or {}).get("to")
+    if not to_email:
+        access_token = session.get("supabase_access_token")
+        to_email = get_user_email_from_token(access_token)
+    if not to_email:
+        return jsonify({"success": False, "error": "No email address. Log in or send JSON body: {\"to\": \"your@email.com\"}"}), 400
+
+    subject = "IFI Essay Tool – test email"
+    html_body = "<p>If you received this, Gmail (EMAIL + GMAIL_PASSWORD) is configured correctly.</p>"
+    text_body = "If you received this, Gmail (EMAIL + GMAIL_PASSWORD) is configured correctly."
+    ok = send_smtp_email(to_email, subject, html_body, text_body)
+    if ok:
+        return jsonify({"success": True, "message": f"Test email sent to {to_email}"})
+    return jsonify({"success": False, "error": "Sending failed. Check EMAIL and GMAIL_PASSWORD in .env and container logs."}), 500
+
+
 @app.route("/logout")
 def logout():
     """Logout user."""
@@ -404,50 +434,101 @@ def upload():
     ocr_provider = "google"
     job_ids = []
     errors = []
-    
-    # Check for duplicates before enqueueing
-    from pipeline.ingest import ingest_upload
+    import hashlib
     from pipeline.supabase_db import check_duplicate_submission
-    
-    # Enqueue all files for background processing
+
+    refresh_token = session.get("supabase_refresh_token")
+    upload_batch_id = session.get("upload_batch_id")
+
+    # First pass: build work items so we know total for batch-run tracking
+    work_items = []
     for file in files:
         if file and allowed_file(file.filename):
             try:
                 file_bytes = file.read()
-                
-                # Quick check: compute submission_id to detect duplicates before processing
-                import hashlib
                 sha256_hash = hashlib.sha256(file_bytes).hexdigest()
                 submission_id = sha256_hash[:12]
-                
-                # Check if duplicate
-                refresh_token = session.get("supabase_refresh_token")
                 duplicate_info = check_duplicate_submission(
                     submission_id=submission_id,
                     current_user_id=user_id,
                     access_token=access_token,
                     refresh_token=refresh_token
                 )
-                
-                job_id = enqueue_submission(
-                    file_bytes=file_bytes,
-                    filename=file.filename,
-                    owner_user_id=user_id,
-                    access_token=access_token,
-                    ocr_provider=ocr_provider
-                )
-                job_ids.append({
-                    "filename": file.filename,
-                    "job_id": job_id,
-                    "is_duplicate": duplicate_info.get("is_duplicate", False),
-                    "is_own_duplicate": duplicate_info.get("is_own_duplicate", False)
-                })
+                work_items.append((file, file_bytes, file.filename, submission_id, duplicate_info))
             except Exception as e:
                 errors.append(f"{file.filename}: {str(e)}")
-                print(f"❌ Error enqueueing {file.filename}: {e}")
-                import traceback
-                traceback.print_exc()
-    
+
+    total = len(work_items)
+    if total == 0:
+        return jsonify({
+            "success": False,
+            "error": "No valid files to process. " + ("Errors: " + "; ".join(errors) if errors else "")
+        }), 400
+
+    # Create batch run so we send one email when all jobs complete (async path)
+    batch_run_id = str(uuid.uuid4())
+    try:
+        r = get_redis_client()
+        r.setex(
+            f"batch_run:{batch_run_id}",
+            86400,
+            json.dumps({"total": total, "access_token": access_token, "upload_batch_id": upload_batch_id or ""}),
+        )
+        app.logger.info(f"📬 Batch run created: batch_run_id={batch_run_id[:8]}... total={total} (email after all jobs complete)")
+    except Exception as e:
+        app.logger.warning(f"Redis unavailable for batch_run; sync path will send one email after loop: {e}")
+        batch_run_id = None  # Redis down; sync path will send one email after loop
+
+    used_sync = False
+    for file, file_bytes, filename, submission_id, duplicate_info in work_items:
+        try:
+            try:
+                job_id = enqueue_submission(
+                    file_bytes=file_bytes,
+                    filename=filename,
+                    owner_user_id=user_id,
+                    access_token=access_token,
+                    ocr_provider=ocr_provider,
+                    upload_batch_id=upload_batch_id,
+                    batch_run_id=batch_run_id,
+                )
+            except Exception as e:
+                app.logger.warning(f"Queue unavailable ({e}), processing {filename} synchronously")
+                process_submission_job(
+                    file_bytes=file_bytes,
+                    filename=filename,
+                    owner_user_id=user_id,
+                    access_token=access_token,
+                    ocr_provider=ocr_provider,
+                    upload_batch_id=upload_batch_id,
+                    batch_run_id=None,
+                )
+                job_id = f"sync-{submission_id}"
+                used_sync = True
+            job_ids.append({
+                "filename": filename,
+                "job_id": job_id,
+                "is_duplicate": duplicate_info.get("is_duplicate", False),
+                "is_own_duplicate": duplicate_info.get("is_own_duplicate", False),
+            })
+        except Exception as e:
+            errors.append(f"{filename}: {str(e)}")
+            app.logger.exception(f"Error processing {filename}")
+
+    # When all processing was sync (Redis down), send one batch completion email here
+    if used_sync and job_ids:
+        try:
+            user_email = get_user_email_from_token(access_token)
+            if user_email:
+                app.logger.info(f"📧 Sending batch completion email to {user_email} (sync path, {len(job_ids)} files)")
+                review_url = get_review_url(upload_batch_id)
+                send_batch_completion_email(user_email, len(job_ids), review_url)
+                app.logger.info("✅ Batch completion email sent (sync)")
+            else:
+                app.logger.warning("No user email from token; skipping batch completion email")
+        except Exception as email_err:
+            app.logger.warning(f"Failed to send batch completion email: {email_err}")
+
     if not job_ids:
         return jsonify({
             "success": False,
@@ -636,7 +717,16 @@ def review():
                                                    key=lambda x: (str(x[0]).isdigit(), str(x[0]).lower())))
         action_label = "Send for Review"
     
-    db_stats = get_cached_db_stats_cached_only(user_id)
+    # Always fetch fresh stats on review page so cards match the record list (no delay)
+    db_stats = get_db_stats(owner_user_id=user_id, access_token=access_token, refresh_token=refresh_token)
+    now = time.time()
+    _db_stats_cache[user_id] = {"ts": now, "stats": db_stats}
+    redis_client = get_redis_client()
+    if redis_client:
+        try:
+            redis_client.setex(f"db_stats:{user_id}", DB_STATS_TTL_SECONDS, json.dumps(db_stats))
+        except Exception:
+            pass
     log_timing(f"⏱️ review total: {(time.perf_counter() - route_start):.3f}s (mode={review_mode})")
     
     return render_template("review.html",

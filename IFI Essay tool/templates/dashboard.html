@@ -80,6 +80,43 @@
             </div>
         </div>
 
+        <!-- Processing started – email notification modal -->
+        <div class="modal fade" id="processingStartedModal" tabindex="-1" aria-labelledby="processingStartedModalLabel" aria-hidden="true" data-bs-backdrop="static">
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content">
+                    <div class="modal-header border-0 pb-0">
+                        <h5 class="modal-title" id="processingStartedModalLabel">Essays submitted</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body text-center py-4">
+                        <p class="mb-0">Essays are processing and an email will be sent once they are done.</p>
+                        <p class="text-muted small mt-2 mb-0">You can leave this page; processing continues in the background.</p>
+                    </div>
+                    <div class="modal-footer border-0 justify-content-center">
+                        <button type="button" class="btn btn-primary" id="processingStartedDismissBtn" data-bs-dismiss="modal">OK</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Upload error modal (e.g. queue unavailable) – show message, click OK to dismiss -->
+        <div class="modal fade" id="uploadErrorModal" tabindex="-1" aria-labelledby="uploadErrorModalLabel" aria-hidden="true" data-bs-backdrop="static">
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content">
+                    <div class="modal-header border-0 pb-0">
+                        <h5 class="modal-title" id="uploadErrorModalLabel">Could not start processing</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body text-center py-4">
+                        <p class="mb-0" id="uploadErrorModalMessage">Something went wrong. Please try again.</p>
+                    </div>
+                    <div class="modal-footer border-0 justify-content-center">
+                        <button type="button" class="btn btn-primary" data-bs-dismiss="modal">OK</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Duplicate Scan Modal -->
         <div class="modal fade" id="duplicateModal" tabindex="-1" aria-labelledby="duplicateModalLabel" aria-hidden="true">
             <div class="modal-dialog modal-lg modal-dialog-centered">
@@ -185,6 +222,34 @@ document.addEventListener('DOMContentLoaded', function() {
     const duplicateConfirmBtn = document.getElementById('duplicateConfirmBtn');
     const duplicateCancelBtn = document.getElementById('duplicateCancelBtn');
     const duplicateModal = duplicateModalEl ? new bootstrap.Modal(duplicateModalEl) : null;
+    const processingStartedEl = document.getElementById('processingStartedModal');
+    
+    if (processingStartedEl) {
+        processingStartedEl.addEventListener('hidden.bs.modal', function() {
+            selectedFiles = [];
+            updateFilesList();
+            if (filesInput) filesInput.value = '';
+            resetSubmitButton();
+            fetch('/api/clear_jobs', { method: 'POST' }).catch(err => console.error('Error clearing jobs:', err));
+        });
+    }
+
+    function showUploadErrorModal(message) {
+        const msgEl = document.getElementById('uploadErrorModalMessage');
+        if (msgEl) msgEl.textContent = message;
+        const el = document.getElementById('uploadErrorModal');
+        if (el) bootstrap.Modal.getOrCreateInstance(el).show();
+    }
+
+    const uploadErrorEl = document.getElementById('uploadErrorModal');
+    if (uploadErrorEl) {
+        uploadErrorEl.addEventListener('hidden.bs.modal', function() {
+            selectedFiles = [];
+            updateFilesList();
+            if (filesInput) filesInput.value = '';
+            resetSubmitButton();
+        });
+    }
     
     if (!filesInput) {
         console.error('File input element not found!');
@@ -363,26 +428,20 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
 
-        // Show loading overlay
-        loadingOverlay.classList.remove('d-none');
-        loadingOverlay.style.display = 'flex';
-        startTime = Date.now();
+        // Show "Essays are processing" modal immediately so user can click OK and clear form (no progress overlay)
+        resetSubmitButton();
+        const processingStartedEl = document.getElementById('processingStartedModal');
+        if (processingStartedEl) {
+            bootstrap.Modal.getOrCreateInstance(processingStartedEl).show();
+        }
 
-        // Create FormData with selected files
+        // Upload in background; errors surface in review or via error modal
         const formData = new FormData();
         const uploadMode = document.querySelector('input[name="upload_mode"]:checked')?.value || 'multiple';
         formData.append('upload_mode', uploadMode);
+        filesToUpload.forEach(file => { formData.append('files', file); });
 
-        filesToUpload.forEach(file => {
-            formData.append('files', file);
-        });
-
-        console.log(`Uploading ${filesToUpload.length} file(s) in ${uploadMode} mode`);
-
-        fetch('{{ url_for("upload") }}', {
-            method: 'POST',
-            body: formData
-        })
+        fetch('{{ url_for("upload") }}', { method: 'POST', body: formData })
         .then(r => {
             if (!r.ok) {
                 return r.json().then(data => {
@@ -392,55 +451,15 @@ document.addEventListener('DOMContentLoaded', function() {
             return r.json();
         })
         .then(data => {
-            if (data.success) {
-                // Check for duplicate files (in case user forced reprocess)
-                const duplicateFiles = data.job_ids?.filter(job => job.is_duplicate) || [];
-                const ownDuplicates = duplicateFiles.filter(job => job.is_own_duplicate);
-                const otherDuplicates = duplicateFiles.filter(job => !job.is_own_duplicate);
-
-                if (duplicateFiles.length > 0) {
-                    let duplicateMessage = '';
-                    if (ownDuplicates.length > 0 && otherDuplicates.length > 0) {
-                        duplicateMessage = `⚠️ ${ownDuplicates.length} file(s) you already uploaded and ${otherDuplicates.length} duplicate file(s) detected. They will update existing records.`;
-                    } else if (ownDuplicates.length > 0) {
-                        duplicateMessage = `⚠️ ${ownDuplicates.length} duplicate file(s) detected. You already uploaded ${ownDuplicates.length === 1 ? 'this essay' : 'these essays'}. It will update the existing record(s).`;
-                    } else if (otherDuplicates.length > 0) {
-                        duplicateMessage = `⚠️ ${otherDuplicates.length} duplicate file(s) detected. This essay was already uploaded by someone else. It will update the existing record(s).`;
-                    }
-
-                    if (duplicateMessage && typeof showToastModal === 'function') {
-                        showToastModal(duplicateMessage, 'warning', false);
-                    } else if (duplicateMessage) {
-                        console.warn(duplicateMessage);
-                    }
-                }
-
-                if (totalCount) totalCount.textContent = data.total;
-                if (completedCount) completedCount.textContent = '0';
-                if (loadingMessage) loadingMessage.textContent = `Processing ${data.total} file(s)...`;
-                if (progressBar) {
-                    progressBar.style.width = '0%';
-                    if (progressText) progressText.textContent = '0%';
-                }
-
-                if (data.errors && data.errors.length > 0) {
-                    console.warn('Some files failed to enqueue:', data.errors);
-                }
-
-                successShownForBatch = false;
-                pollProgress();
-                pollInterval = setInterval(pollProgress, 2000);
-            } else {
-                showToastModal('Error: ' + (data.error || 'Failed to start processing'), 'error');
-                loadingOverlay.classList.add('d-none');
-                resetSubmitButton();
+            if (!data.success) {
+                showUploadErrorModal(data.error || 'Failed to start processing.');
+            } else if (data.errors && data.errors.length > 0) {
+                console.warn('Some files failed:', data.errors);
             }
         })
         .catch(error => {
             console.error('Error:', error);
-            showToastModal('Error uploading files: ' + error.message, 'error');
-            loadingOverlay.classList.add('d-none');
-            resetSubmitButton();
+            showUploadErrorModal(error.message || 'Error uploading files. Please try again.');
         });
     }
 
@@ -677,25 +696,17 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
     
-    // Clear old completed jobs on page load to prevent showing old success modals
+    // On page load: clear any session job tracking so dashboard shows empty form.
+    // Processing continues in background; user gets email when done.
     fetch('/api/batch_status')
         .then(r => r.json())
         .then(data => {
-            const { total, pending, in_progress, completed, failed } = data;
-            // If there are jobs but they're all completed, clear them immediately
-            if (total > 0 && (completed + failed) === total && (pending === 0 && in_progress === 0)) {
+            if (data.total > 0) {
                 fetch('/api/clear_jobs', { method: 'POST' })
-                    .catch(err => console.error('Error clearing old jobs:', err));
-            } else if (total > 0 && (pending > 0 || in_progress > 0)) {
-                // Only start polling if there are active jobs
-                pollProgress();
-                pollInterval = setInterval(pollProgress, 2000);
+                    .catch(err => console.error('Error clearing jobs:', err));
             }
         })
-        .catch(err => {
-            // If error, don't start polling
-            console.log('No active jobs to poll');
-        });
+        .catch(() => {});
     
     // Hide loading overlay if page loads with results (means processing completed)
     {% if session.upload_results %}

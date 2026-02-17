@@ -186,7 +186,7 @@
                                 {% endif %}
                                 <p class="mb-1"><strong>Word Count:</strong> {{ record.word_count or 0 }}</p>
                                 {% if record.review_reason_codes %}
-                                <p class="mb-1 text-warning">
+                                <p class="mb-1 text-danger">
                                     <strong>⚠️ Review Reasons:</strong> {{ format_review_reasons(record.review_reason_codes) }}
                                 </p>
                                 {% endif %}

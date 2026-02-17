@@ -11,9 +11,10 @@ from jobs.redis_queue import (
 )
 
 
-def enqueue_submission(file_bytes: bytes, filename: str, owner_user_id: str, 
-                      access_token: str, ocr_provider: str = "google", 
-                      upload_batch_id: Optional[str] = None) -> str:
+def enqueue_submission(file_bytes: bytes, filename: str, owner_user_id: str,
+                      access_token: str, ocr_provider: str = "google",
+                      upload_batch_id: Optional[str] = None,
+                      batch_run_id: Optional[str] = None) -> str:
     """
     Enqueue a submission for background processing.
     
@@ -29,7 +30,8 @@ def enqueue_submission(file_bytes: bytes, filename: str, owner_user_id: str,
         owner_user_id=owner_user_id,
         access_token=access_token,
         ocr_provider=ocr_provider,
-        upload_batch_id=upload_batch_id
+        upload_batch_id=upload_batch_id,
+        batch_run_id=batch_run_id
     )
 
 

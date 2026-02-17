@@ -242,14 +242,34 @@ When a job completes (success or failure), an email is automatically sent to the
 
 ## Troubleshooting
 
+### Frontend stuck at "0 of 1 entries processed" (progress at 0%)
+The dashboard polls `/api/batch_status` every 2 seconds. If the count stays at 0 completed, either the **worker is not running** or the job is **still running** (multi-submission PDFs can take 1–3+ minutes per file).
+
+**If using Docker:**
+1. Check all services: `docker compose ps` — you should see `redis`, `flask-app`, and `worker` running.
+2. If `worker` is missing or exited: `docker compose up -d` (or `docker compose up -d worker`).
+3. Watch worker logs: `docker compose logs -f worker` — you should see "Processing …" then "Job … completed" or an error.
+
+**If running Flask locally (no Docker):**
+1. Redis must be running (e.g. `redis-server` or Docker: `docker run -d -p 6379:6379 redis:7-alpine`).
+2. In a **separate terminal**, start the worker from the `IFI Essay tool` directory:
+   ```bash
+   cd "/path/to/DocPipeline/IFI Essay tool"
+   set -a && source .env && set +a
+   python worker_rq.py
+   ```
+3. Ensure `.env` has `REDIS_URL=redis://localhost:6379/0` (not `redis://redis:6379/0`).
+
+**Multi-submission (BULK_SCANNED_BATCH) jobs:** One PDF with many pages becomes one job that runs for several minutes (one OCR + extraction per page). Progress will stay at 0% until that single job finishes.
+
 ### Jobs Not Processing
-1. Check worker is running: `docker-compose ps worker`
-2. Check worker logs: `docker-compose logs worker`
-3. Check Redis connection: `docker-compose exec flask-app python test_redis_connection.py`
+1. Check worker is running: `docker compose ps worker` (or `docker-compose ps worker`)
+2. Check worker logs: `docker compose logs worker`
+3. Check Redis connection: `docker compose exec flask-app python test_redis_connection.py`
 
 ### Jobs Stuck
-1. Check Redis queue length
-2. Restart worker: `docker-compose restart worker`
+1. Check Redis queue length (see "Check Redis Queue" above)
+2. Restart worker: `docker compose restart worker`
 3. Check for errors in worker logs
 
 ### Slow Processing

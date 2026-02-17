@@ -11,12 +11,47 @@ from pathlib import Path
 from pipeline.runner import process_submission
 from pipeline.supabase_storage import ingest_upload_supabase
 from pipeline.supabase_db import save_record as save_db_record
-from utils.email_notification import send_job_completion_email, get_job_url, get_user_email_from_token
+from utils.email_notification import send_batch_completion_email, get_review_url, get_user_email_from_token
 from pipeline.document_analysis import analyze_document, make_chunk_submission_id, get_page_level_ranges_for_batch
 from pipeline.schema import DocClass
 import fitz  # PyMuPDF
 
 logger = logging.getLogger(__name__)
+
+
+def _maybe_send_batch_completion(
+    batch_run_id: str,
+    access_token: str,
+    upload_batch_id: str,
+) -> None:
+    """If this job is the last in the batch, send one batch completion email."""
+    if not batch_run_id:
+        return
+    try:
+        from jobs.redis_queue import get_redis_client
+        redis = get_redis_client()
+        key = f"batch_run:{batch_run_id}"
+        completed = redis.incr(f"{key}:completed")
+        raw = redis.get(key)
+        if not raw:
+            return
+        data = json.loads(raw.decode() if isinstance(raw, bytes) else raw)
+        total = data.get("total", 0)
+        logger.info(f"📬 Batch progress: {completed}/{total} jobs completed (batch_run_id={batch_run_id[:8]}...)")
+        if completed < total:
+            return
+        user_email = get_user_email_from_token(access_token)
+        if not user_email:
+            logger.warning("Batch complete but no user email from token; skipping batch completion email")
+            return
+        review_url = get_review_url(upload_batch_id or None)
+        logger.info(f"📧 Sending batch completion email to {user_email} (total={total})")
+        send_batch_completion_email(user_email, total, review_url)
+        redis.delete(key)
+        redis.delete(f"{key}:completed")
+        logger.info("✅ Batch completion email sent")
+    except Exception as e:
+        logger.warning(f"Failed to send batch completion email: {e}")
 
 
 def process_submission_job(
@@ -25,7 +60,8 @@ def process_submission_job(
     owner_user_id: str,
     access_token: str,
     ocr_provider: str = "google",
-    upload_batch_id: str = None
+    upload_batch_id: str = None,
+    batch_run_id: str = None,
 ):
     """
     Process a single submission in the background.
@@ -40,7 +76,16 @@ def process_submission_job(
     Returns:
         dict with status and result/error
     """
+    job_id = None
     try:
+        try:
+            from rq import get_current_job
+            current_job = get_current_job()
+            if current_job:
+                job_id = current_job.id
+        except Exception:
+            pass
+        logger.info(f"📄 Job started: job_id={job_id or 'sync'} filename={filename} batch_run_id={batch_run_id[:8] if batch_run_id else 'none'}...")
         logger.info(f"📄 Processing {filename} for user {owner_user_id}")
 
         # Use service role key for storage uploads in the worker.
@@ -89,6 +134,10 @@ def process_submission_job(
                     chunk_doc.save(chunk_file.name)
                     chunk_path = chunk_file.name
 
+                # For single-chunk docs (e.g. typed form), use the original PDF so AcroForm widgets
+                # (Student's Name, School, Grade) are present; the chunk PDF strips widgets and yields N/A.
+                image_path = tmp_path if len(iter_ranges) == 1 else chunk_path
+
                 chunk_submission_id = make_chunk_submission_id(ingest_data["submission_id"], idx)
                 run_id = ingest_data["submission_id"]
                 chunk_artifact_dir = f"{owner_user_id}/{run_id}/artifacts/{run_id}/chunk_{idx}_{chunk_submission_id}"
@@ -97,7 +146,7 @@ def process_submission_job(
                 # Each batch page is a single-page submission (SINGLE_SCANNED); no shared fields across pages
                 child_doc_class = DocClass.SINGLE_SCANNED if analysis.doc_class == DocClass.BULK_SCANNED_BATCH else analysis.doc_class
                 record, report = process_submission(
-                    image_path=chunk_path,
+                    image_path=image_path,
                     submission_id=chunk_submission_id,
                     artifact_dir=chunk_artifact_dir,
                     ocr_provider_name=ocr_provider,
@@ -243,30 +292,9 @@ def process_submission_job(
         except Exception as e:
             logger.warning(f"⚠️ Failed to upload analysis artifact: {e}")
 
-        # Send email once after processing all chunks
-        try:
-            user_email = get_user_email_from_token(access_token)
-            if user_email:
-                job_id = None
-                try:
-                    from rq import get_current_job
-                    current_job = get_current_job()
-                    if current_job:
-                        job_id = current_job.id
-                except Exception:
-                    pass
-
-                if job_id:
-                    job_url = get_job_url(job_id)
-                    send_job_completion_email(
-                        user_email=user_email,
-                        job_id=job_id,
-                        job_status="completed",
-                        filename=filename,
-                        job_url=job_url
-                    )
-        except Exception as email_error:
-            logger.warning(f"⚠️ Failed to send email notification: {email_error}")
+        logger.info(f"✅ Job finished: job_id={job_id or 'sync'} filename={filename}")
+        # Send one batch completion email when all jobs in this batch are done
+        _maybe_send_batch_completion(batch_run_id, access_token, upload_batch_id)
 
         # Return first result for compatibility; include batch summary when BULK_SCANNED_BATCH
         out = results[0] if results else {"status": "failed", "error": "No chunks processed"}
@@ -277,39 +305,8 @@ def process_submission_job(
     except Exception as e:
         logger.error(f"❌ FAILED processing {filename}: {e}", exc_info=True)
 
-        # Send email notification on failure
-        try:
-            user_email = get_user_email_from_token(access_token)
-            if user_email:
-                job_id = None
-                try:
-                    from rq import get_current_job
-                    current_job = get_current_job()
-                    if current_job:
-                        job_id = current_job.id
-                except Exception:
-                    pass
-
-                if job_id:
-                    job_url = get_job_url(job_id)
-                    send_job_completion_email(
-                        user_email=user_email,
-                        job_id=job_id,
-                        job_status="failed",
-                        filename=filename,
-                        job_url=job_url,
-                        error_message=str(e)
-                    )
-                else:
-                    send_job_completion_email(
-                        user_email=user_email,
-                        job_id="unknown",
-                        job_status="failed",
-                        filename=filename,
-                        error_message=str(e)
-                    )
-        except Exception as email_error:
-            logger.warning(f"⚠️ Failed to send failure email: {email_error}")
+        # Still count this job in batch; send one batch completion email when all are done
+        _maybe_send_batch_completion(batch_run_id, access_token, upload_batch_id)
 
         # Re-raise so RQ marks the job as failed (not silently "finished")
         raise
