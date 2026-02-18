@@ -1375,7 +1375,37 @@ def serve_pdf(file_path):
                     file_path = alt_path
                     break
 
-    # Chunk artifact_dir points to a folder that has no original.pdf; the original is at user_id/run_id/original.*
+    # Multi-submission chunk: path has no file; parent is at user_id/run_id/original.*
+    # For chunks ONLY: extract single page instead of serving full PDF
+    if not file_bytes and "/artifacts/" in file_path and "chunk_" in file_path:
+        chunk_match = re.search(r"chunk_(\d+)_", file_path)
+        if chunk_match:
+            chunk_index = int(chunk_match.group(1))
+            parts = file_path.split("/")
+            if len(parts) >= 2:
+                top_level = f"{parts[0]}/{parts[1]}"
+                for ext in [".pdf", ".png", ".jpg", ".jpeg"]:
+                    candidate = f"{top_level}/original{ext}"
+                    file_bytes = download_file(candidate, access_token=access_token)
+                    if file_bytes and candidate.endswith(".pdf"):
+                        try:
+                            import fitz
+                            doc = fitz.open(stream=file_bytes, filetype="pdf")
+                            if 0 <= chunk_index < len(doc):
+                                page = doc.load_page(chunk_index)
+                                single_page = fitz.open()
+                                single_page.insert_pdf(doc, from_page=chunk_index, to_page=chunk_index, widgets=0)
+                                file_bytes = single_page.write_tobytes()
+                                single_page.close()
+                            doc.close()
+                        except Exception as e:
+                            app.logger.warning(f"Chunk extraction failed: {e}")
+                            file_bytes = None
+                        break
+                    elif file_bytes:
+                        break
+
+    # Non-chunk fallback: serve full parent PDF (legacy or non-multi-submission)
     if not file_bytes and "/artifacts/" in file_path:
         parts = file_path.split("/")
         if len(parts) >= 2:
