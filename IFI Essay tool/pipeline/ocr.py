@@ -2,6 +2,7 @@
 OCR provider abstraction with stub and Google Cloud Vision implementations.
 """
 
+import base64
 import io
 import json
 import os
@@ -571,27 +572,46 @@ def _parse_credentials_json(s: str) -> dict:
 
 def _load_credentials_dict() -> dict:
     """
-    Load Google service account credentials.
-    Prefers file path (Secret File on Render) - env var often truncates large JSON.
-    
-    When GOOGLE_APPLICATION_CREDENTIALS is set: use file only (never fall back to env var).
-    Otherwise: use GOOGLE_CLOUD_VISION_CREDENTIALS_JSON.
+    Load Google service account credentials. Tries in order:
+      1. GOOGLE_CLOUD_VISION_CREDENTIALS_B64 - base64-encoded JSON (best for Render, no truncation)
+      2. GOOGLE_APPLICATION_CREDENTIALS - path to JSON file (Secret File)
+      3. GOOGLE_CLOUD_VISION_CREDENTIALS_JSON - raw JSON (often truncates on Render)
     """
+    # 1. Base64 (most reliable for pasting into Render env vars)
+    b64 = os.environ.get("GOOGLE_CLOUD_VISION_CREDENTIALS_B64", "").strip()
+    if b64:
+        try:
+            raw = base64.b64decode(b64, validate=True).decode("utf-8")
+            return json.loads(raw)
+        except Exception as e:
+            raise RuntimeError(
+                f"GOOGLE_CLOUD_VISION_CREDENTIALS_B64 invalid: {e}. "
+                "Generate with: base64 -w0 credentials_vision.json"
+            ) from e
+
+    # 2. File path
     path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "").strip()
-    if path:
-        if os.path.isfile(path):
+    if path and os.path.isfile(path):
+        try:
             with open(path, "r") as f:
                 return json.load(f)
+        except json.JSONDecodeError as e:
+            raise RuntimeError(
+                f"Credentials file {path} has invalid/truncated JSON: {e}. "
+                "Use GOOGLE_CLOUD_VISION_CREDENTIALS_B64 instead: base64 -w0 credentials_vision.json"
+            ) from e
+
+    if path:
         raise RuntimeError(
-            f"GOOGLE_APPLICATION_CREDENTIALS points to missing file: {path}\n"
-            "Add Secret File 'credentials_vision.json' in Render dashboard → worker Environment."
+            f"GOOGLE_APPLICATION_CREDENTIALS points to missing file: {path}"
         )
+
+    # 3. Raw JSON env var
     s = os.environ.get("GOOGLE_CLOUD_VISION_CREDENTIALS_JSON") or ""
     if not s.strip():
         raise RuntimeError(
-            "Google Vision credentials required. Set either:\n"
-            "  - GOOGLE_APPLICATION_CREDENTIALS=/etc/secrets/credentials_vision.json + add Secret File in Render\n"
-            "  - GOOGLE_CLOUD_VISION_CREDENTIALS_JSON=<minified single-line JSON>"
+            "Google Vision credentials required. Add GOOGLE_CLOUD_VISION_CREDENTIALS_B64 to Render: "
+            "run 'bash scripts/export_credentials_b64.sh' and paste the output."
         )
     return _parse_credentials_json(s)
 

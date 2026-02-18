@@ -1,34 +1,35 @@
 # Google Vision Credentials on Render
 
-The JSON credentials for Google Cloud Vision can be large and fragile when pasted into environment variables (truncation, escaping). **Use a Secret File** instead for reliable production use.
+Render often truncates large env vars and Secret File pastes. **Use base64** for reliable setup.
 
-## Option A: Secret File (Recommended)
+## Option A: Base64 (Recommended)
 
-1. **Add Secret File in Render Dashboard**
-   - Open your **web service** → Environment
-   - Add **Secret File** (not Environment Variable)
-   - Filename: `credentials_vision.json`
-   - Paste the full service account JSON (can be multi-line; Render stores it as a file)
-
-2. **Add to Worker as well**
-   - Open your **worker service** → Environment
-   - Add the same Secret File: `credentials_vision.json`
-
-3. **Set path env var** (or let code use default)
-   - Add: `GOOGLE_APPLICATION_CREDENTIALS=/etc/secrets/credentials_vision.json`
-   - Render mounts secret files at `/etc/secrets/<filename>`
-
-The app will load credentials from the file. You can **remove** `GOOGLE_CLOUD_VISION_CREDENTIALS_JSON` from both services if you use this.
-
-## Option B: Environment Variable
-
-If you prefer the env var approach, the value **must be a single line** with no line breaks:
-
-1. Minify your JSON:
+1. **Generate base64 from your credentials file:**
    ```bash
-   python -c "import json; print(json.dumps(json.load(open('credentials_vision.json'))))"
+   cd "IFI Essay tool"
+   ./scripts/export_credentials_b64.sh
+   ```
+   Or manually:
+   ```bash
+   base64 -w0 credentials_vision.json   # Linux
+   base64 -i credentials_vision.json | tr -d '\n'   # macOS
    ```
 
-2. Copy the output (single long line) and paste into `GOOGLE_CLOUD_VISION_CREDENTIALS_JSON` in the Render dashboard.
+2. **Add to Render** (web + worker):
+   - Key: `GOOGLE_CLOUD_VISION_CREDENTIALS_B64`
+   - Value: paste the base64 output
 
-3. Do **not** paste multi-line or pretty-printed JSON — it often breaks with "unterminated string" or similar errors.
+3. **Remove** `GOOGLE_CLOUD_VISION_CREDENTIALS_JSON` and Secret File if you had them.
+
+## Option B: Secret File
+
+1. Add Secret File `credentials_vision.json` in dashboard.
+2. Set `GOOGLE_APPLICATION_CREDENTIALS=/etc/secrets/credentials_vision.json`
+3. Paste the **full** JSON. If you get "unterminated string", the paste was truncated — use Option A instead.
+
+## Option C: Raw JSON
+
+Only if it fits without truncation. Minify and paste as single line:
+```bash
+python -c "import json; print(json.dumps(json.load(open('credentials_vision.json'))))"
+```
