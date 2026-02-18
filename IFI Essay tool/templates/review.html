@@ -304,33 +304,35 @@
                                 <tbody>
                                     {% for record in grade_records %}
                                     <tr>
-                                        <td>{{ record.student_name or 'N/A' }}</td>
-                                        <td>{{ record.father_figure_name or 'N/A' }}</td>
-                                        <td>{{ record.word_count or 0 }}</td>
-                                        <td>
+                                        <td class="align-middle">{{ record.student_name or 'N/A' }}</td>
+                                        <td class="align-middle">{{ record.father_figure_name or 'N/A' }}</td>
+                                        <td class="align-middle">{{ record.word_count or 0 }}</td>
+                                        <td class="align-middle">
                                             {% set pdf_path = get_pdf_path(record.get('artifact_dir', '')) %}
                                             {% if pdf_path %}
                                             <a href="{{ url_for('serve_pdf', file_path=pdf_path) }}" 
                                                target="_blank" 
-                                               class="btn btn-outline-primary btn-sm">
+                                               class="btn btn-sm btn-outline-primary">
                                                 <i class="bi bi-file-pdf"></i> View PDF
                                             </a>
                                             {% else %}
                                             <span class="text-muted">N/A</span>
                                             {% endif %}
                                         </td>
-                                        <td>
-                                            <div class="btn-group btn-group-sm">
+                                        <td class="align-middle">
+                                            <div class="d-flex flex-wrap gap-1 align-items-center">
                                                 <a href="{{ url_for('record_detail', submission_id=record.submission_id) }}" 
-                                                   class="btn btn-outline-primary">
+                                                   class="btn btn-sm btn-outline-primary">
                                                     <i class="bi bi-pencil"></i> Edit
                                                 </a>
-                                                <button class="btn btn-outline-warning" 
+                                                <button class="btn btn-sm btn-outline-warning" 
                                                         onclick="sendForReview('{{ record.submission_id }}')">
                                                     <i class="bi bi-exclamation-triangle"></i> Review
                                                 </button>
-                                                <button class="btn btn-outline-danger" 
-                                                        onclick="deleteRecord('{{ record.submission_id }}')">
+                                                <button class="btn btn-sm btn-outline-danger px-2" 
+                                                        onclick="deleteRecord('{{ record.submission_id }}')"
+                                                        title="Delete"
+                                                        aria-label="Delete">
                                                     <i class="bi bi-trash"></i>
                                                 </button>
                                             </div>
