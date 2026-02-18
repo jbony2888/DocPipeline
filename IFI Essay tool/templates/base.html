@@ -216,6 +216,19 @@
         }
     </script>
     <script>
+        // Global fetch wrapper: on 401, redirect to login (with session_expired message when applicable)
+        const _originalFetch = window.fetch;
+        window.fetch = function(...args) {
+            return _originalFetch.apply(this, args).then(function(res) {
+                if (res.status === 401) {
+                    res.clone().json().catch(() => ({})).then(data => {
+                        window.location.href = (data && data.redirect) || '/login?message=session_expired';
+                    });
+                }
+                return res;
+            });
+        };
+
         // Keep stats "instant" by rendering immediately, then refreshing asynchronously.
         document.addEventListener('DOMContentLoaded', function() {
             const totalEl = document.getElementById('dbStatsTotal');
@@ -224,11 +237,14 @@
             if (!totalEl && !cleanEl && !needsReviewEl) return;
 
             fetch('/api/db_stats?fresh=1', { headers: { 'Accept': 'application/json' }})
-                .then(r => r.ok ? r.json() : Promise.reject(r))
+                .then(r => {
+                    if (r.status === 401) return r.json().then(d => { if (d.redirect) window.location.href = d.redirect; return Promise.reject(); });
+                    return r.ok ? r.json() : Promise.reject(r);
+                })
                 .then(stats => {
-                    if (totalEl && stats.total_count !== undefined) totalEl.textContent = stats.total_count;
-                    if (cleanEl && stats.clean_count !== undefined) cleanEl.textContent = stats.clean_count;
-                    if (needsReviewEl && stats.needs_review_count !== undefined) needsReviewEl.textContent = stats.needs_review_count;
+                    if (stats && totalEl && stats.total_count !== undefined) totalEl.textContent = stats.total_count;
+                    if (stats && cleanEl && stats.clean_count !== undefined) cleanEl.textContent = stats.clean_count;
+                    if (stats && needsReviewEl && stats.needs_review_count !== undefined) needsReviewEl.textContent = stats.needs_review_count;
                 })
                 .catch(() => {});
         });

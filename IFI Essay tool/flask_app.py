@@ -3,7 +3,7 @@ Flask application for IFI Essay Gateway.
 Replaces Streamlit with better redirect handling for Supabase magic links.
 """
 
-from flask import Flask, make_response, render_template, request, redirect, url_for, session, flash, jsonify, send_file
+from flask import Flask, make_response, render_template, request, redirect, url_for, session, flash, jsonify, send_file, g
 from werkzeug.utils import secure_filename
 import os
 from pathlib import Path
@@ -204,18 +204,53 @@ def allowed_file(filename):
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
+def _is_access_token_valid(access_token: Optional[str]) -> bool:
+    """Return True if JWT access token exists and is not expired."""
+    if not access_token or not access_token.strip():
+        return False
+    try:
+        import jwt
+        jwt.decode(access_token, options={"verify_signature": False, "verify_exp": True})
+        return True
+    except Exception:
+        return False
+
+
 def require_auth():
-    """Check if user is authenticated, redirect to login if not."""
+    """Check if user is authenticated. Validates JWT expiry; clears session if expired."""
     if "user_id" not in session or not session.get("user_id"):
         return False
+    access_token = session.get("supabase_access_token")
+    if not _is_access_token_valid(access_token):
+        session.clear()
+        g.auth_failure_reason = "session_expired"
+        return False
     return True
+
+
+def _login_redirect():
+    """Redirect to login; includes session_expired message if applicable."""
+    if getattr(g, "auth_failure_reason", None) == "session_expired":
+        return redirect(url_for("login", message="session_expired"))
+    return redirect(url_for("login"))
+
+
+def unauthorized_response():
+    """Return 401 JSON for API routes; includes session_expired redirect when applicable."""
+    if getattr(g, "auth_failure_reason", None) == "session_expired":
+        return jsonify({
+            "error": "session_expired",
+            "redirect": url_for("login", message="session_expired"),
+            "message": "Your session has expired. Please log in again."
+        }), 401
+    return jsonify({"error": "Unauthorized"}), 401
 
 
 @app.route("/")
 def index():
     """Main dashboard."""
     if not require_auth():
-        return redirect(url_for("login"))
+        return _login_redirect()
     
     user_id = session.get("user_id")
     db_stats = get_cached_db_stats_cached_only(user_id)
@@ -230,6 +265,10 @@ def index():
 @app.route("/login", methods=["GET", "POST"])
 def login():
     """Login page with magic link authentication."""
+    # Show session expired message if redirected after token expiry
+    msg = request.args.get("message")
+    if msg == "session_expired":
+        flash("Your session has expired. Please log in again.", "warning")
     # Check if already logged in
     if require_auth():
         return redirect(url_for("index"))
@@ -369,7 +408,7 @@ def clear_results():
 def clear_jobs():
     """Clear job tracking from session after processing completes."""
     if not require_auth():
-        return jsonify({"error": "Unauthorized"}), 401
+        return unauthorized_response()
     
     # Clear job tracking
     if "processing_jobs" in session:
@@ -386,7 +425,7 @@ def clear_jobs():
 def api_test_email():
     """Send a test email to verify Gmail (EMAIL + GMAIL_PASSWORD) is configured."""
     if not require_auth():
-        return jsonify({"error": "Unauthorized"}), 401
+        return unauthorized_response()
 
     to_email = None
     if request.is_json:
@@ -418,7 +457,7 @@ def logout():
 def upload():
     """Handle file upload and processing."""
     if not require_auth():
-        return jsonify({"success": False, "error": "Not authenticated"}), 401
+        return unauthorized_response()
     
     user_id = session.get("user_id")
     access_token = session.get("supabase_access_token")
@@ -556,7 +595,7 @@ def upload():
 def scan_duplicates():
     """Scan uploaded files for duplicate submissions without enqueueing."""
     if not require_auth():
-        return jsonify({"success": False, "error": "Not authenticated"}), 401
+        return unauthorized_response()
 
     user_id = session.get("user_id")
     access_token = session.get("supabase_access_token")
@@ -615,7 +654,7 @@ def scan_duplicates():
 def review():
     """Review and approval workflow page with School→Grade grouping."""
     if not require_auth():
-        return redirect(url_for("login"))
+        return _login_redirect()
     
     route_start = time.perf_counter()
     user_id = session.get("user_id")
@@ -750,7 +789,7 @@ def review():
 def api_db_stats():
     """Return per-user database stats (optionally bypassing cache)."""
     if not require_auth():
-        return jsonify({"error": "Unauthorized"}), 401
+        return unauthorized_response()
 
     user_id = session.get("user_id")
     access_token = session.get("supabase_access_token")
@@ -781,7 +820,7 @@ def api_db_stats():
 def record_detail(submission_id):
     """View and edit a specific record."""
     if not require_auth():
-        return redirect(url_for("login"))
+        return _login_redirect()
     
     user_id = session.get("user_id")
     access_token = session.get("supabase_access_token")
@@ -885,7 +924,7 @@ def record_detail(submission_id):
 def approve_record(submission_id):
     """Approve a record (move to clean)."""
     if not require_auth():
-        return jsonify({"success": False, "error": "Not authenticated"}), 401
+        return unauthorized_response()
     
     user_id = session.get("user_id")
     access_token = session.get("supabase_access_token")
@@ -921,7 +960,7 @@ def approve_record(submission_id):
 def send_for_review(submission_id):
     """Send a record for review."""
     if not require_auth():
-        return jsonify({"success": False, "error": "Not authenticated"}), 401
+        return unauthorized_response()
     
     user_id = session.get("user_id")
     access_token = session.get("supabase_access_token")
@@ -938,7 +977,7 @@ def send_for_review(submission_id):
 def bulk_update_records():
     """Apply bulk updates to selected records."""
     if not require_auth():
-        return jsonify({"success": False, "error": "Unauthorized"}), 401
+        return unauthorized_response()
     
     user_id = session.get("user_id")
     access_token = session.get("supabase_access_token")
@@ -1009,7 +1048,7 @@ def bulk_update_records():
 def bulk_delete_records():
     """Delete selected submission records and their storage files."""
     if not require_auth():
-        return jsonify({"success": False, "error": "Not authenticated"}), 401
+        return unauthorized_response()
 
     user_id = session.get("user_id")
     access_token = session.get("supabase_access_token")
@@ -1065,7 +1104,7 @@ def bulk_delete_records():
 def delete_record(submission_id):
     """Delete a record and its files from storage."""
     if not require_auth():
-        return jsonify({"success": False, "error": "Not authenticated"}), 401
+        return unauthorized_response()
 
     user_id = session.get("user_id")
     access_token = session.get("supabase_access_token")
@@ -1099,7 +1138,7 @@ def delete_record(submission_id):
 def reprocess_record(submission_id):
     """Re-download the original file from storage and re-run the pipeline."""
     if not require_auth():
-        return jsonify({"success": False, "error": "Not authenticated"}), 401
+        return unauthorized_response()
 
     user_id = session.get("user_id")
     access_token = session.get("supabase_access_token")
@@ -1224,7 +1263,7 @@ def _export_records_to_csv(records: List[Dict]) -> io.BytesIO:
 def export_csv():
     """Export all clean records to CSV with PDF URLs."""
     if not require_auth():
-        return redirect(url_for("login"))
+        return _login_redirect()
     
     user_id = session.get("user_id")
     access_token = session.get("supabase_access_token")
@@ -1244,7 +1283,7 @@ def export_csv():
 def export_school_csv(school_name: str):
     """Export all records for a specific school to CSV."""
     if not require_auth():
-        return redirect(url_for("login"))
+        return _login_redirect()
     
     user_id = session.get("user_id")
     access_token = session.get("supabase_access_token")
@@ -1278,7 +1317,7 @@ def export_school_csv(school_name: str):
 def export_grade_csv(school_name: str, grade: str):
     """Export all records for a specific school and grade to CSV."""
     if not require_auth():
-        return redirect(url_for("login"))
+        return _login_redirect()
     
     user_id = session.get("user_id")
     access_token = session.get("supabase_access_token")
@@ -1317,7 +1356,7 @@ def export_grade_csv(school_name: str, grade: str):
 def serve_pdf(file_path):
     """Serve PDF/image files from Supabase Storage."""
     if not require_auth():
-        return "Unauthorized", 401
+        return unauthorized_response()
 
     access_token = session.get("supabase_access_token")
 
@@ -1374,7 +1413,7 @@ def serve_pdf(file_path):
 def job_detail(job_id):
     """View job status page."""
     if not require_auth():
-        return redirect(url_for("login"))
+        return _login_redirect()
     
     access_token = session.get("supabase_access_token")
     user_id = session.get("user_id")
@@ -1395,7 +1434,7 @@ def job_detail(job_id):
 def job_status(job_id):
     """Get the status of a processing job (API endpoint)."""
     if not require_auth():
-        return jsonify({"error": "Unauthorized"}), 401
+        return unauthorized_response()
     
     access_token = session.get("supabase_access_token")
     status = get_job_status(job_id, access_token=access_token)
@@ -1406,7 +1445,7 @@ def job_status(job_id):
 def get_batch(upload_batch_id: str):
     """Get batch details with submissions."""
     if not require_auth():
-        return jsonify({"success": False, "error": "Not authenticated"}), 401
+        return unauthorized_response()
     
     user_id = session.get("user_id")
     access_token = session.get("supabase_access_token")
@@ -1423,7 +1462,7 @@ def get_batch(upload_batch_id: str):
 def apply_defaults(upload_batch_id: str):
     """Apply batch defaults to all submissions in the batch."""
     if not require_auth():
-        return jsonify({"success": False, "error": "Not authenticated"}), 401
+        return unauthorized_response()
     
     user_id = session.get("user_id")
     access_token = session.get("supabase_access_token")
@@ -1456,7 +1495,7 @@ def apply_defaults(upload_batch_id: str):
 def batch_status():
     """Get status of all jobs in current batch using Redis/RQ."""
     if not require_auth():
-        return jsonify({"error": "Unauthorized"}), 401
+        return unauthorized_response()
     
     user_id = session.get("user_id")
     job_ids_in_session = session.get("processing_jobs", [])
@@ -1518,7 +1557,7 @@ def batch_status():
 def worker_status():
     """Diagnostic endpoint to check worker status and recent jobs."""
     if not require_auth():
-        return jsonify({"error": "Unauthorized"}), 401
+        return unauthorized_response()
     
     try:
         from supabase import create_client
