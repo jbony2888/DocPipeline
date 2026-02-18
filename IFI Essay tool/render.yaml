@@ -60,3 +60,33 @@ services:
       - key: WORKER_ID
         value: worker-1
 
+  # Background worker - REQUIRED for job processing. Jobs will not run without this.
+  - type: worker
+    name: ifi-essay-gateway-worker
+    env: python
+    region: oregon
+    plan: starter
+    buildCommand: pip install -r requirements-flask.txt && mkdir -p artifacts outputs data templates static/css static/js
+    startCommand: python worker_rq.py
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: GOOGLE_CLOUD_VISION_CREDENTIALS_JSON
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: APP_URL
+        sync: false
+      - key: WORKER_ID
+        value: worker-1
+      - key: EMAIL
+        sync: false
+      - key: GMAIL_PASSWORD
+        sync: false
+

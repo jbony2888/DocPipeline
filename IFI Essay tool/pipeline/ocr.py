@@ -317,10 +317,11 @@ class GoogleVisionOcrProvider:
     """
     
     def __init__(self):
-        from google.cloud import vision
         from google.oauth2 import service_account
-        creds_json = os.environ["GOOGLE_CLOUD_VISION_CREDENTIALS_JSON"]
-        creds = service_account.Credentials.from_service_account_info(json.loads(creds_json))
+        from google.cloud import vision
+        creds_json = os.environ.get("GOOGLE_CLOUD_VISION_CREDENTIALS_JSON") or ""
+        creds_dict = _parse_credentials_json(creds_json)
+        creds = service_account.Credentials.from_service_account_info(creds_dict)
         self.client = vision.ImageAnnotatorClient(credentials=creds)
     
     def process_image(self, image_path: str) -> OcrResult:
@@ -550,12 +551,28 @@ class EasyOcrProvider:
         return png_bytes
 
 
-def _require_google_credentials() -> None:
-    """Require GOOGLE_CLOUD_VISION_CREDENTIALS_JSON to be set and valid JSON."""
-    creds = os.environ.get("GOOGLE_CLOUD_VISION_CREDENTIALS_JSON") or ""
-    if not creds.strip():
+def _parse_credentials_json(s: str) -> dict:
+    """Parse GOOGLE_CLOUD_VISION_CREDENTIALS_JSON. Handles JSON and Python dict format (single quotes)."""
+    s = (s or "").strip()
+    if not s:
         raise RuntimeError("GOOGLE_CLOUD_VISION_CREDENTIALS_JSON is required")
-    json.loads(creds)
+    try:
+        return json.loads(s)
+    except json.JSONDecodeError:
+        try:
+            import ast
+            return ast.literal_eval(s)
+        except (ValueError, SyntaxError) as e:
+            raise RuntimeError(
+                "GOOGLE_CLOUD_VISION_CREDENTIALS_JSON must be valid JSON. "
+                "Use double quotes for keys. Error: " + str(e)
+            ) from e
+
+
+def _require_google_credentials() -> None:
+    """Require GOOGLE_CLOUD_VISION_CREDENTIALS_JSON to be set and valid."""
+    creds = os.environ.get("GOOGLE_CLOUD_VISION_CREDENTIALS_JSON") or ""
+    _parse_credentials_json(creds)
 
 
 def ensure_google_credentials() -> None:
