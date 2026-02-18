@@ -21,10 +21,13 @@ services:
       - key: FLASK_PORT
         value: $PORT  # Render provides this automatically
       
-      # Required: Google Cloud Vision credentials (as JSON string)
-      # Set this in Render dashboard: Paste entire service account JSON as a single-line string
+      # Google Vision: prefer Secret File (avoids JSON truncation/escaping in env var)
+      # Option A: Add Secret File "credentials_vision.json" in dashboard → path is /etc/secrets/credentials_vision.json
+      - key: GOOGLE_APPLICATION_CREDENTIALS
+        value: /etc/secrets/credentials_vision.json  # Use if you add Secret File; else override or use Option B
+      # Option B: Or set minified single-line JSON here (no line breaks)
       - key: GOOGLE_CLOUD_VISION_CREDENTIALS_JSON
-        sync: false  # Set manually in Render dashboard
+        sync: false  # Set manually in dashboard (see docs/deployment/render-google-credentials.md)
       
       # Required: Groq API key for LLM extraction
       # Set this in Render dashboard
@@ -77,6 +80,9 @@ services:
         sync: false
       - key: REDIS_URL
         sync: false
+      # Google Vision: use Secret File (recommended) or GOOGLE_CLOUD_VISION_CREDENTIALS_JSON
+      - key: GOOGLE_APPLICATION_CREDENTIALS
+        value: /etc/secrets/credentials_vision.json
       - key: GOOGLE_CLOUD_VISION_CREDENTIALS_JSON
         sync: false
       - key: GROQ_API_KEY

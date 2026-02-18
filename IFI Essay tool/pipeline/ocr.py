@@ -319,8 +319,7 @@ class GoogleVisionOcrProvider:
     def __init__(self):
         from google.oauth2 import service_account
         from google.cloud import vision
-        creds_json = os.environ.get("GOOGLE_CLOUD_VISION_CREDENTIALS_JSON") or ""
-        creds_dict = _parse_credentials_json(creds_json)
+        creds_dict = _load_credentials_dict()
         creds = service_account.Credentials.from_service_account_info(creds_dict)
         self.client = vision.ImageAnnotatorClient(credentials=creds)
     
@@ -552,14 +551,13 @@ class EasyOcrProvider:
 
 
 def _parse_credentials_json(s: str) -> dict:
-    """Parse GOOGLE_CLOUD_VISION_CREDENTIALS_JSON. Handles JSON and Python dict format (single quotes)."""
+    """Parse credentials JSON string. Handles JSON and Python dict format (single quotes)."""
     s = (s or "").strip()
     if not s:
-        raise RuntimeError("GOOGLE_CLOUD_VISION_CREDENTIALS_JSON is required")
-    # Fix multi-line paste: backslash at end of line + newline breaks parsing (line continuation).
-    # Collapse backslash+newline so "\\n" in PEM stays as backslash-n.
+        raise RuntimeError("Credentials JSON is empty")
+    # Fix multi-line paste: backslash at end of line + newline breaks parsing.
     s = s.replace("\\\r\n", "\\").replace("\\\n", "\\")
-    # Collapse any other stray newlines to spaces (minify) so multi-line JSON parses
+    # Collapse newlines to spaces so multi-line JSON parses
     s = " ".join(s.splitlines())
     try:
         return json.loads(s)
@@ -568,16 +566,35 @@ def _parse_credentials_json(s: str) -> dict:
             import ast
             return ast.literal_eval(s)
         except (ValueError, SyntaxError) as e:
-            raise RuntimeError(
-                "GOOGLE_CLOUD_VISION_CREDENTIALS_JSON must be valid JSON. "
-                "Use double quotes for keys. Error: " + str(e)
-            ) from e
+            raise RuntimeError(f"Invalid JSON in credentials: {e}") from e
+
+
+def _load_credentials_dict() -> dict:
+    """
+    Load Google service account credentials. Prefers file path (Secret File on Render)
+    over env var JSON, since env var can truncate or corrupt large JSON.
+    
+    Uses (in order):
+      1. GOOGLE_APPLICATION_CREDENTIALS - path to JSON file (e.g. Render Secret File)
+      2. GOOGLE_CLOUD_VISION_CREDENTIALS_JSON - raw JSON string in env
+    """
+    path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "").strip()
+    if path and os.path.isfile(path):
+        with open(path, "r") as f:
+            return json.load(f)
+    s = os.environ.get("GOOGLE_CLOUD_VISION_CREDENTIALS_JSON") or ""
+    if not s.strip():
+        raise RuntimeError(
+            "Google Vision credentials required. Set either:\n"
+            "  - GOOGLE_APPLICATION_CREDENTIALS=/path/to/credentials.json (recommended on Render: use Secret File)\n"
+            "  - GOOGLE_CLOUD_VISION_CREDENTIALS_JSON=<minified single-line JSON>"
+        )
+    return _parse_credentials_json(s)
 
 
 def _require_google_credentials() -> None:
-    """Require GOOGLE_CLOUD_VISION_CREDENTIALS_JSON to be set and valid."""
-    creds = os.environ.get("GOOGLE_CLOUD_VISION_CREDENTIALS_JSON") or ""
-    _parse_credentials_json(creds)
+    """Require Google Vision credentials to be configured."""
+    _load_credentials_dict()
 
 
 def ensure_google_credentials() -> None:
