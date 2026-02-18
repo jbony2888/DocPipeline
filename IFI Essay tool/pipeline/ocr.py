@@ -571,22 +571,26 @@ def _parse_credentials_json(s: str) -> dict:
 
 def _load_credentials_dict() -> dict:
     """
-    Load Google service account credentials. Prefers file path (Secret File on Render)
-    over env var JSON, since env var can truncate or corrupt large JSON.
+    Load Google service account credentials.
+    Prefers file path (Secret File on Render) - env var often truncates large JSON.
     
-    Uses (in order):
-      1. GOOGLE_APPLICATION_CREDENTIALS - path to JSON file (e.g. Render Secret File)
-      2. GOOGLE_CLOUD_VISION_CREDENTIALS_JSON - raw JSON string in env
+    When GOOGLE_APPLICATION_CREDENTIALS is set: use file only (never fall back to env var).
+    Otherwise: use GOOGLE_CLOUD_VISION_CREDENTIALS_JSON.
     """
     path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "").strip()
-    if path and os.path.isfile(path):
-        with open(path, "r") as f:
-            return json.load(f)
+    if path:
+        if os.path.isfile(path):
+            with open(path, "r") as f:
+                return json.load(f)
+        raise RuntimeError(
+            f"GOOGLE_APPLICATION_CREDENTIALS points to missing file: {path}\n"
+            "Add Secret File 'credentials_vision.json' in Render dashboard → worker Environment."
+        )
     s = os.environ.get("GOOGLE_CLOUD_VISION_CREDENTIALS_JSON") or ""
     if not s.strip():
         raise RuntimeError(
             "Google Vision credentials required. Set either:\n"
-            "  - GOOGLE_APPLICATION_CREDENTIALS=/path/to/credentials.json (recommended on Render: use Secret File)\n"
+            "  - GOOGLE_APPLICATION_CREDENTIALS=/etc/secrets/credentials_vision.json + add Secret File in Render\n"
             "  - GOOGLE_CLOUD_VISION_CREDENTIALS_JSON=<minified single-line JSON>"
         )
     return _parse_credentials_json(s)
