@@ -556,6 +556,11 @@ def _parse_credentials_json(s: str) -> dict:
     s = (s or "").strip()
     if not s:
         raise RuntimeError("GOOGLE_CLOUD_VISION_CREDENTIALS_JSON is required")
+    # Fix multi-line paste: backslash at end of line + newline breaks parsing (line continuation).
+    # Collapse backslash+newline so "\\n" in PEM stays as backslash-n.
+    s = s.replace("\\\r\n", "\\").replace("\\\n", "\\")
+    # Collapse any other stray newlines to spaces (minify) so multi-line JSON parses
+    s = " ".join(s.splitlines())
     try:
         return json.loads(s)
     except json.JSONDecodeError:

@@ -9,6 +9,7 @@ Usage:
 
 import os
 import sys
+import uuid
 import logging
 from rq import Worker, Queue
 from jobs.redis_queue import get_redis_client
@@ -20,8 +21,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Worker ID (unique identifier for this worker instance)
-WORKER_ID = os.environ.get("WORKER_ID", f"worker-{os.getpid()}")
+# Worker ID: use WORKER_ID env, else RENDER_INSTANCE_ID, else unique per-start (avoids
+# "worker already exists" when Render restarts before old worker unregisters from Redis)
+WORKER_ID = os.environ.get("WORKER_ID") or os.environ.get("RENDER_INSTANCE_ID") or f"worker-{uuid.uuid4().hex[:12]}"
 
 logger.info(f"🚀 RQ Worker {WORKER_ID} started")
 logger.info("📊 Using Redis/RQ for job queue")

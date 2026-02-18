@@ -83,8 +83,6 @@ services:
         sync: false
       - key: APP_URL
         sync: false
-      - key: WORKER_ID
-        value: worker-1
       - key: EMAIL
         sync: false
       - key: GMAIL_PASSWORD
