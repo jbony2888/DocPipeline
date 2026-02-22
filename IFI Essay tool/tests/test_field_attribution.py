@@ -14,7 +14,7 @@ def test_extract_header_fields_from_text_parses_expected_labels():
     assert extracted["grade"] == "8"
 
 
-def test_validate_record_flags_field_attribution_risk():
+def test_validate_record_enforces_reason_code_invariant():
     partial = {
         "submission_id": "sub-attrib",
         "artifact_dir": "artifacts/sub-attrib",
@@ -22,10 +22,11 @@ def test_validate_record_flags_field_attribution_risk():
         "school_name": "School A",
         "grade": 6,
         "word_count": 100,
-        "field_attribution_risk": True,
+        "doc_type": "ifi_typed_form_submission",
     }
-    _, report = validate_record(partial)
-    assert "FIELD_ATTRIBUTION_RISK" in report["issues"]
+    record, report = validate_record(partial)
+    assert record.needs_review == (len(report["review_reason_codes"]) > 0)
+    assert "PENDING_REVIEW" not in report["review_reason_codes"]
 
 
 def test_has_multiple_header_peaks_detects_multi_signal():

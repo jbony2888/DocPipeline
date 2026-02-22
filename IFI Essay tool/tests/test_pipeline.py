@@ -803,17 +803,21 @@ class TestValidation:
             "grade": 5,
             "word_count": 100,
             "ocr_confidence_avg": 0.85,
+            "ocr_confidence_min": 0.85,
+            "ocr_low_conf_page_count": 0,
+            "doc_type": "ifi_typed_form_submission",
+            "format": "native_text",
             "artifact_dir": "user123/test123"
         }
         base.update(overrides)
         return base
 
-    def test_valid_record_gets_pending_review(self):
+    def test_valid_record_auto_approves(self):
         from pipeline.validate import validate_record
         record, report = validate_record(self._make_partial())
 
-        assert record.needs_review is True
-        assert "PENDING_REVIEW" in report["issues"]
+        assert record.needs_review is False
+        assert report["review_reason_codes"] == []
         assert "MISSING_STUDENT_NAME" not in report["issues"]
 
     def test_missing_student_name_flagged(self):
@@ -848,9 +852,17 @@ class TestValidation:
 
     def test_low_confidence_flagged(self):
         from pipeline.validate import validate_record
-        _, report = validate_record(self._make_partial(ocr_confidence_avg=0.3))
+        _, report = validate_record(
+            self._make_partial(
+                doc_type="ifi_official_form_scanned",
+                format="image_only",
+                ocr_confidence_avg=0.3,
+                ocr_confidence_min=0.3,
+                ocr_low_conf_page_count=1,
+            )
+        )
 
-        assert "LOW_CONFIDENCE" in report["issues"]
+        assert "OCR_LOW_CONFIDENCE" in report["issues"]
 
     def test_grade_k_is_valid(self):
         from pipeline.validate import validate_record
@@ -875,7 +887,9 @@ class TestCanApproveRecord:
         can, missing = can_approve_record({
             "student_name": "Jane",
             "school_name": "Roosevelt",
-            "grade": 3
+            "grade": 3,
+            "word_count": 100,
+            "doc_type": "ifi_typed_form_submission",
         })
         assert can is True
         assert missing == []
@@ -885,10 +899,12 @@ class TestCanApproveRecord:
         can, missing = can_approve_record({
             "student_name": None,
             "school_name": None,
-            "grade": None
+            "grade": None,
+            "word_count": 0,
+            "doc_type": "ifi_typed_form_submission",
         })
         assert can is False
-        assert len(missing) == 3
+        assert len(missing) >= 3
 
 
 # ---------------------------------------------------------------------------

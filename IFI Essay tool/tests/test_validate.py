@@ -1,347 +1,131 @@
 """
-Unit tests for validation module.
-Tests required field validation and approval gating.
+Validation tests for policy-driven review reason codes and invariants.
 """
 
-import pytest
-from pipeline.validate import validate_record, can_approve_record
-from pipeline.schema import SubmissionRecord
+from pipeline.validate import validate_record
 
 
-class TestCanApproveRecord:
-    """Tests for can_approve_record() function."""
-    
-    def test_approve_with_all_required_fields(self):
-        """Record with all required fields should be approvable."""
-        record = {
-            "student_name": "John Doe",
-            "school_name": "Lincoln Elementary",
-            "grade": 5
-        }
-        can_approve, missing = can_approve_record(record)
-        assert can_approve is True
-        assert len(missing) == 0
-    
-    def test_approve_with_grade_k(self):
-        """Record with grade "K" should be approvable."""
-        record = {
-            "student_name": "Jane Smith",
-            "school_name": "Roosevelt Elementary",
-            "grade": "K"
-        }
-        can_approve, missing = can_approve_record(record)
-        assert can_approve is True
-        assert len(missing) == 0
-    
-    def test_cannot_approve_missing_student_name(self):
-        """Record missing student_name should not be approvable."""
-        record = {
-            "student_name": None,
-            "school_name": "Lincoln Elementary",
-            "grade": 5
-        }
-        can_approve, missing = can_approve_record(record)
-        assert can_approve is False
-        assert "student_name" in missing
-    
-    def test_cannot_approve_empty_student_name(self):
-        """Record with empty student_name should not be approvable."""
-        record = {
-            "student_name": "",
-            "school_name": "Lincoln Elementary",
-            "grade": 5
-        }
-        can_approve, missing = can_approve_record(record)
-        assert can_approve is False
-        assert "student_name" in missing
-    
-    def test_cannot_approve_whitespace_student_name(self):
-        """Record with whitespace-only student_name should not be approvable."""
-        record = {
-            "student_name": "   ",
-            "school_name": "Lincoln Elementary",
-            "grade": 5
-        }
-        can_approve, missing = can_approve_record(record)
-        assert can_approve is False
-        assert "student_name" in missing
-    
-    def test_cannot_approve_missing_school_name(self):
-        """Record missing school_name should not be approvable."""
-        record = {
-            "student_name": "John Doe",
-            "school_name": None,
-            "grade": 5
-        }
-        can_approve, missing = can_approve_record(record)
-        assert can_approve is False
-        assert "school_name" in missing
-    
-    def test_cannot_approve_empty_school_name(self):
-        """Record with empty school_name should not be approvable."""
-        record = {
-            "student_name": "John Doe",
-            "school_name": "",
-            "grade": 5
-        }
-        can_approve, missing = can_approve_record(record)
-        assert can_approve is False
-        assert "school_name" in missing
-    
-    def test_cannot_approve_missing_grade(self):
-        """Record missing grade should not be approvable."""
-        record = {
-            "student_name": "John Doe",
-            "school_name": "Lincoln Elementary",
-            "grade": None
-        }
-        can_approve, missing = can_approve_record(record)
-        assert can_approve is False
-        assert "grade" in missing
-    
-    def test_cannot_approve_empty_grade(self):
-        """Record with empty grade should not be approvable."""
-        record = {
-            "student_name": "John Doe",
-            "school_name": "Lincoln Elementary",
-            "grade": ""
-        }
-        can_approve, missing = can_approve_record(record)
-        assert can_approve is False
-        assert "grade" in missing
-    
-    def test_cannot_approve_invalid_grade_too_low(self):
-        """Record with grade < 1 should not be approvable."""
-        record = {
-            "student_name": "John Doe",
-            "school_name": "Lincoln Elementary",
-            "grade": 0
-        }
-        can_approve, missing = can_approve_record(record)
-        assert can_approve is False
-        assert "grade" in missing
-    
-    def test_cannot_approve_invalid_grade_too_high(self):
-        """Record with grade > 12 should not be approvable."""
-        record = {
-            "student_name": "John Doe",
-            "school_name": "Lincoln Elementary",
-            "grade": 13
-        }
-        can_approve, missing = can_approve_record(record)
-        assert can_approve is False
-        assert "grade" in missing
-
-    def test_cannot_approve_grade_40_ocr_error(self):
-        """Record with grade 40 (OCR/LLM error) should not be approvable."""
-        record = {
-            "student_name": "John Doe",
-            "school_name": "Lincoln Elementary",
-            "grade": 40
-        }
-        can_approve, missing = can_approve_record(record)
-        assert can_approve is False
-        assert "grade" in missing
-    
-    def test_cannot_approve_multiple_missing_fields(self):
-        """Record missing multiple fields should list all missing fields."""
-        record = {
-            "student_name": None,
-            "school_name": "",
-            "grade": None
-        }
-        can_approve, missing = can_approve_record(record)
-        assert can_approve is False
-        assert "student_name" in missing
-        assert "school_name" in missing
-        assert "grade" in missing
-        assert len(missing) == 3
-    
-    def test_approve_with_valid_grade_string(self):
-        """Record with grade as valid string "5" should be approvable."""
-        record = {
-            "student_name": "John Doe",
-            "school_name": "Lincoln Elementary",
-            "grade": "5"
-        }
-        can_approve, missing = can_approve_record(record)
-        assert can_approve is True
-        assert len(missing) == 0
+def _base_partial(**overrides):
+    base = {
+        "submission_id": "sub_1",
+        "artifact_dir": "artifacts/sub_1",
+        "student_name": "Jane Doe",
+        "school_name": "Lincoln Elementary",
+        "grade": 5,
+        "word_count": 120,
+        "doc_type": "ifi_typed_form_submission",
+        "format": "native_text",
+        "ocr_confidence_avg": 0.99,
+        "ocr_confidence_min": 0.98,
+        "ocr_low_conf_page_count": 0,
+        "extraction_method": "rule_based",
+    }
+    base.update(overrides)
+    return base
 
 
-class TestValidateRecord:
-    """Tests for validate_record() function."""
-    
-    def test_validate_with_all_required_fields(self):
-        """Record with all required fields should flag MISSING_STUDENT_NAME, etc. correctly."""
-        partial = {
-            "submission_id": "test123",
-            "student_name": "John Doe",
-            "school_name": "Lincoln Elementary",
-            "grade": 5,
-            "word_count": 100,
-            "artifact_dir": "artifacts/test123"
-        }
-        record, report = validate_record(partial)
-        
-        # Should still need review (default state)
-        assert record.needs_review is True
-        # But should not have MISSING_* flags
-        assert "MISSING_STUDENT_NAME" not in report["issues"]
-        assert "MISSING_SCHOOL_NAME" not in report["issues"]
-        assert "MISSING_GRADE" not in report["issues"]
-    
-    def test_validate_missing_student_name(self):
-        """Record missing student_name should flag MISSING_STUDENT_NAME."""
-        partial = {
-            "submission_id": "test123",
-            "student_name": None,
-            "school_name": "Lincoln Elementary",
-            "grade": 5,
-            "word_count": 100,
-            "artifact_dir": "artifacts/test123"
-        }
-        record, report = validate_record(partial)
-        
-        assert record.needs_review is True
-        assert "MISSING_STUDENT_NAME" in report["issues"]
-        assert record.review_reason_codes == "MISSING_STUDENT_NAME;PENDING_REVIEW" or "MISSING_STUDENT_NAME" in record.review_reason_codes
-    
-    def test_validate_missing_school_name(self):
-        """Record missing school_name should flag MISSING_SCHOOL_NAME."""
-        partial = {
-            "submission_id": "test123",
-            "student_name": "John Doe",
-            "school_name": None,
-            "grade": 5,
-            "word_count": 100,
-            "artifact_dir": "artifacts/test123"
-        }
-        record, report = validate_record(partial)
-        
-        assert record.needs_review is True
-        assert "MISSING_SCHOOL_NAME" in report["issues"]
-    
-    def test_validate_missing_grade(self):
-        """Record missing grade should flag MISSING_GRADE."""
-        partial = {
-            "submission_id": "test123",
-            "student_name": "John Doe",
-            "school_name": "Lincoln Elementary",
-            "grade": None,
-            "word_count": 100,
-            "artifact_dir": "artifacts/test123"
-        }
-        record, report = validate_record(partial)
-        
-        assert record.needs_review is True
-        assert "MISSING_GRADE" in report["issues"]
-    
-    def test_validate_empty_student_name(self):
-        """Record with empty student_name should flag MISSING_STUDENT_NAME."""
-        partial = {
-            "submission_id": "test123",
-            "student_name": "",
-            "school_name": "Lincoln Elementary",
-            "grade": 5,
-            "word_count": 100,
-            "artifact_dir": "artifacts/test123"
-        }
-        record, report = validate_record(partial)
-        
-        assert record.needs_review is True
-        assert "MISSING_STUDENT_NAME" in report["issues"]
-    
-    def test_validate_whitespace_student_name(self):
-        """Record with whitespace-only student_name should flag MISSING_STUDENT_NAME."""
-        partial = {
-            "submission_id": "test123",
-            "student_name": "   ",
-            "school_name": "Lincoln Elementary",
-            "grade": 5,
-            "word_count": 100,
-            "artifact_dir": "artifacts/test123"
-        }
-        record, report = validate_record(partial)
-        
-        assert record.needs_review is True
-        assert "MISSING_STUDENT_NAME" in report["issues"]
-    
-    def test_validate_multiple_missing_fields(self):
-        """Record missing multiple fields should flag all missing fields."""
-        partial = {
-            "submission_id": "test123",
-            "student_name": None,
-            "school_name": "",
-            "grade": None,
-            "word_count": 100,
-            "artifact_dir": "artifacts/test123"
-        }
-        record, report = validate_record(partial)
-        
-        assert record.needs_review is True
-        assert "MISSING_STUDENT_NAME" in report["issues"]
-        assert "MISSING_SCHOOL_NAME" in report["issues"]
-        assert "MISSING_GRADE" in report["issues"]
-    
-    def test_validate_grade_k(self):
-        """Record with grade "K" should be valid (stored as None in schema)."""
-        partial = {
-            "submission_id": "test123",
-            "student_name": "Jane Smith",
-            "school_name": "Roosevelt Elementary",
-            "grade": "K",
-            "word_count": 100,
-            "artifact_dir": "artifacts/test123"
-        }
-        record, report = validate_record(partial)
-        
-        # Should not flag MISSING_GRADE (K is valid)
-        assert "MISSING_GRADE" not in report["issues"]
-        # Grade "K" is stored as None in schema (since schema expects int)
-        assert record.grade is None
-    
-    def test_validate_invalid_grade_too_low(self):
-        """Record with grade < 1 should flag MISSING_GRADE."""
-        partial = {
-            "submission_id": "test123",
-            "student_name": "John Doe",
-            "school_name": "Lincoln Elementary",
-            "grade": 0,
-            "word_count": 100,
-            "artifact_dir": "artifacts/test123"
-        }
-        record, report = validate_record(partial)
-        
-        assert record.needs_review is True
-        assert "MISSING_GRADE" in report["issues"]
-    
-    def test_validate_out_of_range_grade_stored_as_none(self):
-        """validate_record should store grade=None when given 40 (out of range)."""
-        partial = {
-            "submission_id": "test40",
-            "artifact_dir": "artifacts/test40",
-            "student_name": "John Doe",
-            "school_name": "Lincoln Elementary",
-            "grade": 40,
-            "word_count": 100,
-        }
-        record, report = validate_record(partial)
-        assert record.grade is None
-        assert "MISSING_GRADE" in report["review_reason_codes"]
+def test_typed_form_happy_path_auto_approves():
+    record, report = validate_record(_base_partial())
+    assert record.needs_review is False
+    assert report["review_reason_codes"] == []
+    assert report["auto_approve_eligible"] is True
 
-    def test_validate_invalid_grade_too_high(self):
-        """Record with grade > 12 should flag MISSING_GRADE."""
-        partial = {
-            "submission_id": "test123",
-            "student_name": "John Doe",
-            "school_name": "Lincoln Elementary",
-            "grade": 13,
-            "word_count": 100,
-            "artifact_dir": "artifacts/test123"
-        }
-        record, report = validate_record(partial)
-        
-        assert record.needs_review is True
-        assert "MISSING_GRADE" in report["issues"]
 
+def test_typed_form_missing_field_flags_enum():
+    record, report = validate_record(_base_partial(student_name=None))
+    assert record.needs_review is True
+    assert "MISSING_STUDENT_NAME" in report["review_reason_codes"]
+    assert "PENDING_REVIEW" not in report["review_reason_codes"]
+
+
+def test_official_scanned_missing_grade_does_not_auto_fail():
+    record, report = validate_record(
+        _base_partial(
+            doc_type="ifi_official_form_scanned",
+            format="image_only",
+            grade=None,
+            school_name=None,
+            ocr_confidence_avg=0.85,
+            ocr_confidence_min=0.75,
+        )
+    )
+    assert "MISSING_GRADE" not in report["review_reason_codes"]
+    assert "MISSING_SCHOOL_NAME" not in report["review_reason_codes"]
+    assert record.needs_review is False
+    assert report["auto_approve_eligible"] is True
+
+
+def test_official_scanned_requires_essay():
+    record, report = validate_record(
+        _base_partial(
+            doc_type="ifi_official_form_scanned",
+            format="image_only",
+            word_count=0,
+        )
+    )
+    assert record.needs_review is True
+    assert "EMPTY_ESSAY" in report["review_reason_codes"]
+
+
+def test_ocr_low_confidence_triggers_reason_code():
+    record, report = validate_record(
+        _base_partial(
+            doc_type="ifi_official_form_scanned",
+            format="image_only",
+            ocr_confidence_avg=0.40,
+            ocr_confidence_min=0.30,
+            ocr_low_conf_page_count=1,
+        )
+    )
+    assert record.needs_review is True
+    assert "OCR_LOW_CONFIDENCE" in report["review_reason_codes"]
+
+
+def test_template_short_circuit():
+    record, report = validate_record(
+        _base_partial(
+            doc_type="template",
+            student_name=None,
+            school_name=None,
+            grade=None,
+            word_count=0,
+        )
+    )
+    assert record.needs_review is True
+    assert report["review_reason_codes"] == ["TEMPLATE_ONLY"]
+
+
+def test_invariant_enforced_for_needs_review_and_reason_codes():
+    clean_record, clean_report = validate_record(_base_partial())
+    assert clean_record.needs_review == (len(clean_report["review_reason_codes"]) > 0)
+    assert "PENDING_REVIEW" not in clean_report["review_reason_codes"]
+
+    flagged_record, flagged_report = validate_record(_base_partial(word_count=0))
+    assert flagged_record.needs_review == (len(flagged_report["review_reason_codes"]) > 0)
+    assert flagged_record.needs_review is True
+    assert flagged_report["review_reason_codes"]
+    assert "PENDING_REVIEW" not in flagged_report["review_reason_codes"]
+
+
+def test_validate_typed_form_requires_fields_and_essay():
+    _, report_missing_grade = validate_record(_base_partial(grade=None))
+    assert "MISSING_GRADE" in report_missing_grade["review_reason_codes"]
+
+    _, report_empty = validate_record(_base_partial(word_count=0))
+    assert "EMPTY_ESSAY" in report_empty["review_reason_codes"]
+
+
+def test_container_bulk_scanned_batch_skips_parent_validation():
+    record, report = validate_record(
+        _base_partial(
+            doc_type="bulk_scanned_batch",
+            is_container_parent=True,
+            word_count=0,
+            student_name=None,
+            school_name=None,
+            grade=None,
+        )
+    )
+    assert record.needs_review is False
+    assert report["review_reason_codes"] == []
+    assert report["container_skipped"] is True

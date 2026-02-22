@@ -161,6 +161,14 @@ def process_submission_job(
                         "template_detected": analysis.structure == "template",
                         "template_blocked_low_confidence": analysis.low_confidence_for_template,
                         "doc_class": child_doc_class,
+                        "analysis_structure": (
+                            "single" if analysis.doc_class == DocClass.BULK_SCANNED_BATCH else analysis.structure
+                        ),
+                        "analysis_form_layout": analysis.form_layout,
+                        "analysis_header_signature_score_max": max(
+                            (p.header_signature_score for p in analysis.pages),
+                            default=0.0,
+                        ),
                     },
                     doc_format=analysis.format,
                 )

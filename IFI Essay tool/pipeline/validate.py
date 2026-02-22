@@ -1,14 +1,25 @@
 """
-Validation module: validates extracted data and flags records needing review.
-
-Uses config-driven validation rules (pipeline.validation_config). All doc types
-require essay, grade, school, and student_name. Missing any required field flags
-the record for human review.
+Validation module: computes enum review reasons and auto-approval eligibility.
 """
 
-from pipeline.schema import SubmissionRecord, DocClass
-from pipeline.validation_config import get_validation_rules
+from __future__ import annotations
+
 from typing import Dict, List, Tuple
+
+from pipeline.schema import SubmissionRecord, DocClass
+from pipeline.validation_policy import POLICY_VERSION, ValidationPolicy, get_policy
+
+ALLOWED_REASON_CODES = {
+    "MISSING_STUDENT_NAME",
+    "MISSING_GRADE",
+    "MISSING_SCHOOL_NAME",
+    "EMPTY_ESSAY",
+    "SHORT_ESSAY",
+    "OCR_LOW_CONFIDENCE",
+    "EXTRACTION_FALLBACK_USED",
+    "TEMPLATE_ONLY",
+    "DOC_TYPE_UNKNOWN",
+}
 
 
 def _resolve_doc_class(record: Dict) -> DocClass:
@@ -75,6 +86,58 @@ def _check_grade_valid(grade) -> bool:
     return False
 
 
+def _resolve_doc_type(partial: Dict, report: Dict | None) -> str:
+    raw = (partial.get("doc_type") or "").strip()
+    if not raw:
+        ex_debug = (report or {}).get("extraction_debug") or {}
+        ifi = ex_debug.get("ifi_classification") or {}
+        raw = (ifi.get("doc_type") or "").strip()
+    if not raw and partial.get("template_detected"):
+        return "template"
+    if not raw:
+        return "unknown"
+    low = raw.lower()
+    mapping = {
+        "ifi_typed_form_submission": "ifi_typed_form_submission",
+        "ifi_official_form_scanned": "ifi_official_form_scanned",
+        "ifi_official_form_filled": "ifi_official_form_filled",
+        "essay_with_header_metadata": "essay_with_header_metadata",
+        "standard_freeform_essay": "standard_freeform_essay",
+        "bulk_scanned_batch": "bulk_scanned_batch",
+        "template": "template",
+        "unknown": "unknown",
+        "ifi_official_template_blank": "template",
+        "essay_only": "standard_freeform_essay",
+    }
+    return mapping.get(low, "unknown")
+
+
+def _coerce_reason_codes(value) -> List[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        raw = value
+    elif isinstance(value, str):
+        raw = [s.strip() for s in value.split(";")]
+    else:
+        raw = [str(value).strip()]
+    codes = [s for s in raw if s and s != "PENDING_REVIEW"]
+    return sorted(set(codes))
+
+
+def can_auto_approve(record: Dict, policy: ValidationPolicy) -> bool:
+    codes = set(_coerce_reason_codes(record.get("review_reason_codes")))
+    if codes:
+        return False
+    if policy.review_on_fallback_extraction and record.get("extraction_method") == "fallback":
+        return False
+    if "EMPTY_ESSAY" in codes or "SHORT_ESSAY" in codes:
+        return False
+    if "OCR_LOW_CONFIDENCE" in codes:
+        return False
+    return True
+
+
 def can_approve_record(record: Dict) -> Tuple[bool, List[str]]:
     """
     Check if a record can be approved (has all required fields per validation config).
@@ -91,28 +154,44 @@ def can_approve_record(record: Dict) -> Tuple[bool, List[str]]:
     Returns:
         Tuple of (can_approve: bool, missing_fields: List[str])
     """
-    rules = get_validation_rules(_resolve_doc_class(record))
+    policy = get_policy(record, {})
     missing_fields: List[str] = []
 
-    if rules.require_student_name:
+    required_fields = policy.required_fields
+    if "student_name" in required_fields:
         student_name = record.get("student_name")
-        if not student_name or not str(student_name).strip():
+        if _is_effectively_missing_student_name(student_name):
             missing_fields.append("student_name")
 
-    if rules.require_school:
+    if "school_name" in required_fields:
         school_name = record.get("school_name")
-        if not school_name or not str(school_name).strip():
+        if _is_effectively_missing_school_name(school_name):
             missing_fields.append("school_name")
 
-    if rules.require_grade:
+    if "grade" in required_fields:
         grade = record.get("grade")
         if not _check_grade_valid(grade):
             missing_fields.append("grade")
 
+    word_count = int(record.get("word_count") or 0)
+    if policy.require_essay:
+        if word_count == 0:
+            missing_fields.append("word_count")
+        elif word_count < policy.min_essay_words:
+            missing_fields.append("short_essay")
+
+    conf_avg = record.get("ocr_confidence_avg")
+    if policy.min_ocr_confidence is not None and conf_avg is not None:
+        try:
+            if float(conf_avg) < policy.min_ocr_confidence:
+                missing_fields.append("ocr_low_confidence")
+        except (TypeError, ValueError):
+            missing_fields.append("ocr_low_confidence")
+
     return len(missing_fields) == 0, missing_fields
 
 
-def validate_record(partial: dict) -> tuple[SubmissionRecord, dict]:
+def validate_record(partial: dict, report: dict | None = None) -> tuple[SubmissionRecord, dict]:
     """
     Validates required fields and creates SubmissionRecord.
     ALL records start with needs_review=True by default - they must be manually approved.
@@ -128,33 +207,82 @@ def validate_record(partial: dict) -> tuple[SubmissionRecord, dict]:
     Returns:
         Tuple of (SubmissionRecord, validation_report dict)
     """
-    issues: List[str] = []
-    needs_review = True
+    reason_codes: set[str] = set()
 
-    # Resolve doc_class and get validation rules (config-driven)
+    # Resolve doc_class
     doc_class_raw = partial.get("doc_class")
     doc_class = (
         DocClass(doc_class_raw)
         if isinstance(doc_class_raw, str)
         else (doc_class_raw if isinstance(doc_class_raw, DocClass) else DocClass.SINGLE_TYPED)
     )
-    rules = get_validation_rules(doc_class)
+    doc_type = _resolve_doc_type(partial, report)
+    policy = get_policy({**partial, "doc_type": doc_type}, report or {})
+    is_container_parent = bool(partial.get("is_container_parent"))
 
-    # Check required fields per config - missing any raises a flag for human review.
-    # Treat form-label values (e.g. "Escuela", "Father/Father-Figure Name") as missing so we set the right reason code.
-    if rules.require_student_name:
+    if doc_type == "bulk_scanned_batch" and is_container_parent:
+        reason_codes = set()
+        needs_review = False
+        review_reason_codes_list: List[str] = []
+        review_reason_codes = ""
+        word_count = int(partial.get("word_count") or 0)
+        confidence = partial.get("ocr_confidence_avg")
+        validation_report = {
+            "is_valid": True,
+            "needs_review": False,
+            "issues": [],
+            "review_reason_codes": [],
+            "review_reason_codes_db": "",
+            "validation_policy_version": POLICY_VERSION,
+            "policy_version": POLICY_VERSION,
+            "doc_type": doc_type,
+            "ocr_provider": partial.get("ocr_provider"),
+            "extraction_method": partial.get("extraction_method"),
+            "parse_model": partial.get("parse_model"),
+            "word_count": word_count,
+            "final_text_char_count": int(partial.get("final_text_char_count") or 0),
+            "auto_approve_eligible": True,
+            "auto_approve_blockers": [],
+            "container_skipped": True,
+        }
+        record = SubmissionRecord(
+            submission_id=partial["submission_id"],
+            doc_class=doc_class,
+            student_name=partial.get("student_name"),
+            school_name=partial.get("school_name"),
+            grade=partial.get("grade"),
+            teacher_name=partial.get("teacher_name"),
+            city_or_location=partial.get("city_or_location"),
+            father_figure_name=partial.get("father_figure_name"),
+            phone=partial.get("phone"),
+            email=partial.get("email"),
+            word_count=word_count,
+            ocr_confidence_avg=confidence,
+            needs_review=needs_review,
+            review_reason_codes=review_reason_codes,
+            artifact_dir=partial["artifact_dir"],
+        )
+        assert record.needs_review == (len(review_reason_codes_list) > 0)
+        return record, validation_report
+
+    # Template short-circuit
+    if doc_type == "template":
+        reason_codes.add("TEMPLATE_ONLY")
+    else:
+        if doc_type == "unknown":
+            reason_codes.add("DOC_TYPE_UNKNOWN")
+
+    if "TEMPLATE_ONLY" not in reason_codes and "student_name" in policy.required_fields:
         student_name = partial.get("student_name")
         if _is_effectively_missing_student_name(student_name):
-            issues.append("MISSING_STUDENT_NAME")
-            needs_review = True
+            reason_codes.add("MISSING_STUDENT_NAME")
 
-    if rules.require_school:
+    if "TEMPLATE_ONLY" not in reason_codes and "school_name" in policy.required_fields:
         school_name = partial.get("school_name")
         if _is_effectively_missing_school_name(school_name):
-            issues.append("MISSING_SCHOOL_NAME")
-            needs_review = True
+            reason_codes.add("MISSING_SCHOOL_NAME")
 
-    if rules.require_grade:
+    if "TEMPLATE_ONLY" not in reason_codes and "grade" in policy.required_fields:
         grade = partial.get("grade")
         grade_normalized = grade
         if isinstance(grade, str) and grade.strip().upper() in ["K", "KINDER", "KINDERGARTEN"]:
@@ -164,65 +292,69 @@ def validate_record(partial: dict) -> tuple[SubmissionRecord, dict]:
             if isinstance(grade, str) and grade.strip().upper() in ["K", "KINDER", "KINDERGARTEN"]:
                 pass  # K is valid
             else:
-                issues.append("MISSING_GRADE")
-                needs_review = True
+                reason_codes.add("MISSING_GRADE")
         elif isinstance(grade, str) and grade.strip().upper() not in ["K", "KINDER", "KINDERGARTEN"]:
             try:
                 grade_int = int(grade.strip())
                 if not (1 <= grade_int <= 12):
-                    issues.append("MISSING_GRADE")
-                    needs_review = True
+                    reason_codes.add("MISSING_GRADE")
             except (ValueError, AttributeError):
-                issues.append("MISSING_GRADE")
-                needs_review = True
+                reason_codes.add("MISSING_GRADE")
         elif isinstance(grade, int) and not (1 <= grade <= 12):
-            issues.append("MISSING_GRADE")
-            needs_review = True
+            reason_codes.add("MISSING_GRADE")
 
-    # Template flags
-    if partial.get("template_detected"):
-        issues.append("TEMPLATE_ONLY")
-        needs_review = True
-    elif partial.get("template_blocked_low_confidence"):
-        issues.append("OCR_LOW_CONFIDENCE")
-        needs_review = True
-
-    # Guardrail: fields detected only outside chunk start page can indicate cross-submission leakage.
-    if partial.get("field_attribution_risk"):
-        issues.append("FIELD_ATTRIBUTION_RISK")
-        needs_review = True
-
-    # Check essay content per config (format-aware rules)
-    word_count = partial.get("word_count", 0)
+    word_count = int(partial.get("word_count") or 0)
     doc_format = partial.get("format")
     ocr_low_conf_pages = partial.get("ocr_low_conf_page_count") or 0
     ocr_min = partial.get("ocr_confidence_min")
     confidence = partial.get("ocr_confidence_avg")
+    extraction_method = (
+        partial.get("extraction_method")
+        or ((report or {}).get("extraction_debug") or {}).get("extraction_method")
+    )
 
-    if rules.require_essay:
-        if word_count == 0:
-            if doc_format in ("image_only", "hybrid"):
-                if (ocr_low_conf_pages and ocr_low_conf_pages > 0) or (ocr_min is not None and ocr_min < 0.5):
-                    issues.append("OCR_LOW_CONFIDENCE")
-                else:
-                    issues.append("EMPTY_ESSAY")
-            else:
-                issues.append("EMPTY_ESSAY")
-            needs_review = True
-        elif word_count < 50:
-            issues.append("SHORT_ESSAY")
-            needs_review = True
+    if "TEMPLATE_ONLY" not in reason_codes:
+        if policy.require_essay:
+            if word_count == 0:
+                reason_codes.add("EMPTY_ESSAY")
+            elif 0 < word_count < policy.min_essay_words:
+                reason_codes.add("SHORT_ESSAY")
 
-    # Check OCR confidence if available (format aware)
-    if confidence is not None and confidence < 0.5:
-        issues.append("LOW_CONFIDENCE")
-        needs_review = True
-    
-    # Build review reason codes: explicit reason for flag (e.g. MISSING_GRADE, MISSING_SCHOOL_NAME).
-    # This value must be persisted to the DB so the UI shows the specific reason, not inferred.
-    if not issues:
-        issues.append("PENDING_REVIEW")
-    review_reason_codes = ";".join(issues)
+        scanned_like = doc_format in ("image_only", "hybrid")
+        if policy.min_ocr_confidence is not None and scanned_like:
+            ocr_summary = (report or {}).get("ocr_summary") or {}
+            conf_min = ocr_summary.get("confidence_min")
+            if conf_min is None:
+                conf_min = ocr_min
+            if (ocr_low_conf_pages and ocr_low_conf_pages > 0) or (
+                conf_min is not None and float(conf_min) < policy.min_ocr_confidence
+            ):
+                reason_codes.add("OCR_LOW_CONFIDENCE")
+            elif confidence is not None and float(confidence) < policy.min_ocr_confidence:
+                reason_codes.add("OCR_LOW_CONFIDENCE")
+
+        if extraction_method == "fallback" and policy.review_on_fallback_extraction:
+            reason_codes.add("EXTRACTION_FALLBACK_USED")
+
+    # Reason codes must be enum strings only.
+    reason_codes = {c for c in reason_codes if c in ALLOWED_REASON_CODES and c != "PENDING_REVIEW"}
+    needs_review = len(reason_codes) > 0
+    assert needs_review == (len(reason_codes) > 0), "Validation invariant violation"
+    if needs_review and not reason_codes:
+        raise ValueError("needs_review=True requires at least one reason code")
+    if "PENDING_REVIEW" in reason_codes:
+        raise ValueError("PENDING_REVIEW is forbidden")
+
+    review_reason_codes_list = sorted(reason_codes)
+    review_reason_codes = ";".join(review_reason_codes_list)
+    can_auto = can_auto_approve(
+        {
+            **partial,
+            "review_reason_codes": review_reason_codes_list,
+            "extraction_method": extraction_method,
+        },
+        policy,
+    )
     
     # Create SubmissionRecord
     # Preserve "K" (Kindergarten) as string "K" so it displays; reject out-of-range numeric grades
@@ -259,8 +391,26 @@ def validate_record(partial: dict) -> tuple[SubmissionRecord, dict]:
     validation_report = {
         "is_valid": not needs_review,
         "needs_review": needs_review,
-        "issues": issues,
-        "review_reason_codes": review_reason_codes
+        "issues": review_reason_codes_list,
+        "review_reason_codes": review_reason_codes_list,
+        "review_reason_codes_db": review_reason_codes,
+        "validation_policy_version": POLICY_VERSION,
+        "policy_version": POLICY_VERSION,
+        "doc_type": doc_type,
+        "ocr_provider": partial.get("ocr_provider"),
+        "extraction_method": extraction_method,
+        "parse_model": (
+            partial.get("parse_model")
+            or ((report or {}).get("extraction_debug") or {}).get("model")
+        ),
+        "word_count": word_count,
+        "final_text_char_count": int(partial.get("final_text_char_count") or 0),
+        "auto_approve_eligible": can_auto,
+        "auto_approve_blockers": review_reason_codes_list,
     }
+
+    assert validation_report["needs_review"] == (len(validation_report["review_reason_codes"]) > 0), (
+        "Post-validation invariant violation"
+    )
     
     return record, validation_report

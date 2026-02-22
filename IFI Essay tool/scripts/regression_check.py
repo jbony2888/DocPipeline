@@ -35,6 +35,19 @@ from pipeline.document_analysis import analyze_document, ChunkRange
 from pipeline.runner import process_submission
 from pipeline.ocr import ocr_pdf_pages, extract_pdf_text_layer
 from pipeline.extract import looks_like_essay_fragment
+from pipeline.doc_type_routing import detect_pdf_has_acroform_fields, route_doc_type
+
+ALLOWED_REASON_CODES = {
+    "MISSING_STUDENT_NAME",
+    "MISSING_GRADE",
+    "MISSING_SCHOOL_NAME",
+    "EMPTY_ESSAY",
+    "SHORT_ESSAY",
+    "OCR_LOW_CONFIDENCE",
+    "EXTRACTION_FALLBACK_USED",
+    "TEMPLATE_ONLY",
+    "DOC_TYPE_UNKNOWN",
+}
 
 
 def generate_hybrid_fixture(tmpdir: Path) -> Path:
@@ -197,6 +210,18 @@ def aggregate_parent_status_from_children(chunk_diagnostics: List[dict]) -> tupl
     return needs_review, reason_codes
 
 
+def _normalize_reason_codes(value) -> List[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        parts = [p.strip() for p in value.split(";")]
+    elif isinstance(value, list):
+        parts = [str(p).strip() for p in value]
+    else:
+        parts = [str(value).strip()]
+    return [p for p in parts if p]
+
+
 def compute_doc_reason_codes(
     *,
     extracted: Dict[str, str | None],
@@ -216,52 +241,11 @@ def compute_doc_reason_codes(
         reason_codes.add("TEMPLATE_ONLY")
         if template_blocked_low_conf:
             reason_codes.add("OCR_LOW_CONFIDENCE")
-        # Still flag missing metadata (name, school, grade) at minimum
-        if not extracted.get("student_name"):
-            reason_codes.add("MISSING_STUDENT_NAME")
-            evidence["student_name"] = {
-                "source": "final_text_ocr_aggregate",
-                "patterns": ["student name", "nombre del estudiante"],
-                "match": None,
-                "snippet": _clip_snippet(final_text),
-                "doc_id": submission_id,
-                "submission_id": submission_id,
-            }
-        if not extracted.get("grade"):
-            reason_codes.add("MISSING_GRADE")
-            evidence["grade"] = {
-                "source": "final_text_ocr_aggregate",
-                "patterns": GRADE_PATTERNS,
-                "match": None,
-                "snippet": _clip_snippet(final_text),
-                "doc_id": submission_id,
-                "submission_id": submission_id,
-            }
-        if not extracted.get("school_name"):
-            reason_codes.add("MISSING_SCHOOL_NAME")
-            evidence["school_name"] = {
-                "source": "final_text_ocr_aggregate",
-                "patterns": SCHOOL_PATTERNS,
-                "match": None,
-                "snippet": _clip_snippet(final_text),
-                "doc_id": submission_id,
-                "submission_id": submission_id,
-            }
         return reason_codes, evidence
 
     if template_blocked_low_conf:
         reason_codes.add("OCR_LOW_CONFIDENCE")
 
-    if not extracted.get("student_name"):
-        reason_codes.add("MISSING_STUDENT_NAME")
-        evidence["student_name"] = {
-            "source": "final_text_ocr_aggregate",
-            "patterns": ["student name", "nombre del estudiante"],
-            "match": None,
-            "snippet": _clip_snippet(final_text),
-            "doc_id": submission_id,
-            "submission_id": submission_id,
-        }
     if not extracted.get("grade"):
         reason_codes.add("MISSING_GRADE")
         evidence["grade"] = {
@@ -297,6 +281,9 @@ def run_chunk_pipeline(
     chunk_page_end: int | None = None,
     template_blocked_low_conf: bool = False,
     doc_class=None,
+    analysis_structure: str | None = None,
+    analysis_form_layout: str | None = None,
+    analysis_header_signature_score_max: float | None = None,
 ):
     """Process a single chunk through the pipeline runner using selected OCR provider."""
     submission_id = build_chunk_submission_id(parent_id, chunk_idx, original_filename)
@@ -311,6 +298,12 @@ def run_chunk_pipeline(
     }
     if doc_class is not None:
         meta["doc_class"] = doc_class
+    if analysis_structure is not None:
+        meta["analysis_structure"] = analysis_structure
+    if analysis_form_layout is not None:
+        meta["analysis_form_layout"] = analysis_form_layout
+    if analysis_header_signature_score_max is not None:
+        meta["analysis_header_signature_score_max"] = analysis_header_signature_score_max
     record, report = process_submission(
         image_path=str(chunk_path),
         submission_id=submission_id,
@@ -368,6 +361,8 @@ def validate_typed_form_missing_field_expectations(
     if not all(re.match(r"tc0[1-8]_.*\.pdf", n) for n in names):
         return failures
 
+    reviewed = 0
+    auto = 0
     for pdf_path in pdf_paths:
         submission_id = compute_submission_id(pdf_path)
         summary_path = docs_dir / submission_id / "doc_summary.json"
@@ -382,6 +377,15 @@ def validate_typed_form_missing_field_expectations(
         chunk_count = doc_summary.get("chunk_count", 0)
         needs_review = doc_summary.get("needs_review", False)
         reason_codes = doc_summary.get("reason_codes") or []
+        doc_type = doc_summary.get("doc_type")
+        if doc_type != "ifi_typed_form_submission":
+            failures.append(
+                f"Typed-form case must route to ifi_typed_form_submission: {filename} got {doc_type}."
+            )
+        if needs_review:
+            reviewed += 1
+        else:
+            auto += 1
 
         if chunk_count < 1:
             failures.append(
@@ -397,6 +401,11 @@ def validate_typed_form_missing_field_expectations(
                 failures.append(
                     f"Missing-field case must have reason code {expected_code}: {filename} has reason_codes={reason_codes}."
                 )
+
+    if auto != 5 or reviewed != 3:
+        failures.append(
+            f"Typed-form expectation mismatch: expected auto_approved_count=5 and docs_reviewed_count=3, got {auto} and {reviewed}."
+        )
 
     return failures
 
@@ -459,6 +468,9 @@ def run_on_pdfs(
         "chunk_scoped_fields_from_start_page": 0,
         "chunk_scoped_field_rate": 0,
         "estimated_cost_proxy": 0,
+        "review_rate_by_doc_type": {},
+        "doc_type_distribution": {},
+        "skipped_container_docs": 0,
     }
     failures: List[str] = []
 
@@ -587,9 +599,20 @@ def run_on_pdfs(
                 chunk_page_end=to_page,
                 template_blocked_low_conf=analysis.low_confidence_for_template,
                 doc_class=analysis.doc_class,
+                analysis_structure=(
+                    "single"
+                    if (analysis.doc_class.value if hasattr(analysis.doc_class, "value") else str(analysis.doc_class))
+                    == "BULK_SCANNED_BATCH"
+                    else analysis.structure
+                ),
+                analysis_form_layout=analysis.form_layout,
+                analysis_header_signature_score_max=max(
+                    (p.header_signature_score for p in analysis.pages), default=0.0
+                ),
             )
             chunk_count += 1
-            chunk_codes = [c for c in rec.review_reason_codes.split(";") if c]
+            chunk_codes = _normalize_reason_codes(rec.review_reason_codes)
+            validation_stage = rep.get("stages", {}).get("validation", {})
             rep_field_attr = rep.get("field_attribution", {})
             rep_source_pages = rep_field_attr.get("field_source_pages", {})
             rep_extracted = rep.get("extracted_fields", {})
@@ -605,12 +628,17 @@ def run_on_pdfs(
                     "chunk_page_end": to_page,
                     "chunk_submission_id": rec.submission_id,
                     "doc_class": rec.doc_class.value if hasattr(rec.doc_class, "value") else str(rec.doc_class),
+                    "doc_type": validation_stage.get("doc_type", "UNKNOWN"),
                     "chunk_reason_codes": chunk_codes,
                     "chunk_needs_review": rec.needs_review,
                     "extracted_fields": rep_extracted,
                     "field_source_pages": rep_source_pages,
                 }
             )
+            if rec.needs_review and not chunk_codes:
+                failures.append(
+                    f"Invariant violated: chunk needs_review=True with empty reason codes ({pdf_path.name} chunk {idx})."
+                )
             if debug_doc and debug_doc.lower() in pdf_path.name.lower():
                 print(
                     f"  chunk[{idx}] start_page={from_page} "
@@ -625,6 +653,12 @@ def run_on_pdfs(
         doc.close()
 
         extracted = extract_doc_fields_from_final_text(final_text)
+        doc_type = route_doc_type(
+            analysis,
+            final_text,
+            has_acroform=detect_pdf_has_acroform_fields(str(pdf_path)),
+        )
+        summary["doc_type_distribution"][doc_type] = summary["doc_type_distribution"].get(doc_type, 0) + 1
         # Merge pipeline chunk results so missing-metadata flags use pipeline findings
         for diag in chunk_diagnostics:
             ef = diag.get("extracted_fields") or {}
@@ -648,11 +682,16 @@ def run_on_pdfs(
         )
         # Parent status must derive from children (logical OR) to prevent silent success masking child failures.
         doc_needs_review, doc_reason_codes = aggregate_parent_status_from_children(chunk_diagnostics)
+        is_container_parent = doc_type == "bulk_scanned_batch"
+        if doc_needs_review and not doc_reason_codes:
+            failures.append(f"Invariant violated: needs_review=True with empty reason codes ({pdf_path.name})")
 
         for code in doc_reason_codes:
             summary["reason_code_counts"][code] = summary["reason_code_counts"].get(code, 0) + 1
-            if "=" in code:
+            if "=" in code or code not in ALLOWED_REASON_CODES:
                 failures.append(f"Reason code not enum: {code} ({pdf_path.name})")
+            if code == "PENDING_REVIEW":
+                failures.append(f"Forbidden reason code PENDING_REVIEW found ({pdf_path.name})")
         if "OCR_LOW_CONFIDENCE" in doc_reason_codes:
             summary["ocr_low_confidence_docs"] += 1
         if "EMPTY_ESSAY" in doc_reason_codes:
@@ -660,10 +699,20 @@ def run_on_pdfs(
 
         summary["chunks_total"] += chunk_count
         summary["total_ocr_pages"] += doc_ocr_pages if doc_ocr_pages > 0 else expected_ocr_pages
-        if doc_needs_review:
+        if is_container_parent:
+            summary["skipped_container_docs"] += 1
+        elif doc_needs_review:
             summary["docs_reviewed_count"] += 1
         else:
             summary["auto_approved_count"] += 1
+
+        if not is_container_parent:
+            type_bucket = summary["review_rate_by_doc_type"].setdefault(
+                doc_type, {"total": 0, "needs_review": 0, "review_rate": 0}
+            )
+            type_bucket["total"] += 1
+            if doc_needs_review:
+                type_bucket["needs_review"] += 1
 
         # doc summary
         # Special assertion for Valeria-Pantoja to ensure multi detection with full OCR
@@ -681,6 +730,7 @@ def run_on_pdfs(
             "chunk_count": chunk_count,
             "needs_review": doc_needs_review,
             "reason_codes": sorted(list(doc_reason_codes)),
+            "doc_type": doc_type,
             "extracted": extracted,
             "missing_field_evidence": missing_field_evidence,
             "chunk_diagnostics": chunk_diagnostics,
@@ -692,10 +742,15 @@ def run_on_pdfs(
             json.dump(doc_summary, f, indent=2)
 
     # Rates and derived metrics
+    effective_docs = summary["total_docs"] - summary.get("skipped_container_docs", 0)
     if summary["total_docs"] > 0:
         summary["avg_pages_per_doc"] = summary["total_ocr_pages"] / summary["total_docs"]
-        summary["needs_review_rate"] = summary["docs_reviewed_count"] / summary["total_docs"]
-        summary["auto_approve_rate"] = summary["auto_approved_count"] / summary["total_docs"]
+        if effective_docs > 0:
+            summary["needs_review_rate"] = summary["docs_reviewed_count"] / effective_docs
+            summary["auto_approve_rate"] = summary["auto_approved_count"] / effective_docs
+        else:
+            summary["needs_review_rate"] = 0
+            summary["auto_approve_rate"] = 0
         summary["ocr_low_confidence_rate"] = summary["ocr_low_confidence_docs"] / summary["total_docs"]
         summary["docs_with_any_text_rate"] = summary["docs_with_any_text_count"] / summary["total_docs"]
         summary["docs_with_grade_found_rate"] = summary["docs_with_grade_found_count"] / summary["total_docs"]
@@ -707,12 +762,17 @@ def run_on_pdfs(
                 summary["chunk_scoped_fields_from_start_page"] / summary["chunk_scoped_fields_total"]
             )
     summary["estimated_cost_proxy"] = summary["total_ocr_pages"]
+    for doc_type, bucket in summary["review_rate_by_doc_type"].items():
+        total = bucket.get("total", 0)
+        bucket["review_rate"] = (bucket.get("needs_review", 0) / total) if total else 0
 
     for code, count in summary["reason_code_counts"].items():
         if count > summary["total_docs"]:
             failures.append(
                 f"Doc-level reason count exceeds total_docs for {code}: count={count} total_docs={summary['total_docs']}"
             )
+        if code == "PENDING_REVIEW":
+            failures.append("Forbidden reason code PENDING_REVIEW present in reason_code_counts.")
 
     return summary, failures
 
@@ -902,13 +962,18 @@ def main() -> int:
             False,
             args.ocr_provider,
             doc_class=multi_analysis.doc_class,
+            analysis_structure=multi_analysis.structure,
+            analysis_form_layout=multi_analysis.form_layout,
+            analysis_header_signature_score_max=max(
+                (p.header_signature_score for p in multi_analysis.pages), default=0.0
+            ),
         )
         summary["chunks_total"] += 1
         if "EMPTY_ESSAY" in rec.review_reason_codes:
             summary["false_empty_essay_count"] += 1
-        for code in rec.review_reason_codes.split(";"):
+        for code in _normalize_reason_codes(rec.review_reason_codes):
             summary["reason_code_counts"][code] = summary["reason_code_counts"].get(code, 0) + 1
-            if "=" in code:
+            if "=" in code or code not in ALLOWED_REASON_CODES:
                 failures.append(f"Reason code not enum: {code}")
 
     # TEST 2: Template-only
@@ -927,12 +992,17 @@ def main() -> int:
         template_analysis.structure == "template",
         args.ocr_provider,
         doc_class=template_analysis.doc_class,
+        analysis_structure=template_analysis.structure,
+        analysis_form_layout=template_analysis.form_layout,
+        analysis_header_signature_score_max=max(
+            (p.header_signature_score for p in template_analysis.pages), default=0.0
+        ),
     )
     if "TEMPLATE_ONLY" not in rec.review_reason_codes:
         failures.append("Template record missing TEMPLATE_ONLY code.")
-    for code in rec.review_reason_codes.split(";"):
+    for code in _normalize_reason_codes(rec.review_reason_codes):
         summary["reason_code_counts"][code] = summary["reason_code_counts"].get(code, 0) + 1
-        if "=" in code:
+        if "=" in code or code not in ALLOWED_REASON_CODES:
             failures.append(f"Reason code not enum: {code}")
     if template_analysis.low_confidence_for_template:
         summary["template_blocked_low_conf_count"] += 1
@@ -951,15 +1021,20 @@ def main() -> int:
         False,
         args.ocr_provider,
         doc_class=scanned_analysis.doc_class,
+        analysis_structure=scanned_analysis.structure,
+        analysis_form_layout=scanned_analysis.form_layout,
+        analysis_header_signature_score_max=max(
+            (p.header_signature_score for p in scanned_analysis.pages), default=0.0
+        ),
     )
     ocr_summary = report.get("ocr_summary", {})
     if ocr_summary.get("confidence_min") is None or ocr_summary.get("confidence_p10") is None:
         failures.append("OCR confidence stats missing for scanned doc.")
     if "OCR_LOW_CONFIDENCE" in rec.review_reason_codes:
         summary["ocr_low_confidence_docs"] += 1
-    for code in rec.review_reason_codes.split(";"):
+    for code in _normalize_reason_codes(rec.review_reason_codes):
         summary["reason_code_counts"][code] = summary["reason_code_counts"].get(code, 0) + 1
-        if "=" in code:
+        if "=" in code or code not in ALLOWED_REASON_CODES:
             failures.append(f"Reason code not enum: {code}")
 
     # TEST 4: Hybrid synthetic
@@ -976,12 +1051,17 @@ def main() -> int:
         False,
         args.ocr_provider,
         doc_class=hybrid_analysis.doc_class,
+        analysis_structure=hybrid_analysis.structure,
+        analysis_form_layout=hybrid_analysis.form_layout,
+        analysis_header_signature_score_max=max(
+            (p.header_signature_score for p in hybrid_analysis.pages), default=0.0
+        ),
     )
     if rec.word_count == 0:
         failures.append("Hybrid chunk produced EMPTY_ESSAY.")
-    for code in rec.review_reason_codes.split(";"):
+    for code in _normalize_reason_codes(rec.review_reason_codes):
         summary["reason_code_counts"][code] = summary["reason_code_counts"].get(code, 0) + 1
-        if "=" in code:
+        if "=" in code or code not in ALLOWED_REASON_CODES:
             failures.append(f"Reason code not enum: {code}")
 
     # TEST 5: Template blocked by low OCR confidence (forced low-conf provider)
@@ -1008,15 +1088,20 @@ def main() -> int:
             "stub",
             template_blocked_low_conf=low_conf_analysis.low_confidence_for_template,
             doc_class=low_conf_analysis.doc_class,
+            analysis_structure=low_conf_analysis.structure,
+            analysis_form_layout=low_conf_analysis.form_layout,
+            analysis_header_signature_score_max=max(
+                (p.header_signature_score for p in low_conf_analysis.pages), default=0.0
+            ),
         )
         if "OCR_LOW_CONFIDENCE" not in rec.review_reason_codes:
             failures.append("Low-confidence template missing OCR_LOW_CONFIDENCE code.")
         else:
             summary["ocr_low_confidence_docs"] += 1
             summary["template_blocked_low_conf_count"] += 1
-        for code in rec.review_reason_codes.split(";"):
+        for code in _normalize_reason_codes(rec.review_reason_codes):
             summary["reason_code_counts"][code] = summary["reason_code_counts"].get(code, 0) + 1
-            if "=" in code:
+            if "=" in code or code not in ALLOWED_REASON_CODES:
                 failures.append(f"Reason code not enum: {code}")
     finally:
         ocr_module.get_ocr_provider = original_get_provider

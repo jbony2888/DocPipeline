@@ -14,9 +14,32 @@ from pipeline.segment import split_contact_vs_essay
 from pipeline.extract import extract_fields_rules, compute_essay_metrics
 from pipeline.validate import validate_record, _is_effectively_missing_student_name, _is_effectively_missing_school_name
 from pipeline.normalize import normalize_grade, normalize_school_name, sanitize_grade
+from pipeline.doc_type_routing import detect_pdf_has_acroform_fields, route_doc_type
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_typed_form_acroform_fields(form_field_values: dict | None) -> dict:
+    """
+    Extract student/school/grade from AcroForm fields only.
+    """
+    values = form_field_values or {}
+    out = {"student_name": None, "school_name": None, "grade": None}
+    for key, raw in values.items():
+        if raw is None:
+            continue
+        value = str(raw).strip()
+        if not value:
+            continue
+        k = str(key).strip().lower()
+        if ("student" in k or "estudiante" in k) and "dad" not in k and "father" not in k:
+            out["student_name"] = value
+        elif "school" in k or "escuela" in k:
+            out["school_name"] = value
+        elif k in ("grade", "grado") or "grade" in k or "grado" in k:
+            out["grade"] = value
+    return out
 
 
 def _extract_header_fields_from_text(text: str) -> dict:
@@ -194,6 +217,25 @@ def process_submission(
         }
 
         ifi_meta = contact_fields.get("_ifi_metadata", {})
+        analysis_for_routing = {
+            "format": doc_format,
+            "structure": chunk_meta.get("analysis_structure"),
+            "form_layout": chunk_meta.get("analysis_form_layout"),
+            "header_signature_score": chunk_meta.get("analysis_header_signature_score_max"),
+        }
+        has_acroform = bool(str(image_path).lower().endswith(".pdf")) and detect_pdf_has_acroform_fields(str(image_path))
+        routed_doc_type = route_doc_type(
+            analysis_for_routing,
+            ocr_result.text,
+            has_acroform=has_acroform,
+        )
+        if routed_doc_type == "ifi_typed_form_submission" and has_acroform:
+            acroform_fields = _extract_typed_form_acroform_fields(form_field_values)
+            # Typed forms must source metadata from form fields only.
+            contact_fields["student_name"] = acroform_fields.get("student_name")
+            contact_fields["school_name"] = acroform_fields.get("school_name")
+            contact_fields["grade"] = acroform_fields.get("grade")
+
         is_typed_form = ifi_meta.get("extraction_method") == "typed_form_rule_based"
         # 0-based: end=1, start=0 means 2 pages; end-start>=1 = multi-page
         chunk_start = chunk_meta.get("chunk_page_start")
@@ -203,7 +245,7 @@ def process_submission(
 
         # For multi-page typed forms (e.g. 26-IFI: page 1 = essay details, page 2 = contest),
         # re-run header extraction on page-1 text only so grade/name/school come from essay page.
-        if multi_page_typed:
+        if multi_page_typed and not (routed_doc_type == "ifi_typed_form_submission" and has_acroform):
             try:
                 per_page_stats, _ = extract_pdf_text_layer(
                     image_path, pages=None, mode="full", include_text=True
@@ -359,7 +401,11 @@ def process_submission(
         
         essay_metrics = compute_essay_metrics(final_essay_text)
         essay_metrics["essay_source"] = essay_source  # Track which source was used for debugging
-        
+        # Canonical validation text is the full OCR/text-layer aggregation.
+        canonical_validation_text = ocr_result.text or final_essay_text or ""
+        canonical_validation_word_count = compute_essay_metrics(canonical_validation_text)["word_count"]
+        canonical_validation_char_count = len(canonical_validation_text)
+
         structured_data = {
             **contact_fields,
             **essay_metrics
@@ -378,6 +424,7 @@ def process_submission(
             "word_count": essay_metrics["word_count"]
         }
         processing_report["extraction_debug"] = extraction_debug  # For review: doc_class, extraction method, normalization
+        processing_report["doc_type"] = routed_doc_type
         processing_report["normalization"] = {
             "grade_raw": grade_raw,
             "grade_normalized": grade_norm,
@@ -406,11 +453,13 @@ def process_submission(
             **contact_fields,
             "grade": grade_for_record,
             "school_name": school_for_record,
-            "word_count": essay_metrics["word_count"],
+            "word_count": canonical_validation_word_count,
+            "final_text_char_count": canonical_validation_char_count,
             "ocr_confidence_avg": ocr_result.confidence_avg,
             "ocr_confidence_min": ocr_result.confidence_min,
             "ocr_confidence_p10": ocr_result.confidence_p10,
             "ocr_low_conf_page_count": ocr_result.low_conf_page_count,
+            "ocr_provider": ocr_provider_name,
             "format": doc_format,
             "parent_submission_id": chunk_meta.get("parent_submission_id"),
             "chunk_index": chunk_meta.get("chunk_index"),
@@ -421,9 +470,19 @@ def process_submission(
             "template_blocked_low_confidence": chunk_meta.get("template_blocked_low_confidence", False),
             "field_attribution_risk": bool(field_attribution["attribution_risk_fields"]),
             "doc_class": chunk_meta.get("doc_class"),
+            "doc_type": routed_doc_type,
+            "is_container_parent": bool(chunk_meta.get("is_container_parent", False)),
+            "extraction_method": ifi_metadata.get("extraction_method"),
+            "parse_model": ifi_metadata.get("model"),
         }
-        
-        record, validation_report = validate_record(partial_record)
+
+        record, validation_report = validate_record(
+            partial_record,
+            {
+                "extraction_debug": extraction_debug,
+                "ocr_summary": processing_report.get("ocr_summary"),
+            },
+        )
         
         # Write validation artifacts
         with open(artifact_path / "validation.json", "w", encoding="utf-8") as f:

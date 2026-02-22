@@ -64,7 +64,7 @@ python -c "import json; print(json.dumps(json.load(open('your-credentials.json')
 
 - **Key**: `GROQ_API_KEY`
 - **Value**: Your Groq API key (starts with `gsk_`)
-  - Example: `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`
+  - Example: `gsk_YOUR_GROQ_API_KEY`
   - Click "Save Changes"
 
 ---

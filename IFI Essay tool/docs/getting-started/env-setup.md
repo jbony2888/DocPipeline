@@ -85,7 +85,7 @@ export GOOGLE_APPLICATION_CREDENTIALS='/path/to/credentials.json'
 
 **Example:**
 ```bash
-export GROQ_API_KEY='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'
+export GROQ_API_KEY='gsk_YOUR_GROQ_API_KEY'
 ```
 
 ---
