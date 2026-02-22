@@ -76,7 +76,7 @@ class TestApprovalGating:
             grade=5,
             word_count=100,
             needs_review=True,
-            review_reason_codes="PENDING_REVIEW",
+            review_reason_codes="MISSING_GRADE",
             artifact_dir="artifacts/test456"
         )
         

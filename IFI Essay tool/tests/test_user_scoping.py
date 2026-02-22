@@ -50,7 +50,7 @@ class TestUserScoping:
             grade=5,
             word_count=100,
             needs_review=True,
-            review_reason_codes="PENDING_REVIEW",
+            review_reason_codes="MISSING_GRADE",
             artifact_dir="artifacts/test001"
         )
         
@@ -76,7 +76,7 @@ class TestUserScoping:
             grade=5,
             word_count=100,
             needs_review=True,
-            review_reason_codes="PENDING_REVIEW",
+            review_reason_codes="MISSING_GRADE",
             artifact_dir="artifacts/test001"
         )
         save_record(record1, filename="test1.pdf", owner_user_id=user_id_1)
@@ -101,7 +101,7 @@ class TestUserScoping:
             grade=7,
             word_count=200,
             needs_review=True,
-            review_reason_codes="PENDING_REVIEW",
+            review_reason_codes="MISSING_GRADE",
             artifact_dir="artifacts/test003"
         )
         save_record(record3, filename="test3.pdf", owner_user_id=user_id_2)
@@ -130,7 +130,7 @@ class TestUserScoping:
             grade=5,
             word_count=100,
             needs_review=True,
-            review_reason_codes="PENDING_REVIEW",
+            review_reason_codes="MISSING_GRADE",
             artifact_dir="artifacts/test001"
         )
         save_record(record, filename="test.pdf", owner_user_id=user_id_1)
@@ -157,7 +157,7 @@ class TestUserScoping:
             grade=5,
             word_count=100,
             needs_review=True,
-            review_reason_codes="PENDING_REVIEW",
+            review_reason_codes="MISSING_GRADE",
             artifact_dir="artifacts/test001"
         )
         save_record(record, filename="test.pdf", owner_user_id=user_id_1)
@@ -199,7 +199,7 @@ class TestUserScoping:
             grade=5,
             word_count=100,
             needs_review=True,
-            review_reason_codes="PENDING_REVIEW",
+            review_reason_codes="MISSING_GRADE",
             artifact_dir="artifacts/test001"
         )
         save_record(record, filename="test.pdf", owner_user_id=user_id_1)
@@ -233,7 +233,7 @@ class TestUserScoping:
             grade=5,
             word_count=100,
             needs_review=True,
-            review_reason_codes="PENDING_REVIEW",
+            review_reason_codes="MISSING_GRADE",
             artifact_dir="artifacts/test001"
         )
         save_record(record1, filename="test1.pdf", owner_user_id=user_id_1)
@@ -258,7 +258,7 @@ class TestUserScoping:
             grade=7,
             word_count=200,
             needs_review=True,
-            review_reason_codes="PENDING_REVIEW",
+            review_reason_codes="MISSING_GRADE",
             artifact_dir="artifacts/test003"
         )
         save_record(record3, filename="test3.pdf", owner_user_id=user_id_2)
@@ -284,7 +284,7 @@ class TestUserScoping:
             grade=5,
             word_count=100,
             needs_review=True,
-            review_reason_codes="PENDING_REVIEW",
+            review_reason_codes="MISSING_GRADE",
             artifact_dir="artifacts/test001"
         )
         save_record(record, filename="test.pdf", owner_user_id="user-123")

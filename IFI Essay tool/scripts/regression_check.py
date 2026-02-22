@@ -239,8 +239,6 @@ def apply_doc_review_metrics(
         summary["reason_code_counts"][code] = summary["reason_code_counts"].get(code, 0) + 1
         if "=" in code or code not in ALLOWED_REASON_CODES:
             failures.append(f"Reason code not enum: {code} ({pdf_name})")
-        if code == "PENDING_REVIEW":
-            failures.append(f"Forbidden reason code PENDING_REVIEW found ({pdf_name})")
     if "OCR_LOW_CONFIDENCE" in doc_reason_codes:
         summary["ocr_low_confidence_docs"] += 1
     if "EMPTY_ESSAY" in doc_reason_codes:
@@ -978,8 +976,6 @@ def run_on_pdfs(
             failures.append(
                 f"Doc-level reason count exceeds total_docs for {code}: count={count} total_docs={summary['total_docs']}"
             )
-        if code == "PENDING_REVIEW":
-            failures.append("Forbidden reason code PENDING_REVIEW present in reason_code_counts.")
 
     failures.extend(enforce_attribution_thresholds(attribution_counts_by_doc_type, output_dir))
     return summary, failures

@@ -183,7 +183,6 @@ def format_review_reasons(reason_codes: str) -> str:
         "OCR_LOW_CONFIDENCE": "Low OCR Confidence",
         "TEMPLATE_ONLY": "Template Only (no submission)",
         "FIELD_ATTRIBUTION_RISK": "Field Attribution Risk",
-        "PENDING_REVIEW": "Pending Manual Review"
     }
     
     codes = [c.strip() for c in (reason_codes or "").split(";") if c.strip()]
@@ -214,7 +213,7 @@ def _coerce_reason_codes(value: Any) -> set[str]:
         items = [s.strip() for s in value.split(";")]
     else:
         items = [str(value).strip()]
-    return {s for s in items if s and s != "PENDING_REVIEW"}
+    return {s for s in items if s}
 
 
 def _is_missing_school_name(value: Any) -> bool:
@@ -748,6 +747,80 @@ def review():
             select_fields=needs_review_fields
         )
         log_timing(f"⏱️ review needs_review records: {(time.perf_counter() - records_start):.3f}s ({len(records)} rows)")
+
+        # Invariant repair:
+        # needs_review rows must always have explicit reason codes.
+        # Legacy rows with empty/placeholder codes are converted to explicit blockers.
+        # Only rows with no blockers are auto-approved.
+        auto_approved_count = 0
+        backfilled_reason_count = 0
+        normalized_records = []
+        for rec in records:
+            codes = _coerce_reason_codes(rec.get("review_reason_codes"))
+            if not codes:
+                missing_codes: set[str] = set()
+                _, missing_fields = can_approve_record(
+                    {
+                        "student_name": rec.get("student_name"),
+                        "school_name": rec.get("school_name"),
+                        "grade": rec.get("grade"),
+                        "word_count": rec.get("word_count"),
+                    }
+                )
+                if "student_name" in missing_fields:
+                    missing_codes.add("MISSING_STUDENT_NAME")
+                if "school_name" in missing_fields:
+                    missing_codes.add("MISSING_SCHOOL_NAME")
+                if "grade" in missing_fields:
+                    missing_codes.add("MISSING_GRADE")
+                if "word_count" in missing_fields:
+                    missing_codes.add("EMPTY_ESSAY")
+                if "short_essay" in missing_fields:
+                    missing_codes.add("SHORT_ESSAY")
+                if "ocr_low_confidence" in missing_fields:
+                    missing_codes.add("OCR_LOW_CONFIDENCE")
+
+                if missing_codes:
+                    codes = missing_codes
+                    normalized_codes_db = ";".join(sorted(codes))
+                    updated = update_db_record(
+                        rec["submission_id"],
+                        {"needs_review": True, "review_reason_codes": normalized_codes_db},
+                        owner_user_id=user_id,
+                        access_token=access_token,
+                        refresh_token=refresh_token,
+                    )
+                    if updated:
+                        backfilled_reason_count += 1
+                else:
+                    updated = update_db_record(
+                        rec["submission_id"],
+                        {"needs_review": False, "review_reason_codes": ""},
+                        owner_user_id=user_id,
+                        access_token=access_token,
+                        refresh_token=refresh_token,
+                    )
+                    if updated:
+                        auto_approved_count += 1
+                        continue
+                    normalized_codes_db = ""
+            else:
+                normalized_codes_db = ";".join(sorted(codes))
+            rec["review_reason_codes"] = normalized_codes_db
+            normalized_records.append(rec)
+        records = normalized_records
+        if auto_approved_count > 0 or backfilled_reason_count > 0:
+            invalidate_db_stats_cache(user_id)
+        if backfilled_reason_count > 0:
+            flash(
+                f"Backfilled explicit review reason codes for {backfilled_reason_count} legacy record(s).",
+                "warning",
+            )
+        if auto_approved_count > 0:
+            flash(
+                f"Auto-approved {auto_approved_count} record(s) with no reason codes.",
+                "success",
+            )
 
         # If no batch in session, try to find the most recent batch with submissions needing review
         if not upload_batch_id:

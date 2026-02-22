@@ -20,7 +20,6 @@ This report analyzes extraction errors and missing fields in the IFI Essay Gatew
 | `MISSING_GRADE` | 7 | 70% | Grade field is null |
 | `MISSING_STUDENT_NAME` | 1 | 10% | Student name field is null |
 | `SHORT_ESSAY` | 1 | 10% | Essay has < 50 words |
-| `PENDING_REVIEW` | 1 | 10% | All required fields present, awaiting manual review |
 
 **Note:** Many records have multiple reason codes (e.g., a record can be missing both school name AND grade).
 

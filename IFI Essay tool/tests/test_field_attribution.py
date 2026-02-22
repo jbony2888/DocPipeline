@@ -46,7 +46,6 @@ def test_validate_record_enforces_reason_code_invariant():
     }
     record, report = validate_record(partial)
     assert record.needs_review == (len(report["review_reason_codes"]) > 0)
-    assert "PENDING_REVIEW" not in report["review_reason_codes"]
 
 
 def test_has_multiple_header_peaks_detects_multi_signal():

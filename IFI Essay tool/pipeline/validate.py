@@ -147,7 +147,7 @@ def _coerce_reason_codes(value) -> List[str]:
         raw = [s.strip() for s in value.split(";")]
     else:
         raw = [str(value).strip()]
-    codes = [s for s in raw if s and s != "PENDING_REVIEW"]
+    codes = [s for s in raw if s]
     return sorted(set(codes))
 
 
@@ -385,14 +385,11 @@ def validate_record(partial: dict, report: dict | None = None) -> tuple[Submissi
             reason_codes.add("EXTRACTION_FALLBACK_USED")
 
     # Reason codes must be enum strings only.
-    reason_codes = {c for c in reason_codes if c in ALLOWED_REASON_CODES and c != "PENDING_REVIEW"}
+    reason_codes = {c for c in reason_codes if c in ALLOWED_REASON_CODES}
     needs_review = len(reason_codes) > 0
     assert needs_review == (len(reason_codes) > 0), "Validation invariant violation"
     if needs_review and not reason_codes:
         raise ValueError("needs_review=True requires at least one reason code")
-    if "PENDING_REVIEW" in reason_codes:
-        raise ValueError("PENDING_REVIEW is forbidden")
-
     review_reason_codes_list = sorted(reason_codes)
     review_reason_codes = ";".join(review_reason_codes_list)
     can_auto = can_auto_approve(

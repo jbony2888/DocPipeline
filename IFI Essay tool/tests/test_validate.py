@@ -35,7 +35,6 @@ def test_typed_form_missing_field_flags_enum():
     record, report = validate_record(_base_partial(student_name=None))
     assert record.needs_review is True
     assert "MISSING_STUDENT_NAME" in report["review_reason_codes"]
-    assert "PENDING_REVIEW" not in report["review_reason_codes"]
 
 
 def test_official_scanned_missing_grade_and_school_are_flagged():
@@ -101,13 +100,11 @@ def test_template_short_circuit():
 def test_invariant_enforced_for_needs_review_and_reason_codes():
     clean_record, clean_report = validate_record(_base_partial())
     assert clean_record.needs_review == (len(clean_report["review_reason_codes"]) > 0)
-    assert "PENDING_REVIEW" not in clean_report["review_reason_codes"]
 
     flagged_record, flagged_report = validate_record(_base_partial(word_count=0))
     assert flagged_record.needs_review == (len(flagged_report["review_reason_codes"]) > 0)
     assert flagged_record.needs_review is True
     assert flagged_report["review_reason_codes"]
-    assert "PENDING_REVIEW" not in flagged_report["review_reason_codes"]
 
 
 def test_validate_typed_form_requires_fields_and_essay():
