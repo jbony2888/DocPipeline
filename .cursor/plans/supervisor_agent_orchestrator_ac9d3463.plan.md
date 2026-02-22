@@ -21,7 +21,7 @@ pip install langchain langgraph langsmith
 | langsmith | >=0.1.0 | Tracing, debugging, replay                   |
 
 
-**Existing stack (unchanged):** Groq, Supabase, PyMuPDF, Flask, existing `pipeline/*` modules.
+**Existing stack (unchanged):** Groq, Supabase, PyMuPDF, Flask, existing `pipeline/`* modules.
 
 **Python:** 3.10+
 
@@ -649,4 +649,4 @@ flowchart TB
 | langsmith | Tracing, debugging, replay                   |
 
 
-**Existing:** Groq, Supabase, PyMuPDF, Flask, `pipeline/*`.
+**Existing:** Groq, Supabase, PyMuPDF, Flask, `pipeline/`*.
