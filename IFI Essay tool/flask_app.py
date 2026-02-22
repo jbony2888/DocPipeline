@@ -38,7 +38,7 @@ from pipeline.supabase_db import (
     delete_record as delete_db_record,
     get_stats as get_db_stats
 )
-from pipeline.validate import can_approve_record
+from pipeline.validate import ALLOWED_REASON_CODES, can_approve_record
 from pipeline.guardrails.validation import is_grade_missing
 # Removed batch_defaults - using simple bulk edit instead
 # from pipeline.batch_defaults import create_upload_batch, get_batch_with_submissions, apply_batch_defaults
@@ -185,7 +185,11 @@ def format_review_reasons(reason_codes: str) -> str:
         "FIELD_ATTRIBUTION_RISK": "Field Attribution Risk",
     }
     
-    codes = [c.strip() for c in (reason_codes or "").split(";") if c.strip()]
+    codes = [
+        c.strip()
+        for c in (reason_codes or "").split(";")
+        if c.strip() and c.strip() in ALLOWED_REASON_CODES
+    ]
     readable_reasons = [reason_map.get(c, c.replace("_", " ").title()) for c in codes]
     return " • ".join(readable_reasons) if readable_reasons else "Pending review"
 
@@ -213,7 +217,7 @@ def _coerce_reason_codes(value: Any) -> set[str]:
         items = [s.strip() for s in value.split(";")]
     else:
         items = [str(value).strip()]
-    return {s for s in items if s}
+    return {s for s in items if s and s in ALLOWED_REASON_CODES}
 
 
 def _is_missing_school_name(value: Any) -> bool:
