@@ -18,7 +18,6 @@ from pathlib import Path
 
 # Resolve project root (IFI Essay tool directory)
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(PROJECT_ROOT))
 os.chdir(PROJECT_ROOT)
 
 # Load .env before any supabase imports

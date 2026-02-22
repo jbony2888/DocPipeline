@@ -27,8 +27,6 @@ from dotenv import load_dotenv
 from supabase import create_client
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
 
 from auth.supabase_client import normalize_supabase_url
 from pipeline.supabase_storage import BUCKET_NAME

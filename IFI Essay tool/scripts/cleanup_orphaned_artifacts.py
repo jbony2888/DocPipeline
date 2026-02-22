@@ -10,9 +10,6 @@ from pathlib import Path
 import shutil
 import sys
 
-# Add parent directory to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
 from pipeline.database import get_db_records, init_database
 
 def cleanup_orphaned_artifacts(artifacts_dir="artifacts", dry_run=True):

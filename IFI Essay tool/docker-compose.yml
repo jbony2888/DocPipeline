@@ -25,6 +25,8 @@ services:
       # Mount artifacts and outputs for persistence
       - ./artifacts:/app/artifacts
       - ./outputs:/app/outputs
+      # Mount extracted guardrails core package from repo root
+      - ../idp_guardrails_core:/app/idp_guardrails_core:ro
       # Mount data directory for database persistence
       - ./data:/app/data
       # Mount Google Cloud credentials
@@ -65,6 +67,8 @@ services:
       # Mount artifacts and outputs for persistence
       - ./artifacts:/app/artifacts
       - ./outputs:/app/outputs
+      # Mount extracted guardrails core package from repo root
+      - ../idp_guardrails_core:/app/idp_guardrails_core:ro
       # Mount data directory for database persistence
       - ./data:/app/data
       # Mount Google Cloud credentials
