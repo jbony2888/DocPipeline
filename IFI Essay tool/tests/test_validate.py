@@ -10,7 +10,7 @@ def _base_partial(**overrides):
         "submission_id": "sub_1",
         "artifact_dir": "artifacts/sub_1",
         "student_name": "Jane Doe",
-        "school_name": "Lincoln Elementary",
+        "school_name": "Rachel Carson",
         "grade": 5,
         "word_count": 120,
         "doc_type": "ifi_typed_form_submission",
@@ -38,7 +38,7 @@ def test_typed_form_missing_field_flags_enum():
     assert "PENDING_REVIEW" not in report["review_reason_codes"]
 
 
-def test_official_scanned_missing_grade_does_not_auto_fail():
+def test_official_scanned_missing_grade_and_school_are_flagged():
     record, report = validate_record(
         _base_partial(
             doc_type="ifi_official_form_scanned",
@@ -49,10 +49,10 @@ def test_official_scanned_missing_grade_does_not_auto_fail():
             ocr_confidence_min=0.75,
         )
     )
-    assert "MISSING_GRADE" not in report["review_reason_codes"]
-    assert "MISSING_SCHOOL_NAME" not in report["review_reason_codes"]
-    assert record.needs_review is False
-    assert report["auto_approve_eligible"] is True
+    assert "MISSING_GRADE" in report["review_reason_codes"]
+    assert "MISSING_SCHOOL_NAME" in report["review_reason_codes"]
+    assert record.needs_review is True
+    assert report["auto_approve_eligible"] is False
 
 
 def test_official_scanned_requires_essay():
@@ -92,7 +92,10 @@ def test_template_short_circuit():
         )
     )
     assert record.needs_review is True
-    assert report["review_reason_codes"] == ["TEMPLATE_ONLY"]
+    assert "TEMPLATE_ONLY" in report["review_reason_codes"]
+    assert "MISSING_STUDENT_NAME" in report["review_reason_codes"]
+    assert "MISSING_SCHOOL_NAME" in report["review_reason_codes"]
+    assert "MISSING_GRADE" in report["review_reason_codes"]
 
 
 def test_invariant_enforced_for_needs_review_and_reason_codes():
@@ -128,4 +131,24 @@ def test_container_bulk_scanned_batch_skips_parent_validation():
     )
     assert record.needs_review is False
     assert report["review_reason_codes"] == []
+    assert report["doc_role"] == "container"
     assert report["container_skipped"] is True
+    assert report["validation_skipped_reason"] == "container_record"
+    assert report["auto_approve_eligible"] is False
+    assert report["auto_approve_blockers"] == ["CONTAINER_RECORD"]
+
+
+def test_bulk_child_chunk_runs_document_validation():
+    record, report = validate_record(
+        _base_partial(
+            doc_type="bulk_scanned_batch",
+            doc_class="BULK_SCANNED_BATCH",
+            chunk_index=0,
+            student_name=None,
+            school_name="Lincoln Elementary",
+            grade=5,
+        )
+    )
+    assert report["doc_role"] == "document"
+    assert record.needs_review is True
+    assert "MISSING_STUDENT_NAME" in report["review_reason_codes"]

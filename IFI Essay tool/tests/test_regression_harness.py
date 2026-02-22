@@ -1,13 +1,18 @@
 import fitz
+import json
 
 from pipeline.ocr import ocr_pdf_pages
 from pipeline.schema import OcrResult
 from scripts.regression_check import (
+    apply_doc_review_metrics,
     aggregate_parent_status_from_children,
     build_chunk_submission_id,
     compute_doc_reason_codes,
+    enforce_attribution_thresholds,
     extract_doc_fields_from_final_text,
+    write_field_attribution_debug_artifact,
 )
+from pipeline.guardrails.doc_role import DocRole
 
 
 class SequenceOcrProvider:
@@ -150,3 +155,91 @@ def test_aggregate_parent_status_from_children_empty_returns_clean():
     needs_review, reason_codes = aggregate_parent_status_from_children([])
     assert needs_review is False
     assert len(reason_codes) == 0
+
+
+def test_enforce_attribution_thresholds_fails_below_required_rate(tmp_path):
+    counts = {
+        "ifi_typed_form_submission": {
+            "total": 10,
+            "within_chunk": 9,  # 0.90 < 0.95 threshold
+            "from_start": 9,    # 0.90 < 0.95 threshold
+        }
+    }
+    failures = enforce_attribution_thresholds(counts, tmp_path)
+    assert len(failures) >= 1
+    assert any("ifi_typed_form_submission" in msg for msg in failures)
+
+
+def test_write_field_attribution_debug_artifact_for_missing_source(tmp_path):
+    wrote = write_field_attribution_debug_artifact(
+        chunk_artifact_dir=tmp_path,
+        submission_id="sub1",
+        chunk_submission_id="sub1_0_x",
+        doc_type="ifi_typed_form_submission",
+        chunk_page_start=0,
+        chunk_page_end=1,
+        extracted_fields={"student_name": "Ana Perez", "school_name": None, "grade": None},
+        field_source_pages={"student_name": None, "school_name": None, "grade": None},
+        per_page_text=[
+            {"page_index": 0, "text": "No matching name here"},
+            {"page_index": 1, "text": "No match either"},
+        ],
+    )
+    assert wrote is True
+    debug_path = tmp_path / "field_attribution_debug.json"
+    assert debug_path.exists()
+    with open(debug_path, "r", encoding="utf-8") as f:
+        payload = json.load(f)
+    assert payload["chunk_submission_id"] == "sub1_0_x"
+    assert payload["missing_fields"][0]["field"] == "student_name"
+
+
+def test_apply_doc_review_metrics_excludes_container_records():
+    summary = {
+        "total_docs": 0,
+        "docs_reviewed_count": 0,
+        "auto_approved_count": 0,
+        "reason_code_counts": {},
+        "ocr_low_confidence_docs": 0,
+        "false_empty_essay_count": 0,
+        "review_rate_by_doc_type": {},
+        "container_docs_count": 0,
+        "skipped_container_docs": 0,
+    }
+    failures = []
+
+    apply_doc_review_metrics(
+        summary,
+        doc_role=DocRole.CONTAINER,
+        doc_type="bulk_scanned_batch",
+        doc_needs_review=False,
+        doc_reason_codes=set(),
+        failures=failures,
+        pdf_name="parent.pdf",
+    )
+    apply_doc_review_metrics(
+        summary,
+        doc_role=DocRole.DOCUMENT,
+        doc_type="ifi_official_form_scanned",
+        doc_needs_review=True,
+        doc_reason_codes={"MISSING_GRADE"},
+        failures=failures,
+        pdf_name="child1.pdf",
+    )
+    apply_doc_review_metrics(
+        summary,
+        doc_role=DocRole.DOCUMENT,
+        doc_type="ifi_official_form_scanned",
+        doc_needs_review=False,
+        doc_reason_codes=set(),
+        failures=failures,
+        pdf_name="child2.pdf",
+    )
+
+    assert failures == []
+    assert summary["container_docs_count"] == 1
+    assert summary["skipped_container_docs"] == 1
+    assert summary["total_docs"] == 2
+    assert summary["docs_reviewed_count"] == 1
+    assert summary["auto_approved_count"] == 1
+    assert summary["reason_code_counts"] == {"MISSING_GRADE": 1}

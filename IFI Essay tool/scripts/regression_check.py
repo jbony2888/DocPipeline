@@ -36,18 +36,16 @@ from pipeline.runner import process_submission
 from pipeline.ocr import ocr_pdf_pages, extract_pdf_text_layer
 from pipeline.extract import looks_like_essay_fragment
 from pipeline.doc_type_routing import detect_pdf_has_acroform_fields, route_doc_type
-
-ALLOWED_REASON_CODES = {
-    "MISSING_STUDENT_NAME",
-    "MISSING_GRADE",
-    "MISSING_SCHOOL_NAME",
-    "EMPTY_ESSAY",
-    "SHORT_ESSAY",
-    "OCR_LOW_CONFIDENCE",
-    "EXTRACTION_FALLBACK_USED",
-    "TEMPLATE_ONLY",
-    "DOC_TYPE_UNKNOWN",
-}
+from pipeline.guardrails.attribution import (
+    assert_expected_attribution,
+    build_field_attribution_debug_payload,
+    compute_field_attribution_confidence,
+    compute_field_source_pages,
+    load_per_page_text,
+)
+from pipeline.guardrails.drift import build_run_snapshot, compare_snapshots
+from pipeline.guardrails.doc_role import DocRole, classify_doc_role
+from pipeline.guardrails.enums import ALLOWED_REASON_CODES
 
 
 def generate_hybrid_fixture(tmpdir: Path) -> Path:
@@ -208,6 +206,49 @@ def aggregate_parent_status_from_children(chunk_diagnostics: List[dict]) -> tupl
             codes = [c.strip() for c in codes.split(";") if c.strip()]
         reason_codes.update(codes)
     return needs_review, reason_codes
+
+
+def apply_doc_review_metrics(
+    summary: dict,
+    *,
+    doc_role: DocRole,
+    doc_type: str,
+    doc_needs_review: bool,
+    doc_reason_codes: set[str],
+    failures: list[str],
+    pdf_name: str,
+) -> None:
+    """
+    Apply review-related counters while excluding container docs.
+    """
+    if doc_role == DocRole.CONTAINER:
+        summary["container_docs_count"] += 1
+        summary["skipped_container_docs"] += 1
+        return
+
+    summary["total_docs"] += 1
+    if doc_needs_review:
+        summary["docs_reviewed_count"] += 1
+    else:
+        summary["auto_approved_count"] += 1
+
+    for code in doc_reason_codes:
+        summary["reason_code_counts"][code] = summary["reason_code_counts"].get(code, 0) + 1
+        if "=" in code or code not in ALLOWED_REASON_CODES:
+            failures.append(f"Reason code not enum: {code} ({pdf_name})")
+        if code == "PENDING_REVIEW":
+            failures.append(f"Forbidden reason code PENDING_REVIEW found ({pdf_name})")
+    if "OCR_LOW_CONFIDENCE" in doc_reason_codes:
+        summary["ocr_low_confidence_docs"] += 1
+    if "EMPTY_ESSAY" in doc_reason_codes:
+        summary["false_empty_essay_count"] += 1
+
+    type_bucket = summary["review_rate_by_doc_type"].setdefault(
+        doc_type, {"total": 0, "needs_review": 0, "review_rate": 0}
+    )
+    type_bucket["total"] += 1
+    if doc_needs_review:
+        type_bucket["needs_review"] += 1
 
 
 def _normalize_reason_codes(value) -> List[str]:
@@ -426,6 +467,71 @@ def has_multiple_header_peaks(analysis) -> bool:
     return peaks >= 2
 
 
+def write_field_attribution_debug_artifact(
+    *,
+    chunk_artifact_dir: Path,
+    submission_id: str,
+    chunk_submission_id: str,
+    doc_type: str,
+    chunk_page_start: int,
+    chunk_page_end: int,
+    extracted_fields: dict,
+    field_source_pages: dict,
+    per_page_text: list[dict],
+) -> bool:
+    payload = build_field_attribution_debug_payload(
+        submission_id=submission_id,
+        chunk_submission_id=chunk_submission_id,
+        doc_type=doc_type,
+        chunk_page_start=chunk_page_start,
+        chunk_page_end=chunk_page_end,
+        extracted_fields=extracted_fields,
+        field_source_pages=field_source_pages,
+        per_page_text=per_page_text,
+    )
+    if payload is None:
+        return False
+    with open(chunk_artifact_dir / "field_attribution_debug.json", "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2)
+    return True
+
+
+def enforce_attribution_thresholds(
+    attribution_counts_by_doc_type: dict[str, dict[str, int]],
+    output_dir: Path,
+) -> List[str]:
+    """
+    Enforce attribution rate thresholds by doc type.
+    """
+    failures: List[str] = []
+    thresholds = {
+        "ifi_typed_form_submission": {"within": 0.95, "from_start": 0.95},
+        "bulk_scanned_batch": {"within": 0.75},
+    }
+    for doc_type, threshold in thresholds.items():
+        counts = attribution_counts_by_doc_type.get(doc_type, {})
+        total = int(counts.get("total", 0))
+        if total <= 0:
+            continue
+        within = int(counts.get("within_chunk", 0))
+        from_start = int(counts.get("from_start", 0))
+        within_rate = within / total
+        from_start_rate = from_start / total
+        if within_rate < threshold["within"]:
+            failures.append(
+                f"Attribution threshold failed for doc_type={doc_type}: "
+                f"chunk_scoped_field_rate={within_rate:.6f} < {threshold['within']:.2f}. "
+                f"See debug artifacts under {output_dir}."
+            )
+        if "from_start" in threshold and from_start_rate < threshold["from_start"]:
+            failures.append(
+                f"Attribution threshold failed for doc_type={doc_type}: "
+                f"chunk_scoped_field_from_start_rate={from_start_rate:.6f} < {threshold['from_start']:.2f}. "
+                f"See debug artifacts under {output_dir}."
+            )
+    return failures
+
+
 def run_on_pdfs(
     pdf_paths: List[Path],
     mode: str,
@@ -455,6 +561,7 @@ def run_on_pdfs(
         "auto_approved_count": 0,
         "auto_approve_rate": 0,
         "ocr_low_confidence_rate": 0,
+        "ocr_confidence_avg": 0,
         "docs_with_any_text_count": 0,
         "docs_with_any_text_rate": 0,
         "docs_with_grade_found_count": 0,
@@ -465,14 +572,19 @@ def run_on_pdfs(
         "multi_detected_docs": 0,
         "multi_detection_rate": 0,
         "chunk_scoped_fields_total": 0,
+        "chunk_scoped_fields_within_chunk": 0,
         "chunk_scoped_fields_from_start_page": 0,
         "chunk_scoped_field_rate": 0,
+        "chunk_scoped_field_from_start_rate": 0,
         "estimated_cost_proxy": 0,
         "review_rate_by_doc_type": {},
         "doc_type_distribution": {},
+        "container_docs_count": 0,
         "skipped_container_docs": 0,
     }
     failures: List[str] = []
+    attribution_counts_by_doc_type: dict[str, dict[str, int]] = {}
+    ocr_conf_values: list[float] = []
 
     docs_dir = output_dir / "docs"
     docs_dir.mkdir(parents=True, exist_ok=True)
@@ -516,12 +628,15 @@ def run_on_pdfs(
         if analysis.low_confidence_for_template:
             summary["template_blocked_low_conf_count"] += 1
 
-        summary["total_docs"] += 1
         doc_reason_codes: set[str] = set()
         doc_ocr_conf: list[dict] = []
         chunk_count = 0
         doc_ocr_pages = 0
         chunk_diagnostics: list[dict] = []
+        doc_attr_telemetry_chunks: list[dict] = []
+        doc_attr_mismatch_count = 0
+        doc_attr_missing_count = 0
+        doc_attr_counts = {"total": 0, "within_chunk": 0, "from_start": 0}
 
         doc_pages_for_ocr = [0] if mode == "legacy_page1" else None
         # Typed form submissions (native_text): use text layer only, no OCR
@@ -565,6 +680,13 @@ def run_on_pdfs(
             }
             for stat in per_page_stats_sorted
         ]
+        for stat in doc_ocr_conf:
+            conf = stat.get("confidence_avg")
+            if conf is not None:
+                try:
+                    ocr_conf_values.append(float(conf))
+                except (TypeError, ValueError):
+                    pass
         if final_text.strip():
             summary["docs_with_any_text_count"] += 1
 
@@ -613,14 +735,81 @@ def run_on_pdfs(
             chunk_count += 1
             chunk_codes = _normalize_reason_codes(rec.review_reason_codes)
             validation_stage = rep.get("stages", {}).get("validation", {})
-            rep_field_attr = rep.get("field_attribution", {})
-            rep_source_pages = rep_field_attr.get("field_source_pages", {})
+            chunk_doc_type = validation_stage.get("doc_type", "UNKNOWN")
             rep_extracted = rep.get("extracted_fields", {})
+            attr_pages = load_per_page_text(rep, artifact_dir="")
+            if not attr_pages:
+                attr_pages = per_page_stats_sorted
+            rep_source_pages = compute_field_source_pages(
+                per_page_text=attr_pages,
+                extracted_fields=rep_extracted,
+                chunk_page_start=from_page,
+                chunk_page_end=to_page,
+            )
+            rep_attr_confidence = compute_field_attribution_confidence(
+                per_page_text=attr_pages,
+                extracted_fields=rep_extracted,
+                chunk_page_start=from_page,
+                chunk_page_end=to_page,
+            )
             for field in ("student_name", "school_name", "grade"):
                 if rep_extracted.get(field) is not None:
                     summary["chunk_scoped_fields_total"] += 1
-                    if rep_source_pages.get(field) == from_page:
+                    source_page = rep_source_pages.get(field)
+                    if (
+                        source_page is not None
+                        and from_page <= source_page <= to_page
+                    ):
+                        summary["chunk_scoped_fields_within_chunk"] += 1
+                    if source_page == from_page:
                         summary["chunk_scoped_fields_from_start_page"] += 1
+                    doc_attr_counts["total"] += 1
+                    if source_page is not None and from_page <= source_page <= to_page:
+                        doc_attr_counts["within_chunk"] += 1
+                    if source_page == from_page:
+                        doc_attr_counts["from_start"] += 1
+
+            chunk_telemetry = assert_expected_attribution(
+                chunk_doc_type,
+                {"chunk_page_start": from_page, "chunk_page_end": to_page},
+                rep_extracted,
+                rep_source_pages,
+            )
+            doc_attr_mismatch_count += len(chunk_telemetry["attribution_mismatches"])
+            doc_attr_missing_count += len(chunk_telemetry["attribution_missing"])
+            doc_attr_telemetry_chunks.append(
+                {
+                    "chunk_index": idx,
+                    "chunk_submission_id": rec.submission_id,
+                    "doc_type": chunk_doc_type,
+                    **chunk_telemetry,
+                }
+            )
+
+            chunk_artifact_dir = doc_out_dir / rec.submission_id
+            chunk_artifact_dir.mkdir(parents=True, exist_ok=True)
+            with open(chunk_artifact_dir / "field_source_pages.json", "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "chunk_submission_id": rec.submission_id,
+                        "chunk_page_start": from_page,
+                        "chunk_page_end": to_page,
+                        "field_source_pages": rep_source_pages,
+                    },
+                    f,
+                    indent=2,
+                )
+            write_field_attribution_debug_artifact(
+                chunk_artifact_dir=chunk_artifact_dir,
+                submission_id=submission_id,
+                chunk_submission_id=rec.submission_id,
+                doc_type=chunk_doc_type,
+                chunk_page_start=from_page,
+                chunk_page_end=to_page,
+                extracted_fields=rep_extracted,
+                field_source_pages=rep_source_pages,
+                per_page_text=attr_pages,
+            )
             chunk_diagnostics.append(
                 {
                     "chunk_index": idx,
@@ -628,11 +817,15 @@ def run_on_pdfs(
                     "chunk_page_end": to_page,
                     "chunk_submission_id": rec.submission_id,
                     "doc_class": rec.doc_class.value if hasattr(rec.doc_class, "value") else str(rec.doc_class),
-                    "doc_type": validation_stage.get("doc_type", "UNKNOWN"),
+                    "doc_type": chunk_doc_type,
+                    "doc_role": validation_stage.get("doc_role", "document"),
                     "chunk_reason_codes": chunk_codes,
                     "chunk_needs_review": rec.needs_review,
                     "extracted_fields": rep_extracted,
                     "field_source_pages": rep_source_pages,
+                    "field_attribution_confidence": rep_attr_confidence,
+                    "grade_normalization": validation_stage.get("grade_normalization"),
+                    "school_reference_validation": validation_stage.get("school_reference_validation"),
                 }
             )
             if rec.needs_review and not chunk_codes:
@@ -658,7 +851,23 @@ def run_on_pdfs(
             final_text,
             has_acroform=detect_pdf_has_acroform_fields(str(pdf_path)),
         )
+        doc_role = classify_doc_role(
+            {
+                "doc_type": doc_type,
+                "doc_class": analysis.doc_class,
+                "analysis_structure": analysis.structure,
+                "chunk_index": None,
+            },
+            {"analysis": {"structure": analysis.structure}},
+            chunk_metadata=None,
+        )
         summary["doc_type_distribution"][doc_type] = summary["doc_type_distribution"].get(doc_type, 0) + 1
+        type_counts = attribution_counts_by_doc_type.setdefault(
+            doc_type, {"total": 0, "within_chunk": 0, "from_start": 0}
+        )
+        type_counts["total"] += doc_attr_counts["total"]
+        type_counts["within_chunk"] += doc_attr_counts["within_chunk"]
+        type_counts["from_start"] += doc_attr_counts["from_start"]
         # Merge pipeline chunk results so missing-metadata flags use pipeline findings
         for diag in chunk_diagnostics:
             ef = diag.get("extracted_fields") or {}
@@ -682,37 +891,21 @@ def run_on_pdfs(
         )
         # Parent status must derive from children (logical OR) to prevent silent success masking child failures.
         doc_needs_review, doc_reason_codes = aggregate_parent_status_from_children(chunk_diagnostics)
-        is_container_parent = doc_type == "bulk_scanned_batch"
+        is_container_parent = doc_role == DocRole.CONTAINER
         if doc_needs_review and not doc_reason_codes:
             failures.append(f"Invariant violated: needs_review=True with empty reason codes ({pdf_path.name})")
 
-        for code in doc_reason_codes:
-            summary["reason_code_counts"][code] = summary["reason_code_counts"].get(code, 0) + 1
-            if "=" in code or code not in ALLOWED_REASON_CODES:
-                failures.append(f"Reason code not enum: {code} ({pdf_path.name})")
-            if code == "PENDING_REVIEW":
-                failures.append(f"Forbidden reason code PENDING_REVIEW found ({pdf_path.name})")
-        if "OCR_LOW_CONFIDENCE" in doc_reason_codes:
-            summary["ocr_low_confidence_docs"] += 1
-        if "EMPTY_ESSAY" in doc_reason_codes:
-            summary["false_empty_essay_count"] += 1
-
         summary["chunks_total"] += chunk_count
         summary["total_ocr_pages"] += doc_ocr_pages if doc_ocr_pages > 0 else expected_ocr_pages
-        if is_container_parent:
-            summary["skipped_container_docs"] += 1
-        elif doc_needs_review:
-            summary["docs_reviewed_count"] += 1
-        else:
-            summary["auto_approved_count"] += 1
-
-        if not is_container_parent:
-            type_bucket = summary["review_rate_by_doc_type"].setdefault(
-                doc_type, {"total": 0, "needs_review": 0, "review_rate": 0}
-            )
-            type_bucket["total"] += 1
-            if doc_needs_review:
-                type_bucket["needs_review"] += 1
+        apply_doc_review_metrics(
+            summary,
+            doc_role=doc_role,
+            doc_type=doc_type,
+            doc_needs_review=doc_needs_review,
+            doc_reason_codes=doc_reason_codes,
+            failures=failures,
+            pdf_name=pdf_path.name,
+        )
 
         # doc summary
         # Special assertion for Valeria-Pantoja to ensure multi detection with full OCR
@@ -731,9 +924,15 @@ def run_on_pdfs(
             "needs_review": doc_needs_review,
             "reason_codes": sorted(list(doc_reason_codes)),
             "doc_type": doc_type,
+            "doc_role": doc_role.value,
             "extracted": extracted,
             "missing_field_evidence": missing_field_evidence,
             "chunk_diagnostics": chunk_diagnostics,
+            "attribution_telemetry": {
+                "chunks": doc_attr_telemetry_chunks,
+            },
+            "attribution_mismatch_count": doc_attr_mismatch_count,
+            "attribution_missing_count": doc_attr_missing_count,
             "ocr_conf_stats": doc_ocr_conf,
             "total_ocr_pages": doc_ocr_pages if doc_ocr_pages > 0 else expected_ocr_pages,
             "final_text_char_count": len(final_text),
@@ -742,7 +941,7 @@ def run_on_pdfs(
             json.dump(doc_summary, f, indent=2)
 
     # Rates and derived metrics
-    effective_docs = summary["total_docs"] - summary.get("skipped_container_docs", 0)
+    effective_docs = summary["total_docs"]
     if summary["total_docs"] > 0:
         summary["avg_pages_per_doc"] = summary["total_ocr_pages"] / summary["total_docs"]
         if effective_docs > 0:
@@ -759,9 +958,14 @@ def run_on_pdfs(
             summary["multi_detection_rate"] = summary["multi_detected_docs"] / summary["multi_expected_docs"]
         if summary["chunk_scoped_fields_total"] > 0:
             summary["chunk_scoped_field_rate"] = (
+                summary["chunk_scoped_fields_within_chunk"] / summary["chunk_scoped_fields_total"]
+            )
+            summary["chunk_scoped_field_from_start_rate"] = (
                 summary["chunk_scoped_fields_from_start_page"] / summary["chunk_scoped_fields_total"]
             )
     summary["estimated_cost_proxy"] = summary["total_ocr_pages"]
+    if ocr_conf_values:
+        summary["ocr_confidence_avg"] = sum(ocr_conf_values) / len(ocr_conf_values)
     for doc_type, bucket in summary["review_rate_by_doc_type"].items():
         total = bucket.get("total", 0)
         bucket["review_rate"] = (bucket.get("needs_review", 0) / total) if total else 0
@@ -774,6 +978,7 @@ def run_on_pdfs(
         if code == "PENDING_REVIEW":
             failures.append("Forbidden reason code PENDING_REVIEW present in reason_code_counts.")
 
+    failures.extend(enforce_attribution_thresholds(attribution_counts_by_doc_type, output_dir))
     return summary, failures
 
 
@@ -853,6 +1058,7 @@ def main() -> int:
     parser.add_argument("--output-dir", type=Path, help="Output directory for harness artifacts")
     parser.add_argument("--debug-doc", help="Print detailed chunk extraction debug for matching filename")
     parser.add_argument("--simulate-legacy-page1", action="store_true", help="Also run legacy page-1-only mode and compare")
+    parser.add_argument("--compare-to", type=Path, help="Optional baseline run_snapshot.json for drift comparison")
     args = parser.parse_args()
 
     tmpdir = Path(tempfile.mkdtemp(prefix="regression_checks_"))
@@ -876,8 +1082,19 @@ def main() -> int:
         )
         with open(current_dir / "batch_summary.current.json", "w", encoding="utf-8") as f:
             json.dump(current_summary, f, indent=2)
+        current_snapshot = build_run_snapshot(current_summary)
+        with open(current_dir / "run_snapshot.json", "w", encoding="utf-8") as f:
+            json.dump(current_snapshot, f, indent=2)
 
         all_failures = list(failures_current)
+        if args.compare_to:
+            with open(args.compare_to, "r", encoding="utf-8") as f:
+                baseline_snapshot = json.load(f)
+            ok, drift_report = compare_snapshots(current_snapshot, baseline_snapshot)
+            with open(out_base / "drift_report.json", "w", encoding="utf-8") as f:
+                json.dump(drift_report, f, indent=2)
+            if not ok:
+                all_failures.extend(drift_report.get("issues", []))
         # Typed-form tc01–tc08: missing fields must be flagged for review, never fail; record always produced.
         all_failures.extend(
             validate_typed_form_missing_field_expectations(pdf_paths, current_dir / "docs")

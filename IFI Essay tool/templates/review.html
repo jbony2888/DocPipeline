@@ -261,6 +261,50 @@
             {% endif %}
         {% else %}
             {# Approved Records - show grouped by School → Grade #}
+            <form method="GET" action="{{ url_for('review') }}" class="row g-2 align-items-end mb-3">
+                <input type="hidden" name="mode" value="approved">
+                <div class="col-md-3">
+                    <label class="form-label mb-1"><strong>School</strong></label>
+                    <select class="form-select form-select-sm" name="school">
+                        <option value="">All schools</option>
+                        {% for school in school_filter_options %}
+                        <option value="{{ school }}" {% if selected_school_filter == school %}selected{% endif %}>{{ school }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label mb-1"><strong>Grade</strong></label>
+                    <select class="form-select form-select-sm" name="grade">
+                        <option value="">All grades</option>
+                        {% for grade in grade_filter_options %}
+                        <option value="{{ grade }}" {% if selected_grade_filter == grade %}selected{% endif %}>{{ grade }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label mb-1"><strong>Batch</strong></label>
+                    <select class="form-select form-select-sm" name="batch">
+                        <option value="">All batches</option>
+                        {% for batch in batch_filter_options %}
+                        <option value="{{ batch }}" {% if selected_batch_filter == batch %}selected{% endif %}>{{ batch }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-2 d-flex gap-2">
+                    <button type="submit" class="btn btn-sm btn-primary w-100">Apply</button>
+                    <a href="{{ url_for('review', mode='approved') }}" class="btn btn-sm btn-outline-secondary w-100">Reset</a>
+                </div>
+            </form>
+
+            <p class="text-muted mb-3">
+                Showing <strong>{{ filtered_approved_count }}</strong> approved record(s)
+                {% if selected_school_filter or selected_grade_filter or selected_batch_filter %}
+                    with active filters.
+                {% else %}
+                    across all schools, grades, and batches.
+                {% endif %}
+            </p>
+
             {% if schools_data %}
             <p class="text-muted mb-3">Records organized by <strong>School → Grade</strong></p>
             
@@ -347,6 +391,69 @@
                 </div>
             </div>
             {% endfor %}
+
+            {% if approved_ungrouped and approved_ungrouped|length > 0 %}
+            <div class="card mb-3 border-warning">
+                <div class="card-header bg-warning text-dark">
+                    <h5 class="mb-0">
+                        <i class="bi bi-exclamation-triangle"></i> Missing School/Grade
+                        <span class="badge bg-dark ms-2">{{ approved_ungrouped|length }} submission(s)</span>
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted mb-3">
+                        These records are marked clean but cannot be grouped by School → Grade because school or grade is missing.
+                    </p>
+                    <div class="table-responsive">
+                        <table class="table table-sm table-hover">
+                            <thead>
+                                <tr>
+                                    <th>Student Name</th>
+                                    <th>School</th>
+                                    <th>Grade</th>
+                                    <th>Word Count</th>
+                                    <th>PDF</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for record in approved_ungrouped %}
+                                <tr>
+                                    <td>{{ record.student_name or 'N/A' }}</td>
+                                    <td>{{ record.school_name or 'N/A' }}</td>
+                                    <td>{{ record.grade or 'N/A' }}</td>
+                                    <td>{{ record.word_count or 0 }}</td>
+                                    <td>
+                                        {% set pdf_path = get_pdf_path(record.get('artifact_dir', '')) %}
+                                        {% if pdf_path %}
+                                        <a href="{{ url_for('serve_pdf', file_path=pdf_path) }}" target="_blank" class="btn btn-sm btn-outline-info">
+                                            <i class="bi bi-file-pdf"></i> View
+                                        </a>
+                                        {% else %}
+                                        <span class="text-muted">N/A</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <div class="btn-group btn-group-sm">
+                                            <a href="{{ url_for('record_detail', submission_id=record.submission_id) }}" class="btn btn-outline-primary">
+                                                <i class="bi bi-pencil"></i> Edit
+                                            </a>
+                                            <button class="btn btn-outline-warning" onclick="sendForReview('{{ record.submission_id }}')">
+                                                <i class="bi bi-exclamation-triangle"></i> Review
+                                            </button>
+                                            <button class="btn btn-outline-danger" onclick="deleteRecord('{{ record.submission_id }}')">
+                                                <i class="bi bi-trash"></i>
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
             {% else %}
             <div class="alert alert-info">
                 <i class="bi bi-info-circle"></i> No approved records found.

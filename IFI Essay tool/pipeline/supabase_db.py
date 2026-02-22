@@ -59,8 +59,19 @@ def check_duplicate_submission(submission_id: str, current_user_id: str, access_
             except Exception as e:
                 print(f"⚠️ Warning: Could not set session for check_duplicate: {e}")
         
-        # Check if submission_id exists (use service role key to bypass RLS for this check)
-        # Since we want to know if ANYONE has uploaded this, not just current user
+        # Duplicate key compatibility:
+        # - current pipeline duplicate key: base file hash (submission_id)
+        # - legacy/single-chunk stored key: sha256(f"{base}:{0}")[:12]
+        # Check both so duplicate detection works for existing records.
+        import hashlib
+        legacy_single_chunk_id = hashlib.sha256(f"{submission_id}:0".encode()).hexdigest()[:12]
+        candidate_ids = [submission_id]
+        if legacy_single_chunk_id != submission_id:
+            candidate_ids.append(legacy_single_chunk_id)
+
+        # Prefer service-role lookup so we can detect duplicates across all users.
+        # If service-role is unavailable, fall back to user-scoped lookup so a user
+        # still gets duplicate warnings for their own prior uploads.
         from supabase import create_client as create_supabase_client
         import os
         service_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
@@ -68,7 +79,14 @@ def check_duplicate_submission(submission_id: str, current_user_id: str, access_
         
         if service_key and supabase_url:
             admin_client = create_supabase_client(supabase_url, service_key)
-            result = admin_client.table("submissions").select("submission_id, owner_user_id, filename").eq("submission_id", submission_id).limit(1).execute()
+            result = (
+                admin_client
+                .table("submissions")
+                .select("submission_id, owner_user_id, filename")
+                .in_("submission_id", candidate_ids)
+                .limit(1)
+                .execute()
+            )
             
             if result.data and len(result.data) > 0:
                 existing_record = result.data[0]
@@ -80,6 +98,27 @@ def check_duplicate_submission(submission_id: str, current_user_id: str, access_
                     "is_duplicate": True,
                     "existing_owner_user_id": existing_owner,
                     "is_own_duplicate": is_own_duplicate,
+                    "existing_filename": existing_filename
+                }
+        else:
+            # Fallback with authenticated client (RLS): detects current user's duplicates.
+            # This keeps duplicate warning behavior working even without service role key.
+            user_result = (
+                supabase
+                .table("submissions")
+                .select("submission_id, owner_user_id, filename")
+                .in_("submission_id", candidate_ids)
+                .limit(1)
+                .execute()
+            )
+            if user_result.data and len(user_result.data) > 0:
+                existing_record = user_result.data[0]
+                existing_owner = existing_record.get("owner_user_id") or current_user_id
+                existing_filename = existing_record.get("filename")
+                return {
+                    "is_duplicate": True,
+                    "existing_owner_user_id": existing_owner,
+                    "is_own_duplicate": True,
                     "existing_filename": existing_filename
                 }
         

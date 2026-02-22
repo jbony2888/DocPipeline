@@ -89,8 +89,9 @@
                         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                     </div>
                     <div class="modal-body text-center py-4">
-                        <p class="mb-0">Essays are processing and an email will be sent once they are done.</p>
+                        <p class="mb-0" id="processingStartedPrimaryMessage">Essays are processing and an email will be sent once they are done.</p>
                         <p class="text-muted small mt-2 mb-0">You can leave this page; processing continues in the background.</p>
+                        <div id="processingDuplicateNotice" class="alert alert-warning mt-3 mb-0 d-none" role="alert"></div>
                     </div>
                     <div class="modal-footer border-0 justify-content-center">
                         <button type="button" class="btn btn-primary" id="processingStartedDismissBtn" data-bs-dismiss="modal">OK</button>
@@ -223,9 +224,18 @@ document.addEventListener('DOMContentLoaded', function() {
     const duplicateCancelBtn = document.getElementById('duplicateCancelBtn');
     const duplicateModal = duplicateModalEl ? new bootstrap.Modal(duplicateModalEl) : null;
     const processingStartedEl = document.getElementById('processingStartedModal');
+    const processingDuplicateNotice = document.getElementById('processingDuplicateNotice');
+    const processingStartedPrimaryMessage = document.getElementById('processingStartedPrimaryMessage');
     
     if (processingStartedEl) {
         processingStartedEl.addEventListener('hidden.bs.modal', function() {
+            if (processingDuplicateNotice) {
+                processingDuplicateNotice.classList.add('d-none');
+                processingDuplicateNotice.textContent = '';
+            }
+            if (processingStartedPrimaryMessage) {
+                processingStartedPrimaryMessage.textContent = 'Essays are processing and an email will be sent once they are done.';
+            }
             selectedFiles = [];
             updateFilesList();
             if (filesInput) filesInput.value = '';
@@ -265,6 +275,8 @@ document.addEventListener('DOMContentLoaded', function() {
     let startTime = null;
     let selectedFiles = []; // Array to store File objects
     let lastScanResults = [];
+    let pendingDuplicateNotice = '';
+    let uiInteractionLocked = false;
     
     // Function to update the selected files display
     function updateFilesList() {
@@ -296,7 +308,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         <span>${file.name}</span>
                         <small class="text-muted ms-2">(${(file.size / 1024).toFixed(1)} KB)</small>
                     </div>
-                    <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeFile(${index})">
+                    <button type="button" class="btn btn-sm btn-outline-danger remove-file-btn" onclick="removeFile(${index})">
                         <i class="bi bi-x-circle"></i> Remove
                     </button>
                 `;
@@ -305,6 +317,7 @@ document.addEventListener('DOMContentLoaded', function() {
             
             console.log('Files list updated. Displayed', selectedFiles.length, 'files');
         }
+        applyInteractionLockState();
     }
     
     // Function to remove a file from the selection
@@ -421,9 +434,57 @@ document.addEventListener('DOMContentLoaded', function() {
         if (btnSpinner) btnSpinner.classList.add('d-none');
     }
 
+    function applyInteractionLockState() {
+        if (filesInput) filesInput.disabled = uiInteractionLocked;
+        document.querySelectorAll('input[name="upload_mode"]').forEach(radio => {
+            radio.disabled = uiInteractionLocked;
+        });
+        document.querySelectorAll('.remove-file-btn').forEach(btn => {
+            btn.disabled = uiInteractionLocked;
+        });
+        if (processBtn && uiInteractionLocked) processBtn.disabled = true;
+    }
+
+    function setInteractionLock(locked, message = 'Checking for duplicates...') {
+        uiInteractionLocked = locked;
+        applyInteractionLockState();
+
+        // Reuse the full-screen overlay to prevent page interactions during preflight.
+        if (loadingOverlay) {
+            if (locked) {
+                if (loadingMessage) loadingMessage.textContent = message;
+                if (timeEstimate) timeEstimate.textContent = '';
+                if (totalCount) totalCount.textContent = selectedFiles.length.toString();
+                if (completedCount) completedCount.textContent = '0';
+                if (progressBar) {
+                    progressBar.style.width = '0%';
+                    progressBar.setAttribute('aria-valuenow', '0');
+                }
+                if (progressText) progressText.textContent = '0%';
+                loadingOverlay.classList.remove('d-none');
+                loadingOverlay.style.display = 'flex';
+            } else {
+                loadingOverlay.classList.add('d-none');
+                loadingOverlay.style.display = 'none';
+            }
+        }
+    }
+
+    function showProcessingDuplicateNotice(message) {
+        if (!processingDuplicateNotice) return;
+        if (message && message.trim().length > 0) {
+            processingDuplicateNotice.textContent = message;
+            processingDuplicateNotice.classList.remove('d-none');
+        } else {
+            processingDuplicateNotice.textContent = '';
+            processingDuplicateNotice.classList.add('d-none');
+        }
+    }
+
     function startUpload(filesToUpload) {
         if (!filesToUpload || filesToUpload.length === 0) {
-            showToastModal('No files selected to upload.', 'warning');
+            showToastModal('All selected files were duplicates and skipped. Select "Reprocess" for duplicates you want to upload again.', 'warning');
+            setInteractionLock(false);
             resetSubmitButton();
             return;
         }
@@ -432,8 +493,13 @@ document.addEventListener('DOMContentLoaded', function() {
         resetSubmitButton();
         const processingStartedEl = document.getElementById('processingStartedModal');
         if (processingStartedEl) {
+            showProcessingDuplicateNotice(pendingDuplicateNotice);
+            if (pendingDuplicateNotice && processingStartedPrimaryMessage) {
+                processingStartedPrimaryMessage.textContent = 'Some files were detected as duplicates while processing.';
+            }
             bootstrap.Modal.getOrCreateInstance(processingStartedEl).show();
         }
+        setInteractionLock(false);
 
         // Upload in background; errors surface in review or via error modal
         const formData = new FormData();
@@ -456,9 +522,17 @@ document.addEventListener('DOMContentLoaded', function() {
             } else if (data.errors && data.errors.length > 0) {
                 console.warn('Some files failed:', data.errors);
             }
+            const duplicateCount = (data.job_ids || []).filter(j => j.is_duplicate).length;
+            if (duplicateCount > 0) {
+                showProcessingDuplicateNotice(`${duplicateCount} duplicate file(s) detected. Existing submissions were reused/updated.`);
+                if (processingStartedPrimaryMessage) {
+                    processingStartedPrimaryMessage.textContent = 'Some files were detected as duplicates while processing.';
+                }
+            }
         })
         .catch(error => {
             console.error('Error:', error);
+            setInteractionLock(false);
             showUploadErrorModal(error.message || 'Error uploading files. Please try again.');
         });
     }
@@ -523,10 +597,8 @@ document.addEventListener('DOMContentLoaded', function() {
         }
 
         if (duplicateConfirmBtn) {
-            const newConfirmBtn = duplicateConfirmBtn.cloneNode(true);
-            duplicateConfirmBtn.parentNode.replaceChild(newConfirmBtn, duplicateConfirmBtn);
-
-            newConfirmBtn.addEventListener('click', function() {
+            // Rebind handler in place so repeated scans don't operate on a detached node.
+            duplicateConfirmBtn.onclick = function() {
                 const keepIndexes = new Set(
                     Array.from(document.querySelectorAll('.duplicate-keep-checkbox:checked'))
                         .map(cb => Number(cb.dataset.index))
@@ -537,10 +609,29 @@ document.addEventListener('DOMContentLoaded', function() {
                 });
 
                 duplicateModal.hide();
+                if (filesToUpload.length === 0) {
+                    showToastModal(
+                        'All selected files are duplicates and were skipped. Check "Reprocess" for any duplicate you want to upload again.',
+                        'warning'
+                    );
+                    pendingDuplicateNotice = `Duplicate scan found ${duplicateResults.length} duplicate file(s). All were skipped (none selected for reprocess).`;
+                    resetSubmitButton();
+                    return;
+                }
+                const reprocessCount = keepIndexes.size;
+                const skippedCount = duplicateResults.length - reprocessCount;
+                if (skippedCount > 0 && reprocessCount > 0) {
+                    pendingDuplicateNotice = `Duplicate scan found ${duplicateResults.length} duplicate file(s): ${skippedCount} skipped, ${reprocessCount} marked for reprocess.`;
+                } else if (skippedCount > 0) {
+                    pendingDuplicateNotice = `Duplicate scan found ${duplicateResults.length} duplicate file(s). ${skippedCount} skipped.`;
+                } else {
+                    pendingDuplicateNotice = `Duplicate scan found ${duplicateResults.length} duplicate file(s). All marked for reprocess.`;
+                }
                 onConfirm(filesToUpload);
-            });
+            };
         }
 
+        setInteractionLock(false);
         duplicateModal.show();
     }
     
@@ -662,6 +753,7 @@ document.addEventListener('DOMContentLoaded', function() {
             processBtn.disabled = true;
             btnText.textContent = 'Scanning...';
             btnSpinner.classList.remove('d-none');
+            setInteractionLock(true, 'Checking selected files for duplicates...');
 
             scanDuplicates(selectedFiles)
                 .then(data => {
@@ -677,12 +769,14 @@ document.addEventListener('DOMContentLoaded', function() {
                     }
 
                     if (duplicateResults.length === 0) {
+                        pendingDuplicateNotice = '';
                         btnText.textContent = 'Uploading...';
                         startUpload(selectedFiles);
                         return;
                     }
 
                     btnText.textContent = 'Upload Selected';
+                    pendingDuplicateNotice = `Duplicate scan found ${duplicateResults.length} duplicate file(s).`;
                     showDuplicateModal(duplicateResults, (filesToUpload) => {
                         btnText.textContent = 'Uploading...';
                         startUpload(filesToUpload);
@@ -690,6 +784,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 })
                 .catch(error => {
                     console.error('Error scanning duplicates:', error);
+                    setInteractionLock(false);
                     showToastModal('Error scanning files: ' + error.message, 'error');
                     resetSubmitButton();
                 });

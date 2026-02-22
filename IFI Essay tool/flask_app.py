@@ -28,7 +28,7 @@ from pipeline.supabase_storage import ingest_upload_supabase, get_file_url, down
 from pipeline.runner import process_submission
 from pipeline.csv_writer import append_to_csv
 from pipeline.schema import SubmissionRecord
-from pipeline.grouping import group_records, get_school_grade_records, get_all_school_names, get_grades_for_school
+from pipeline.grouping import group_records, get_school_grade_records, get_all_school_names, get_grades_for_school, normalize_key
 from pipeline.supabase_db import (
     init_database,
     save_record,
@@ -39,6 +39,7 @@ from pipeline.supabase_db import (
     get_stats as get_db_stats
 )
 from pipeline.validate import can_approve_record
+from pipeline.guardrails.validation import is_grade_missing
 # Removed batch_defaults - using simple bulk edit instead
 # from pipeline.batch_defaults import create_upload_batch, get_batch_with_submissions, apply_batch_defaults
 from auth.supabase_client import get_supabase_client, get_user_id, normalize_supabase_url
@@ -202,6 +203,59 @@ def get_pdf_path(artifact_dir: str, access_token: Optional[str] = None) -> Optio
 
 def allowed_file(filename):
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+
+
+def _coerce_reason_codes(value: Any) -> set[str]:
+    if value is None:
+        return set()
+    if isinstance(value, list):
+        items = value
+    elif isinstance(value, str):
+        items = [s.strip() for s in value.split(";")]
+    else:
+        items = [str(value).strip()]
+    return {s for s in items if s and s != "PENDING_REVIEW"}
+
+
+def _is_missing_school_name(value: Any) -> bool:
+    return value is None or str(value).strip() == ""
+
+
+def _sync_required_field_reason_codes(
+    student_name: Any,
+    school_name: Any,
+    grade: Any,
+    word_count: Any,
+    existing_reason_codes: Any,
+) -> tuple[str, bool]:
+    """
+    Keep required-field reason codes aligned with current values.
+    Returns (reason_codes_db_string, needs_review_flag).
+    """
+    reason_codes = _coerce_reason_codes(existing_reason_codes)
+    reason_codes.discard("MISSING_STUDENT_NAME")
+    reason_codes.discard("MISSING_SCHOOL_NAME")
+    reason_codes.discard("MISSING_GRADE")
+
+    can_approve, missing_fields = can_approve_record(
+        {
+            "student_name": student_name,
+            "school_name": school_name,
+            "grade": grade,
+            "word_count": word_count,
+        }
+    )
+    del can_approve  # only missing_fields are needed here
+
+    if "student_name" in missing_fields:
+        reason_codes.add("MISSING_STUDENT_NAME")
+    if "school_name" in missing_fields:
+        reason_codes.add("MISSING_SCHOOL_NAME")
+    if "grade" in missing_fields:
+        reason_codes.add("MISSING_GRADE")
+
+    reason_codes_db = ";".join(sorted(reason_codes))
+    return reason_codes_db, bool(reason_codes)
 
 
 def _is_access_token_valid(access_token: Optional[str]) -> bool:
@@ -730,6 +784,7 @@ def review():
 
         action_label = "Approve"
         schools_data = None
+        approved_ungrouped = []
     else:
         # For approved records, show grouped by school and grade
         approved_start = time.perf_counter()
@@ -745,15 +800,120 @@ def review():
                 "grade",
                 "father_figure_name",
                 "word_count",
-                "artifact_dir"
+                "artifact_dir",
+                "upload_batch_id",
+                "review_reason_codes",
             ]
         )
         log_timing(f"⏱️ review approved records: {(time.perf_counter() - approved_start):.3f}s ({len(approved_records)} rows)")
+
+        # Invariant guardrail:
+        # Records missing school or grade must be in needs_review with reason codes.
+        repaired_count = 0
+        compliant_approved_records = []
+        for rec in approved_records:
+            missing_codes: set[str] = set()
+            _, missing_fields = can_approve_record(
+                {
+                    "student_name": rec.get("student_name"),
+                    "school_name": rec.get("school_name"),
+                    "grade": rec.get("grade"),
+                    "word_count": rec.get("word_count"),
+                }
+            )
+            if "student_name" in missing_fields:
+                missing_codes.add("MISSING_STUDENT_NAME")
+            if "school_name" in missing_fields:
+                missing_codes.add("MISSING_SCHOOL_NAME")
+            if "grade" in missing_fields:
+                missing_codes.add("MISSING_GRADE")
+
+            if not missing_codes:
+                compliant_approved_records.append(rec)
+                continue
+
+            merged_codes = _coerce_reason_codes(rec.get("review_reason_codes"))
+            merged_codes.update(missing_codes)
+            updated = update_db_record(
+                rec["submission_id"],
+                {
+                    "needs_review": True,
+                    "review_reason_codes": ";".join(sorted(merged_codes)),
+                },
+                owner_user_id=user_id,
+                access_token=access_token,
+                refresh_token=refresh_token,
+            )
+            if updated:
+                repaired_count += 1
+            else:
+                # If repair fails, keep it visible in approved list rather than hiding it.
+                compliant_approved_records.append(rec)
+
+        if repaired_count > 0:
+            invalidate_db_stats_cache(user_id)
+            flash(
+                f"Moved {repaired_count} record(s) to Needs Review because School or Grade was missing.",
+                "warning",
+            )
+
+        approved_records = compliant_approved_records
+
+        # Approved-view filters (server-side): school, grade, batch
+        selected_school_filter = (request.args.get("school") or "").strip()
+        selected_grade_filter = (request.args.get("grade") or "").strip()
+        selected_batch_filter = (request.args.get("batch") or "").strip()
+
+        school_filter_options = sorted(
+            {
+                str(r.get("school_name", "")).strip()
+                for r in approved_records
+                if str(r.get("school_name", "")).strip()
+            },
+            key=lambda s: s.casefold(),
+        )
+        grade_filter_options = sorted(
+            {
+                str(r.get("grade", "")).strip()
+                for r in approved_records
+                if str(r.get("grade", "")).strip()
+            },
+            key=lambda g: (not str(g).isdigit(), str(g).casefold()),
+        )
+        batch_filter_options = sorted(
+            {
+                str(r.get("upload_batch_id", "")).strip()
+                for r in approved_records
+                if str(r.get("upload_batch_id", "")).strip()
+            }
+        )
+
+        filtered_approved_records = approved_records
+        if selected_school_filter:
+            school_key = normalize_key(selected_school_filter)
+            filtered_approved_records = [
+                r for r in filtered_approved_records
+                if normalize_key(r.get("school_name")) == school_key
+            ]
+        if selected_grade_filter:
+            grade_key = normalize_key(selected_grade_filter)
+            filtered_approved_records = [
+                r for r in filtered_approved_records
+                if normalize_key(str(r.get("grade", ""))) == grade_key
+            ]
+        if selected_batch_filter:
+            filtered_approved_records = [
+                r for r in filtered_approved_records
+                if str(r.get("upload_batch_id", "")).strip() == selected_batch_filter
+            ]
+
         group_start = time.perf_counter()
-        grouped = group_records(approved_records)
+        grouped = group_records(filtered_approved_records)
         log_timing(f"⏱️ review group_records: {(time.perf_counter() - group_start):.3f}s")
         records = []  # Not used when showing grouped view
         schools_data = dict(sorted(grouped["schools"].items()))
+        # These are approved rows that cannot be grouped (missing school/grade).
+        approved_ungrouped = grouped.get("needs_review", []) if isinstance(grouped, dict) else []
         # Sort grades within each school
         for school_name in schools_data:
             schools_data[school_name] = dict(sorted(schools_data[school_name].items(), 
@@ -781,6 +941,14 @@ def review():
                          get_pdf_path=lambda ad: get_pdf_path(ad, session.get("supabase_access_token")),
                          grouped_data=grouped if review_mode == "approved" else None,
                          schools_data=schools_data,
+                         approved_ungrouped=approved_ungrouped,
+                         school_filter_options=school_filter_options if review_mode == "approved" else [],
+                         grade_filter_options=grade_filter_options if review_mode == "approved" else [],
+                         batch_filter_options=batch_filter_options if review_mode == "approved" else [],
+                         selected_school_filter=selected_school_filter if review_mode == "approved" else "",
+                         selected_grade_filter=selected_grade_filter if review_mode == "approved" else "",
+                         selected_batch_filter=selected_batch_filter if review_mode == "approved" else "",
+                         filtered_approved_count=(len(filtered_approved_records) if review_mode == "approved" else 0),
                          batch_info=batch_info,
                          upload_batch_id=upload_batch_id)
 
@@ -879,20 +1047,37 @@ def record_detail(submission_id):
                     # No number found, keep as text (e.g., "Pre-Kindergarten", "First Grade")
                     updates["grade"] = grade_str
         
+        effective_student_name = updates.get("student_name") or record.get("student_name")
+        effective_school_name = updates.get("school_name") if "school_name" in updates else record.get("school_name")
+        effective_grade = updates.get("grade") if "grade" in updates else record.get("grade")
+
+        # Keep required-field reason codes in sync with edited values.
+        synced_codes_db, synced_needs_review = _sync_required_field_reason_codes(
+            student_name=effective_student_name,
+            school_name=effective_school_name,
+            grade=effective_grade,
+            word_count=record.get("word_count"),
+            existing_reason_codes=record.get("review_reason_codes"),
+        )
+        updates["review_reason_codes"] = synced_codes_db
+        updates["needs_review"] = synced_needs_review
+
         # Auto-reassignment: If record now has school_name and grade, check if it can be auto-approved
         # This happens when a record that was missing school/grade gets those fields filled in
         auto_approve = False
         if updates.get("school_name") and updates.get("grade"):
             # Check if record can now be approved (has all required fields)
             can_approve, missing_fields = can_approve_record({
-                "student_name": updates.get("student_name") or record.get("student_name"),
+                "student_name": effective_student_name,
                 "school_name": updates["school_name"],
-                "grade": updates["grade"]
+                "grade": updates["grade"],
+                "word_count": record.get("word_count"),
             })
             
             # If record was in needs_review and now has all required fields, auto-approve it
             if can_approve and record.get("needs_review", True):
                 updates["needs_review"] = False
+                updates["review_reason_codes"] = ""
                 auto_approve = True
             elif not can_approve:
                 # Still missing fields, keep in needs_review
@@ -938,7 +1123,8 @@ def approve_record(submission_id):
     can_approve, missing_fields = can_approve_record({
         "student_name": record.get("student_name"),
         "school_name": record.get("school_name"),
-        "grade": record.get("grade")
+        "grade": record.get("grade"),
+        "word_count": record.get("word_count"),
     })
     
     if not can_approve:
@@ -949,7 +1135,13 @@ def approve_record(submission_id):
         }), 400
     
     refresh_token = session.get("supabase_refresh_token")
-    if update_db_record(submission_id, {"needs_review": False}, owner_user_id=user_id, access_token=access_token, refresh_token=refresh_token):
+    if update_db_record(
+        submission_id,
+        {"needs_review": False, "review_reason_codes": ""},
+        owner_user_id=user_id,
+        access_token=access_token,
+        refresh_token=refresh_token
+    ):
         invalidate_db_stats_cache(user_id)
         return jsonify({"success": True})
     else:

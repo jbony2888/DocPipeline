@@ -37,11 +37,10 @@ env.yaml
 .DS_Store
 Thumbs.db
 
-# Keep .streamlit/ config for deployment
-!.streamlit/config.toml
+# Streamlit local config/secrets
+.streamlit/
 
-# Streamlit Cloud - don't commit secrets
-.streamlit/secrets.toml# Data directories (will recreate on deployment)
+# Data directories (will recreate on deployment)
 data/
 *.db
 

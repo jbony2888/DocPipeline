@@ -4,22 +4,21 @@ Validation module: computes enum review reasons and auto-approval eligibility.
 
 from __future__ import annotations
 
+import re
 from typing import Dict, List, Tuple
 
 from pipeline.schema import SubmissionRecord, DocClass
-from pipeline.validation_policy import POLICY_VERSION, ValidationPolicy, get_policy
+from pipeline.guardrails.enums import ALLOWED_REASON_CODES
+from pipeline.guardrails.doc_role import DocRole, classify_doc_role
+from pipeline.guardrails.policy import POLICY_VERSION, ValidationPolicy, get_policy
+from pipeline.guardrails.reference_data import SchoolReferenceValidator
+from pipeline.guardrails.validation import (
+    is_grade_missing,
+    is_name_school_possible_swap,
+    normalize_grade,
+)
 
-ALLOWED_REASON_CODES = {
-    "MISSING_STUDENT_NAME",
-    "MISSING_GRADE",
-    "MISSING_SCHOOL_NAME",
-    "EMPTY_ESSAY",
-    "SHORT_ESSAY",
-    "OCR_LOW_CONFIDENCE",
-    "EXTRACTION_FALLBACK_USED",
-    "TEMPLATE_ONLY",
-    "DOC_TYPE_UNKNOWN",
-}
+_SCHOOL_REFERENCE_VALIDATOR = SchoolReferenceValidator()
 
 
 def _resolve_doc_class(record: Dict) -> DocClass:
@@ -50,7 +49,40 @@ def _is_effectively_missing_student_name(val) -> bool:
         return True
     if s == "JUDGING PROCESS" or lower == "judging process":
         return True
+    # Guardrail: avoid treating essay body text as a student's name.
+    # Real names are short and typically do not contain sentence punctuation.
+    token_count = len([t for t in re.split(r"\s+", s) if t])
+    if len(s) > 60 or token_count > 5:
+        return True
+    if re.search(r"[.!?;:]", s):
+        return True
     return False
+
+
+def _looks_like_essay_text(s: str) -> bool:
+    """
+    Heuristic to detect paragraph-like text accidentally extracted into a field.
+    """
+    if not s:
+        return False
+    text = s.strip()
+    if "\n" in text:
+        return True
+    token_count = len([t for t in re.split(r"\s+", text) if t])
+    if len(text) > 80 or token_count > 8:
+        return True
+    if re.search(r"[.!?;:]", text):
+        return True
+    lower = text.lower()
+    essay_markers = (
+        "my father",
+        "my mother",
+        "another example",
+        "because",
+        "paragraph",
+        "hard working",
+    )
+    return any(marker in lower for marker in essay_markers)
 
 
 def _is_effectively_missing_school_name(val) -> bool:
@@ -66,24 +98,15 @@ def _is_effectively_missing_school_name(val) -> bool:
         return True
     if s == "Escuela" or s == "/ Escuela":
         return True
+    # Guardrail: long/sentence-like content in school_name is almost always essay text.
+    if _looks_like_essay_text(s):
+        return True
     return False
 
 
 def _check_grade_valid(grade) -> bool:
-    """Return True if grade is valid (1-12 or K/Kinder/Kindergarten variants)."""
-    if grade is None or grade == "":
-        return False
-    if isinstance(grade, str):
-        grade_str = grade.strip().upper()
-        if grade_str in ["K", "KINDER", "KINDERGARTEN", "PRE-K", "PREK"]:
-            return True
-        try:
-            return 1 <= int(grade_str) <= 12
-        except ValueError:
-            return True  # Accept other text grades (e.g. "First Grade")
-    if isinstance(grade, int):
-        return 1 <= grade <= 12
-    return False
+    normalized, _ = normalize_grade(grade)
+    return normalized is not None
 
 
 def _resolve_doc_type(partial: Dict, report: Dict | None) -> str:
@@ -126,6 +149,8 @@ def _coerce_reason_codes(value) -> List[str]:
 
 
 def can_auto_approve(record: Dict, policy: ValidationPolicy) -> bool:
+    if str(record.get("doc_role") or "").strip().lower() == DocRole.CONTAINER.value:
+        return False
     codes = set(_coerce_reason_codes(record.get("review_reason_codes")))
     if codes:
         return False
@@ -154,6 +179,10 @@ def can_approve_record(record: Dict) -> Tuple[bool, List[str]]:
     Returns:
         Tuple of (can_approve: bool, missing_fields: List[str])
     """
+    doc_role = classify_doc_role(record, {}, chunk_metadata=record.get("chunk_metadata"))
+    if doc_role == DocRole.CONTAINER:
+        return True, []
+
     policy = get_policy(record, {})
     missing_fields: List[str] = []
 
@@ -218,9 +247,9 @@ def validate_record(partial: dict, report: dict | None = None) -> tuple[Submissi
     )
     doc_type = _resolve_doc_type(partial, report)
     policy = get_policy({**partial, "doc_type": doc_type}, report or {})
-    is_container_parent = bool(partial.get("is_container_parent"))
+    doc_role = classify_doc_role(partial, report or {}, chunk_metadata=partial.get("chunk_metadata"))
 
-    if doc_type == "bulk_scanned_batch" and is_container_parent:
+    if doc_role == DocRole.CONTAINER:
         reason_codes = set()
         needs_review = False
         review_reason_codes_list: List[str] = []
@@ -236,14 +265,16 @@ def validate_record(partial: dict, report: dict | None = None) -> tuple[Submissi
             "validation_policy_version": POLICY_VERSION,
             "policy_version": POLICY_VERSION,
             "doc_type": doc_type,
+            "doc_role": doc_role.value,
             "ocr_provider": partial.get("ocr_provider"),
             "extraction_method": partial.get("extraction_method"),
             "parse_model": partial.get("parse_model"),
             "word_count": word_count,
             "final_text_char_count": int(partial.get("final_text_char_count") or 0),
-            "auto_approve_eligible": True,
-            "auto_approve_blockers": [],
+            "auto_approve_eligible": False,
+            "auto_approve_blockers": ["CONTAINER_RECORD"],
             "container_skipped": True,
+            "validation_skipped_reason": "container_record",
         }
         record = SubmissionRecord(
             submission_id=partial["submission_id"],
@@ -272,36 +303,46 @@ def validate_record(partial: dict, report: dict | None = None) -> tuple[Submissi
         if doc_type == "unknown":
             reason_codes.add("DOC_TYPE_UNKNOWN")
 
-    if "TEMPLATE_ONLY" not in reason_codes and "student_name" in policy.required_fields:
+    # Required identity fields must be enforced for all document types.
+    if "student_name" in policy.required_fields:
         student_name = partial.get("student_name")
         if _is_effectively_missing_student_name(student_name):
             reason_codes.add("MISSING_STUDENT_NAME")
 
-    if "TEMPLATE_ONLY" not in reason_codes and "school_name" in policy.required_fields:
+    if "school_name" in policy.required_fields:
         school_name = partial.get("school_name")
         if _is_effectively_missing_school_name(school_name):
             reason_codes.add("MISSING_SCHOOL_NAME")
 
-    if "TEMPLATE_ONLY" not in reason_codes and "grade" in policy.required_fields:
-        grade = partial.get("grade")
-        grade_normalized = grade
-        if isinstance(grade, str) and grade.strip().upper() in ["K", "KINDER", "KINDERGARTEN"]:
-            grade_normalized = None  # "K" is valid but stored as None (schema expects int)
-
-        if grade_normalized is None or grade_normalized == "":
-            if isinstance(grade, str) and grade.strip().upper() in ["K", "KINDER", "KINDERGARTEN"]:
-                pass  # K is valid
-            else:
-                reason_codes.add("MISSING_GRADE")
-        elif isinstance(grade, str) and grade.strip().upper() not in ["K", "KINDER", "KINDERGARTEN"]:
-            try:
-                grade_int = int(grade.strip())
-                if not (1 <= grade_int <= 12):
-                    reason_codes.add("MISSING_GRADE")
-            except (ValueError, AttributeError):
-                reason_codes.add("MISSING_GRADE")
-        elif isinstance(grade, int) and not (1 <= grade <= 12):
+    grade_raw = partial.get("grade")
+    grade_normalized, grade_norm_method = normalize_grade(grade_raw)
+    grade_norm_telemetry = {
+        "raw": grade_raw,
+        "normalized": grade_normalized,
+        "method": grade_norm_method,
+    }
+    if "grade" in policy.required_fields:
+        if is_grade_missing(grade_raw):
             reason_codes.add("MISSING_GRADE")
+        elif grade_normalized is None:
+            reason_codes.add("INVALID_GRADE_RANGE")
+
+    school_reference_validation = {
+        "matched": False,
+        "method": "skipped",
+        "confidence": 0.0,
+        "reference_version": _SCHOOL_REFERENCE_VALIDATOR.reference_version,
+    }
+    if "TEMPLATE_ONLY" not in reason_codes and "school_name" in policy.required_fields:
+        school_name = partial.get("school_name")
+        if not _is_effectively_missing_school_name(school_name):
+            school_reference_validation = _SCHOOL_REFERENCE_VALIDATOR.validate(school_name)
+            if not school_reference_validation["matched"]:
+                reason_codes.add("UNKNOWN_SCHOOL")
+
+    if "TEMPLATE_ONLY" not in reason_codes:
+        if is_name_school_possible_swap(partial.get("student_name"), partial.get("school_name")):
+            reason_codes.add("POSSIBLE_FIELD_SWAP")
 
     word_count = int(partial.get("word_count") or 0)
     doc_format = partial.get("format")
@@ -350,6 +391,7 @@ def validate_record(partial: dict, report: dict | None = None) -> tuple[Submissi
     can_auto = can_auto_approve(
         {
             **partial,
+            "doc_role": doc_role.value,
             "review_reason_codes": review_reason_codes_list,
             "extraction_method": extraction_method,
         },
@@ -357,17 +399,7 @@ def validate_record(partial: dict, report: dict | None = None) -> tuple[Submissi
     )
     
     # Create SubmissionRecord
-    # Preserve "K" (Kindergarten) as string "K" so it displays; reject out-of-range numeric grades
-    grade_for_record = partial.get("grade")
-    if isinstance(grade_for_record, str) and grade_for_record.strip().upper() in ["K", "KINDER", "KINDERGARTEN"]:
-        grade_for_record = "K"  # Store so UI shows "K", not N/A
-    elif grade_for_record is not None:
-        try:
-            g = int(grade_for_record) if isinstance(grade_for_record, (int, float)) else int(str(grade_for_record).strip())
-            if not (1 <= g <= 12):
-                grade_for_record = None
-        except (ValueError, TypeError):
-            pass
+    grade_for_record = grade_normalized
     
     record = SubmissionRecord(
         submission_id=partial["submission_id"],
@@ -397,6 +429,7 @@ def validate_record(partial: dict, report: dict | None = None) -> tuple[Submissi
         "validation_policy_version": POLICY_VERSION,
         "policy_version": POLICY_VERSION,
         "doc_type": doc_type,
+        "doc_role": doc_role.value,
         "ocr_provider": partial.get("ocr_provider"),
         "extraction_method": extraction_method,
         "parse_model": (
@@ -407,6 +440,8 @@ def validate_record(partial: dict, report: dict | None = None) -> tuple[Submissi
         "final_text_char_count": int(partial.get("final_text_char_count") or 0),
         "auto_approve_eligible": can_auto,
         "auto_approve_blockers": review_reason_codes_list,
+        "grade_normalization": grade_norm_telemetry,
+        "school_reference_validation": school_reference_validation,
     }
 
     assert validation_report["needs_review"] == (len(validation_report["review_reason_codes"]) > 0), (
