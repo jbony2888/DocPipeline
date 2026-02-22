@@ -15,8 +15,8 @@ from scripts.regression_check import has_multiple_header_peaks
 def _load_exported_guardrails_core():
     module_path = (
         Path(__file__).resolve().parents[2]
-        / "idp_guardrails_export"
-        / "idp_guardrails_core.py"
+        / "idp_guardrails_core"
+        / "core.py"
     )
     spec = importlib.util.spec_from_file_location("idp_guardrails_core_export", module_path)
     module = importlib.util.module_from_spec(spec)

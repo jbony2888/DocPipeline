@@ -9,9 +9,6 @@ and prints the first 60 lines of page-0 text so you can see label/value order.
 import sys
 from pathlib import Path
 
-# Allow running from repo root or from IFI Essay tool
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
 import fitz
 
 

@@ -8,11 +8,14 @@ import re
 from typing import Dict, List, Tuple
 
 from pipeline.schema import SubmissionRecord, DocClass
-from pipeline.guardrails.enums import ALLOWED_REASON_CODES
-from pipeline.guardrails.doc_role import DocRole, classify_doc_role
-from pipeline.guardrails.policy import POLICY_VERSION, ValidationPolicy, get_policy
-from pipeline.guardrails.reference_data import SchoolReferenceValidator
-from pipeline.guardrails.validation import (
+from idp_guardrails_core.core import (
+    ALLOWED_REASON_CODES,
+    POLICY_VERSION,
+    DocRole,
+    SchoolReferenceValidator,
+    ValidationPolicy,
+    classify_doc_role,
+    get_policy,
     is_grade_missing,
     is_name_school_possible_swap,
     normalize_grade,
@@ -246,8 +249,12 @@ def validate_record(partial: dict, report: dict | None = None) -> tuple[Submissi
         else (doc_class_raw if isinstance(doc_class_raw, DocClass) else DocClass.SINGLE_TYPED)
     )
     doc_type = _resolve_doc_type(partial, report)
-    policy = get_policy({**partial, "doc_type": doc_type}, report or {})
     doc_role = classify_doc_role(partial, report or {}, chunk_metadata=partial.get("chunk_metadata"))
+    policy_record = {**partial, "doc_type": doc_type}
+    if doc_type == "bulk_scanned_batch" and doc_role == DocRole.DOCUMENT:
+        # Keep wrapper records bypassed, but validate child chunks as real documents.
+        policy_record["doc_type"] = "unknown"
+    policy = get_policy(policy_record, report or {})
 
     if doc_role == DocRole.CONTAINER:
         reason_codes = set()

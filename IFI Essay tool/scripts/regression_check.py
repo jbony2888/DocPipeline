@@ -10,6 +10,9 @@ Runs four scenario checks:
 Supports:
 - Stub/real OCR providers for offline/online runs.
 - Legacy page-1-only simulation for apples-to-apples comparison.
+
+Run from project root as a module:
+  python -m scripts.regression_check --pdf-dir docs --pdf-glob 'typed-form-submission/tc01*.pdf' --ocr-provider stub --output-dir artifacts/harness_runs/pkg_smoke
 """
 
 from __future__ import annotations
@@ -28,24 +31,24 @@ import fitz  # PyMuPDF
 
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent
-if str(REPO_ROOT) not in sys.path:
-    sys.path.append(str(REPO_ROOT))
 
 from pipeline.document_analysis import analyze_document, ChunkRange
 from pipeline.runner import process_submission
 from pipeline.ocr import ocr_pdf_pages, extract_pdf_text_layer
 from pipeline.extract import looks_like_essay_fragment
 from pipeline.doc_type_routing import detect_pdf_has_acroform_fields, route_doc_type
-from pipeline.guardrails.attribution import (
+from idp_guardrails_core.core import (
+    ALLOWED_REASON_CODES,
+    DocRole,
     assert_expected_attribution,
     build_field_attribution_debug_payload,
+    build_run_snapshot,
+    classify_doc_role,
+    compare_snapshots,
     compute_field_attribution_confidence,
     compute_field_source_pages,
     load_per_page_text,
 )
-from pipeline.guardrails.drift import build_run_snapshot, compare_snapshots
-from pipeline.guardrails.doc_role import DocRole, classify_doc_role
-from pipeline.guardrails.enums import ALLOWED_REASON_CODES
 
 
 def generate_hybrid_fixture(tmpdir: Path) -> Path:

@@ -1587,7 +1587,7 @@ def serve_pdf(file_path):
                                 page = doc.load_page(chunk_index)
                                 single_page = fitz.open()
                                 single_page.insert_pdf(doc, from_page=chunk_index, to_page=chunk_index, widgets=0)
-                                file_bytes = single_page.write_tobytes()
+                                file_bytes = single_page.tobytes()
                                 single_page.close()
                             doc.close()
                         except Exception as e:
