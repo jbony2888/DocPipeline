@@ -1,8 +1,0 @@
-{
-  "is_valid": false,
-  "needs_review": true,
-  "issues": [
-    "MISSING_GRADE"
-  ],
-  "review_reason_codes": "MISSING_GRADE"
-}
