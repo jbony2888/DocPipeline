@@ -10,12 +10,14 @@ from email.mime.multipart import MIMEMultipart
 from typing import Dict, Any, Optional
 from datetime import datetime
 
+DEFAULT_APP_URL = "https://docpipeline.onrender.com"
+
 
 def get_review_url(upload_batch_id: Optional[str] = None) -> str:
     """
     Generate URL to the review page (needs_review). Optionally include batch for direct link.
     """
-    base_url = os.environ.get("APP_URL", "http://localhost:5000")
+    base_url = os.environ.get("APP_URL", DEFAULT_APP_URL)
     url = f"{base_url}/review?mode=needs_review"
     if upload_batch_id:
         url += f"&upload_batch_id={upload_batch_id}"
@@ -280,7 +282,7 @@ def get_job_url(job_id: str) -> str:
     Returns:
         Full URL to job details page
     """
-    base_url = os.environ.get("APP_URL", "http://localhost:5000")
+    base_url = os.environ.get("APP_URL", DEFAULT_APP_URL)
     return f"{base_url}/jobs/{job_id}"
 
 
