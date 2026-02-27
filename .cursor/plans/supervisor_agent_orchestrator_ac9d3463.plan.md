@@ -23,6 +23,11 @@ pip install langchain langgraph langsmith
 
 **Existing stack (unchanged):** Groq, Supabase, PyMuPDF, Flask, existing `pipeline/`* modules.
 
+**Dependency integration requirement (current codebase):**
+- Add the new packages to both runtime files:
+  - `IFI Essay tool/requirements.txt`
+  - `IFI Essay tool/requirements-flask.txt`
+
 **Python:** 3.10+
 
 ---
@@ -76,6 +81,8 @@ flowchart TB
 - `[pipeline/extract_ifi.py](IFI Essay tool/pipeline/extract_ifi.py)`: LLM (Groq) extraction, typed-form rules, freeform heuristics; `extract_fields_ifi()` and `extract_ifi_submission()`.
 - `[pipeline/supabase_db.py](IFI Essay tool/pipeline/supabase_db.py)`: `save_record`, `update_record`, `get_record_by_id`.
 - Supabase: `submissions` table with `needs_review`, `review_reason_codes`, `ocr_confidence_avg`.
+- Existing performance telemetry: `processing_metrics` table via `007_create_processing_metrics_table.sql`.
+- Existing timing contract: `process_submission()` already emits `report["timing_ms"]` (`ocr`, `segmentation`, `extraction`, `validation`, `total`) and `jobs/process_submission.py` persists those metrics.
 
 ---
 
@@ -268,7 +275,7 @@ def create_orchestrator_graph(checkpointer=None):
 **Modify:** `[jobs/process_submission.py](IFI Essay tool/jobs/process_submission.py)`
 
 ```python
-USE_ORCHESTRATOR = os.getenv("USE_ORCHESTRATOR", "true").lower() == "true"
+USE_ORCHESTRATOR = os.getenv("USE_ORCHESTRATOR", "false").lower() == "true"
 
 if USE_ORCHESTRATOR:
     from pipeline.orchestrator_graph import create_orchestrator_graph
@@ -298,6 +305,12 @@ else:
 
 The job continues to call `save_db_record(record, ...)` after the block; the graph returns the final `record` and `report` in the same shape.
 
+**Compatibility constraints (must preserve):**
+- Keep existing chunk loop behavior and `DocClass` routing in `jobs/process_submission.py`.
+- Preserve storage artifact uploads and existing Supabase DB save flow.
+- Preserve metrics writes to `processing_metrics` (`save_processing_metric`) and keep existing field names.
+- Ensure graph path returns a `report` that still includes current keys used downstream (`stages`, `ocr_summary`, `timing_ms`, `extraction_debug`, `needs_review`).
+
 ### 1.6 LangChain Tools (Optional)
 
 For nodes that delegate to LangChain tools:
@@ -316,7 +329,7 @@ Nodes can invoke tools via `tool.invoke(...)`; LangSmith will trace tool calls.
 
 ### 1.7 Database Migration for Orchestrator Logs
 
-**New migration:** `supabase/migrations/007_create_orchestrator_logs.sql`
+**New migration:** `supabase/migrations/008_create_orchestrator_logs.sql`
 
 ```sql
 CREATE TABLE IF NOT EXISTS orchestrator_logs (
@@ -347,6 +360,8 @@ def extract_missing_fields_only(raw_text: str, missing_fields: List[str]) -> dic
     # Build prompt; call Groq; return {field: value} for fields in missing_fields
 ```
 
+**Implementation note:** This helper does not exist in the current codebase yet and must be implemented before wiring `retry_llm_node`.
+
 ### 1.9 Files to Create/Modify (Phase 1)
 
 
@@ -356,9 +371,10 @@ def extract_missing_fields_only(raw_text: str, missing_fields: List[str]) -> dic
 | Create | `pipeline/orchestrator_nodes.py`                                                  |
 | Create | `pipeline/orchestrator_routing.py`                                                |
 | Create | `pipeline/orchestrator_graph.py`                                                  |
-| Create | `supabase/migrations/007_create_orchestrator_logs.sql`                            |
+| Create | `supabase/migrations/008_create_orchestrator_logs.sql`                            |
 | Modify | `jobs/process_submission.py` — call `graph.invoke()` when `USE_ORCHESTRATOR=true` |
 | Modify | `pipeline/extract_ifi.py` — add `extract_missing_fields_only()`                   |
+| Modify | `requirements.txt` and `requirements-flask.txt` — add LangGraph stack             |
 
 
 **Removed:** ~~`orchestrator_tools.py`~~, ~~`orchestrator.py`~~ (replaced by nodes + graph)
@@ -450,7 +466,7 @@ When `interrupt_before=["mark_for_human"]`, the graph pauses before marking for 
 
 ### 2.4 review_suggestions Table
 
-**New migration:** `008_create_review_suggestions.sql`
+**New migration:** `009_create_review_suggestions.sql`
 
 ```sql
 CREATE TABLE IF NOT EXISTS review_suggestions (
@@ -479,7 +495,7 @@ Same as original plan:
 | Action        | Path                                                                |
 | ------------- | ------------------------------------------------------------------- |
 | Create        | `pipeline/review_agent_graph.py`                                    |
-| Create        | `supabase/migrations/008_create_review_suggestions.sql`             |
+| Create        | `supabase/migrations/009_create_review_suggestions.sql`             |
 | Modify        | `pipeline/orchestrator_nodes.py` — implement `review_agent_node`    |
 | Modify        | `pipeline/orchestrator_graph.py` — wire review_agent node and edges |
 | Modify        | `flask_app.py` — suggestions route, apply updates                   |
@@ -502,6 +518,7 @@ Same as original plan:
 | Layer             | Purpose                             | Storage         |
 | ----------------- | ----------------------------------- | --------------- |
 | LangSmith         | Technical traces, debugging, replay | LangSmith cloud |
+| processing_metrics | Runtime/perf telemetry (already live) | Supabase      |
 | orchestrator_logs | Business metrics, dashboard, audit  | Supabase        |
 
 
@@ -550,7 +567,7 @@ Enables: resume after interrupt, inspect state at any step, replay from a given 
 | Create   | `pipeline/orchestrator_db.py`                                            |
 | Modify   | `pipeline/orchestrator_nodes.py` — call `log_orchestrator_step` in nodes |
 | Create   | `pipeline/orchestrator_callbacks.py` — custom callback for logs          |
-| Modify   | `007_create_orchestrator_logs.sql` — ensure `trace_json` JSONB           |
+| Modify   | `008_create_orchestrator_logs.sql` — ensure `trace_json` JSONB           |
 | Create   | Flask route + template for orchestrator stats                            |
 | Optional | Add Postgres checkpointer for production                                 |
 
@@ -627,15 +644,16 @@ flowchart TB
 3. **LangSmith replay:** Run a failed trace in LangSmith; fix; replay to verify.
 4. **Regression harness:** Run `scripts/regression_check.py` with `USE_ORCHESTRATOR=true` and `false`; compare extraction quality.
 5. **Checkpointing:** Test `interrupt_before`, resume with `graph.invoke(None, config={"thread_id": "..."})`.
+6. **Latency guardrail:** Compare `processing_metrics` distributions (P50/P95 `processing_time_ms`) with orchestrator off/on before full rollout.
 
 ---
 
 ## Risk Mitigation
 
 - **Backward compatibility:** Graph returns same `(record, report)` shape; job downstream logic unchanged.
-- **Feature flag:** `USE_ORCHESTRATOR` env var toggles graph vs direct `process_submission`.
+- **Feature flag rollout:** Start with `USE_ORCHESTRATOR=false` by default, enable in canary first, then ramp.
 - **Regression:** Unit tests + regression harness with orchestrator on/off.
-- **LangSmith cost:** Disable tracing in production if needed; `orchestrator_logs` remains primary audit source.
+- **LangSmith cost:** Disable tracing in production if needed; keep `processing_metrics` + `orchestrator_logs` in Supabase as system-of-record telemetry.
 
 ---
 

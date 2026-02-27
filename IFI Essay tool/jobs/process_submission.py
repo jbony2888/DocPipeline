@@ -8,6 +8,7 @@ import json
 import logging
 import tempfile
 import time
+import gc
 from datetime import datetime, timezone
 from pathlib import Path
 from pipeline.runner import process_submission
@@ -144,10 +145,19 @@ def process_submission_job(
                 chunk_timer_start = time.perf_counter()
                 # Extract chunk pages to a temp PDF (widgets=0 avoids PyMuPDF crash on form-filled PDFs)
                 chunk_doc = fitz.open()
-                chunk_doc.insert_pdf(doc, from_page=chunk.start_page, to_page=chunk.end_page, widgets=0)
-                with tempfile.NamedTemporaryFile(delete=False, suffix=Path(filename).suffix) as chunk_file:
-                    chunk_doc.save(chunk_file.name)
-                    chunk_path = chunk_file.name
+                chunk_path = None
+                try:
+                    chunk_doc.insert_pdf(doc, from_page=chunk.start_page, to_page=chunk.end_page, widgets=0)
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=Path(filename).suffix) as chunk_file:
+                        chunk_doc.save(chunk_file.name)
+                        chunk_path = chunk_file.name
+                finally:
+                    # Ensure native resources are released every chunk to avoid
+                    # memory growth in constrained production workers.
+                    try:
+                        chunk_doc.close()
+                    except Exception:
+                        pass
 
                 # For single-chunk docs (e.g. typed form), use the original PDF so AcroForm widgets
                 # (Student's Name, School, Grade) are present; the chunk PDF strips widgets and yields N/A.
@@ -334,10 +344,18 @@ def process_submission_job(
                     logger.warning(f"⚠️ Failed to upload chunk artifacts: {artifact_err}")
 
                 try:
-                    os.unlink(chunk_path)
+                    if chunk_path:
+                        os.unlink(chunk_path)
                 except Exception:
                     pass
+                # Opportunistic cleanup during long runs helps prevent OOM kills.
+                if (idx + 1) % 3 == 0:
+                    gc.collect()
         finally:
+            try:
+                doc.close()
+            except Exception:
+                pass
             try:
                 os.unlink(tmp_path)
             except Exception:
