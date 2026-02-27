@@ -221,11 +221,27 @@ def delete_artifact_dir(artifact_dir: str, supabase_client) -> bool:
     if not artifact_dir or not artifact_dir.strip():
         return True
     try:
-        paths = _list_all_paths(supabase_client, BUCKET_NAME, artifact_dir.strip().rstrip("/"))
-        if not paths:
+        normalized = artifact_dir.strip().rstrip("/")
+        parts = [p for p in normalized.split("/") if p]
+
+        # Delete the provided prefix and, for chunk-level paths, also delete the
+        # run root (<owner>/<run_id>) where original uploads and analysis files live.
+        prefixes = [normalized]
+        if len(parts) >= 2 and "/artifacts/" in normalized:
+            run_root = f"{parts[0]}/{parts[1]}"
+            if run_root not in prefixes:
+                prefixes.append(run_root)
+
+        to_delete = []
+        for prefix in prefixes:
+            to_delete.extend(_list_all_paths(supabase_client, BUCKET_NAME, prefix))
+
+        unique_paths = sorted(set(to_delete))
+        if not unique_paths:
             return True
-        for i in range(0, len(paths), 100):
-            batch = paths[i : i + 100]
+
+        for i in range(0, len(unique_paths), 100):
+            batch = unique_paths[i : i + 100]
             supabase_client.storage.from_(BUCKET_NAME).remove(batch)
         return True
     except Exception as e:

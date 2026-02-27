@@ -19,6 +19,7 @@ REQUIRED = [
     "SUPABASE_ANON_KEY",
     "SUPABASE_SERVICE_ROLE_KEY",
     "REDIS_URL",
+    "FLASK_SECRET_KEY",
 ]
 
 # At least one of these required for OCR
@@ -29,7 +30,6 @@ OCR_KEYS = [
 
 # Optional but recommended
 OPTIONAL = [
-    "FLASK_SECRET_KEY",
     "GROQ_API_KEY",
     "GOOGLE_CREDENTIALS_PATH",
     "WORKER_ID",

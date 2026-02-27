@@ -7,10 +7,13 @@ import os
 import json
 import logging
 import tempfile
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 from pipeline.runner import process_submission
 from pipeline.supabase_storage import ingest_upload_supabase
 from pipeline.supabase_db import save_record as save_db_record
+from pipeline.supabase_metrics import save_processing_metric
 from utils.email_notification import send_batch_completion_email, get_review_url, get_user_email_from_token
 from pipeline.document_analysis import analyze_document, make_chunk_submission_id, get_page_level_ranges_for_batch
 from pipeline.schema import DocClass
@@ -77,12 +80,23 @@ def process_submission_job(
         dict with status and result/error
     """
     job_id = None
+    job_started_at = datetime.now(timezone.utc)
+    job_timer_start = time.perf_counter()
+    ingest_data = None
+    analysis = None
+    chunk_context = None
+    queue_wait_ms = None
     try:
         try:
             from rq import get_current_job
             current_job = get_current_job()
             if current_job:
                 job_id = current_job.id
+                if current_job.enqueued_at and current_job.started_at:
+                    queue_wait_ms = round(
+                        (current_job.started_at - current_job.enqueued_at).total_seconds() * 1000,
+                        2,
+                    )
         except Exception:
             pass
         logger.info(f"📄 Job started: job_id={job_id or 'sync'} filename={filename} batch_run_id={batch_run_id[:8] if batch_run_id else 'none'}...")
@@ -127,6 +141,7 @@ def process_submission_job(
         traceability_entries = []
         try:
             for idx, chunk in enumerate(iter_ranges):
+                chunk_timer_start = time.perf_counter()
                 # Extract chunk pages to a temp PDF (widgets=0 avoids PyMuPDF crash on form-filled PDFs)
                 chunk_doc = fitz.open()
                 chunk_doc.insert_pdf(doc, from_page=chunk.start_page, to_page=chunk.end_page, widgets=0)
@@ -141,10 +156,18 @@ def process_submission_job(
                 chunk_submission_id = make_chunk_submission_id(ingest_data["submission_id"], idx)
                 run_id = ingest_data["submission_id"]
                 chunk_artifact_dir = f"{owner_user_id}/{run_id}/artifacts/{run_id}/chunk_{idx}_{chunk_submission_id}"
+                child_doc_class = DocClass.SINGLE_SCANNED if analysis.doc_class == DocClass.BULK_SCANNED_BATCH else analysis.doc_class
+                chunk_context = {
+                    "submission_id": chunk_submission_id,
+                    "parent_submission_id": ingest_data["submission_id"],
+                    "chunk_index": idx,
+                    "chunk_page_start": chunk.start_page + 1,
+                    "chunk_page_end": chunk.end_page + 1,
+                    "doc_class": child_doc_class.value if hasattr(child_doc_class, "value") else str(child_doc_class),
+                }
 
                 logger.info(f"🔍 Chunk {idx+1}/{len(iter_ranges)} pages {chunk.start_page+1}-{chunk.end_page+1}")
                 # Each batch page is a single-page submission (SINGLE_SCANNED); no shared fields across pages
-                child_doc_class = DocClass.SINGLE_SCANNED if analysis.doc_class == DocClass.BULK_SCANNED_BATCH else analysis.doc_class
                 record, report = process_submission(
                     image_path=image_path,
                     submission_id=chunk_submission_id,
@@ -192,6 +215,38 @@ def process_submission_job(
                 is_update = save_result.get("is_update", False)
                 previous_owner = save_result.get("previous_owner_user_id")
                 is_own_duplicate = (previous_owner == owner_user_id) if previous_owner else False
+                timing_ms = report.get("timing_ms", {})
+                total_processing_ms = round((time.perf_counter() - chunk_timer_start) * 1000, 2)
+                save_processing_metric(
+                    {
+                        "submission_id": chunk_submission_id,
+                        "parent_submission_id": ingest_data["submission_id"],
+                        "owner_user_id": owner_user_id,
+                        "job_id": job_id,
+                        "filename": filename,
+                        "doc_class": child_doc_class.value if hasattr(child_doc_class, "value") else str(child_doc_class),
+                        "ocr_provider": ocr_provider,
+                        "status": "success",
+                        "upload_batch_id": upload_batch_id,
+                        "batch_run_id": batch_run_id,
+                        "chunk_index": idx,
+                        "chunk_page_start": chunk.start_page + 1,
+                        "chunk_page_end": chunk.end_page + 1,
+                        "queue_wait_ms": queue_wait_ms,
+                        "processing_time_ms": total_processing_ms,
+                        "ocr_time_ms": timing_ms.get("ocr"),
+                        "segmentation_time_ms": timing_ms.get("segmentation"),
+                        "extraction_time_ms": timing_ms.get("extraction"),
+                        "validation_time_ms": timing_ms.get("validation"),
+                        "pipeline_time_ms": timing_ms.get("total"),
+                        "word_count": record.word_count,
+                        "ocr_confidence_avg": record.ocr_confidence_avg,
+                        "needs_review": record.needs_review,
+                        "is_duplicate": bool(is_update),
+                        "error_message": None,
+                        "created_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                )
 
                 record_dict = record.model_dump() if hasattr(record, 'model_dump') else record.dict()
                 results.append({
@@ -312,6 +367,40 @@ def process_submission_job(
                 
     except Exception as e:
         logger.error(f"❌ FAILED processing {filename}: {e}", exc_info=True)
+        save_processing_metric(
+            {
+                "submission_id": chunk_context.get("submission_id") if chunk_context else None,
+                "parent_submission_id": (
+                    chunk_context.get("parent_submission_id")
+                    if chunk_context
+                    else (ingest_data.get("submission_id") if isinstance(ingest_data, dict) else None)
+                ),
+                "owner_user_id": owner_user_id,
+                "job_id": job_id,
+                "filename": filename,
+                "doc_class": chunk_context.get("doc_class") if chunk_context else (analysis.doc_class.value if analysis else None),
+                "ocr_provider": ocr_provider,
+                "status": "failed",
+                "upload_batch_id": upload_batch_id,
+                "batch_run_id": batch_run_id,
+                "chunk_index": chunk_context.get("chunk_index") if chunk_context else None,
+                "chunk_page_start": chunk_context.get("chunk_page_start") if chunk_context else None,
+                "chunk_page_end": chunk_context.get("chunk_page_end") if chunk_context else None,
+                "queue_wait_ms": queue_wait_ms,
+                "processing_time_ms": round((time.perf_counter() - job_timer_start) * 1000, 2),
+                "ocr_time_ms": None,
+                "segmentation_time_ms": None,
+                "extraction_time_ms": None,
+                "validation_time_ms": None,
+                "pipeline_time_ms": None,
+                "word_count": None,
+                "ocr_confidence_avg": None,
+                "needs_review": None,
+                "is_duplicate": False,
+                "error_message": str(e),
+                "created_at": job_started_at.isoformat(),
+            }
+        )
 
         # Still count this job in batch; send one batch completion email when all are done
         _maybe_send_batch_completion(batch_run_id, access_token, upload_batch_id)

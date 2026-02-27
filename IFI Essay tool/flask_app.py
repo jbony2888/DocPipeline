@@ -1339,13 +1339,22 @@ def bulk_delete_records():
 
     for submission_id in selected_ids:
         record = get_record_by_id(submission_id, owner_user_id=user_id, access_token=access_token)
+        storage_ok = True
         if record:
             artifact_dir = record.get("artifact_dir", "")
             if artifact_dir and sb:
                 try:
-                    delete_artifact_dir(artifact_dir, sb)
+                    storage_ok = delete_artifact_dir(artifact_dir, sb)
+                    if not storage_ok:
+                        errors.append(f"{submission_id}: storage cleanup failed")
+                        continue
                 except Exception as e:
                     app.logger.warning(f"Storage delete warning for {submission_id}: {e}")
+                    errors.append(f"{submission_id}: storage cleanup error")
+                    continue
+            elif artifact_dir and not sb:
+                errors.append(f"{submission_id}: storage admin client unavailable")
+                continue
 
         if delete_db_record(submission_id, owner_user_id=user_id, access_token=access_token, refresh_token=refresh_token):
             deleted_count += 1
@@ -1392,9 +1401,14 @@ def delete_record(submission_id):
             sb = create_client(supabase_url, service_role_key) if service_role_key else None
             if sb:
                 try:
-                    delete_artifact_dir(artifact_dir, sb)
+                    storage_ok = delete_artifact_dir(artifact_dir, sb)
+                    if not storage_ok:
+                        return jsonify({"success": False, "error": "Failed to delete storage files"}), 500
                 except Exception as e:
                     app.logger.warning(f"Storage delete warning: {e}")
+                    return jsonify({"success": False, "error": "Error while deleting storage files"}), 500
+            else:
+                return jsonify({"success": False, "error": "Storage admin client unavailable"}), 500
 
     if delete_db_record(submission_id, owner_user_id=user_id, access_token=access_token, refresh_token=refresh_token):
         invalidate_db_stats_cache(user_id)

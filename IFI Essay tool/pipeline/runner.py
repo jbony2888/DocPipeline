@@ -5,6 +5,7 @@ Runs OCR → segmentation → extraction → validation and writes artifacts.
 
 import json
 import re
+import time
 from pathlib import Path
 from typing import Tuple
 
@@ -156,10 +157,12 @@ def process_submission(
     temp_artifact_dir = tempfile.mkdtemp(prefix=f"essay_{submission_id}_")
     artifact_path = Path(temp_artifact_dir)
     
-    processing_report = {"stages": {}}
+    processing_report = {"stages": {}, "timing_ms": {}}
+    pipeline_start = time.perf_counter()
     
     try:
         # Stage 1: OCR (or text-layer extraction for typed PDFs)
+        ocr_stage_start = time.perf_counter()
         ocr_provider = get_ocr_provider(ocr_provider_name)
         if str(image_path).lower().endswith(".pdf"):
             ocr_result = get_ocr_result_from_pdf_text_layer(image_path)
@@ -191,8 +194,10 @@ def process_submission(
             "low_conf_page_count": ocr_result.low_conf_page_count,
             "char_count": len(ocr_result.text or ""),
         }
+        processing_report["timing_ms"]["ocr"] = round((time.perf_counter() - ocr_stage_start) * 1000, 2)
         
         # Stage 2: Segmentation
+        segmentation_stage_start = time.perf_counter()
         contact_block, essay_block = split_contact_vs_essay(ocr_result.text)
         
         # Write segmentation artifacts (initial segmentation)
@@ -398,7 +403,9 @@ def process_submission(
             "initial_essay_words": len(essay_block.split()),
             "final_essay_words": len(final_essay_text.split())
         }
+        processing_report["timing_ms"]["segmentation"] = round((time.perf_counter() - segmentation_stage_start) * 1000, 2)
         
+        extraction_stage_start = time.perf_counter()
         essay_metrics = compute_essay_metrics(final_essay_text)
         essay_metrics["essay_source"] = essay_source  # Track which source was used for debugging
         # Canonical validation text is the full OCR/text-layer aggregation.
@@ -433,8 +440,10 @@ def process_submission(
             "school_normalized": school_norm,
             "school_canonical_key": school_key,
         }
+        processing_report["timing_ms"]["extraction"] = round((time.perf_counter() - extraction_stage_start) * 1000, 2)
         
         # Stage 4: Validation
+        validation_stage_start = time.perf_counter()
         # Choose grade to store (prefer normalized). Reject out-of-range (e.g. 40, 0, 13).
         grade_for_record = grade_norm if grade_norm is not None else sanitize_grade(grade_raw)
         school_for_record = school_norm  # cleaned only; null when sanitize rejected (e.g. < 3 chars)
@@ -497,6 +506,8 @@ def process_submission(
             "school_name": record.school_name,
             "grade": record.grade,
         }
+        processing_report["timing_ms"]["validation"] = round((time.perf_counter() - validation_stage_start) * 1000, 2)
+        processing_report["timing_ms"]["total"] = round((time.perf_counter() - pipeline_start) * 1000, 2)
     
     finally:
         # Clean up temporary directory (artifacts are stored in Supabase Storage, not needed locally)
