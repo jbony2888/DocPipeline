@@ -136,7 +136,8 @@ def process_submission_job(
         if analysis.doc_class == DocClass.BULK_SCANNED_BATCH:
             logger.info(f"📑 BULK_SCANNED_BATCH: splitting into {len(iter_ranges)} independent submissions (one per page)")
 
-        results = []
+        first_result = None
+        processed_count = 0
         doc = fitz.open(tmp_path)
 
         traceability_entries = []
@@ -258,12 +259,11 @@ def process_submission_job(
                     }
                 )
 
-                record_dict = record.model_dump() if hasattr(record, 'model_dump') else record.dict()
-                results.append({
+                chunk_result = {
                     "status": "success",
                     "filename": filename,
                     "submission_id": chunk_submission_id,
-                    "record": record_dict,
+                    "record": None,
                     "storage_url": ingest_data.get("storage_url"),
                     "is_duplicate": is_update,
                     "is_own_duplicate": is_own_duplicate,
@@ -271,7 +271,15 @@ def process_submission_job(
                     "chunk_index": idx,
                     "chunk_pages": f"{chunk.start_page+1}-{chunk.end_page+1}",
                     "parent_submission_id": ingest_data["submission_id"],
-                })
+                }
+                if first_result is None:
+                    # Keep only first payload for API compatibility; avoid
+                    # retaining all per-chunk record dicts in memory.
+                    chunk_result["record"] = (
+                        record.model_dump() if hasattr(record, "model_dump") else record.dict()
+                    )
+                    first_result = chunk_result
+                processed_count += 1
 
                 # Upload minimal per-chunk audit artifacts (no raw essay text)
                 try:
@@ -348,6 +356,23 @@ def process_submission_job(
                         os.unlink(chunk_path)
                 except Exception:
                     pass
+                # Drop large refs per chunk to reduce peak memory on long jobs.
+                try:
+                    del report
+                except Exception:
+                    pass
+                try:
+                    del record
+                except Exception:
+                    pass
+                try:
+                    del timing_ms
+                except Exception:
+                    pass
+                try:
+                    del chunk_result
+                except Exception:
+                    pass
                 # Opportunistic cleanup during long runs helps prevent OOM kills.
                 if (idx + 1) % 3 == 0:
                     gc.collect()
@@ -378,9 +403,13 @@ def process_submission_job(
         _maybe_send_batch_completion(batch_run_id, access_token, upload_batch_id)
 
         # Return first result for compatibility; include batch summary when BULK_SCANNED_BATCH
-        out = results[0] if results else {"status": "failed", "error": "No chunks processed"}
-        if results and analysis.doc_class == DocClass.BULK_SCANNED_BATCH:
-            out = {**out, "batch_page_count": len(results), "batch_parent_id": ingest_data["submission_id"]}
+        out = first_result if first_result else {"status": "failed", "error": "No chunks processed"}
+        if first_result and analysis.doc_class == DocClass.BULK_SCANNED_BATCH:
+            out = {
+                **out,
+                "batch_page_count": processed_count,
+                "batch_parent_id": ingest_data["submission_id"],
+            }
         return out
                 
     except Exception as e:
