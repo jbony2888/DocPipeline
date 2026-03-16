@@ -40,8 +40,7 @@ from pipeline.supabase_db import (
 )
 from pipeline.validate import ALLOWED_REASON_CODES, can_approve_record
 from pipeline.guardrails.validation import is_grade_missing
-# Removed batch_defaults - using simple bulk edit instead
-# from pipeline.batch_defaults import create_upload_batch, get_batch_with_submissions, apply_batch_defaults
+from pipeline.batch_defaults import get_batch_with_submissions, apply_batch_defaults
 from auth.supabase_client import get_supabase_client, get_user_id, normalize_supabase_url
 from jobs.queue import enqueue_submission, get_job_status, get_queue_status
 from jobs.process_submission import process_submission_job
@@ -55,7 +54,7 @@ app.logger.setLevel(logging.INFO)
 
 # Configuration
 UPLOAD_FOLDER = "artifacts"
-ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "pdf"}
+ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "pdf", "doc", "docx"}
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024  # 16MB max file size
 
@@ -177,7 +176,7 @@ def format_review_reasons(reason_codes: str) -> str:
         "MISSING_STUDENT_NAME": "Missing Student Name",
         "MISSING_SCHOOL_NAME": "Missing School Name",
         "MISSING_GRADE": "Missing Grade",
-        "EMPTY_ESSAY": "Empty Essay",
+        "EMPTY_ESSAY": "Empty Essay (extraction failed — try re-uploading or check image quality)",
         "SHORT_ESSAY": "Short Essay (< 50 words)",
         "LOW_CONFIDENCE": "Low OCR Confidence",
         "OCR_LOW_CONFIDENCE": "Low OCR Confidence",
@@ -626,6 +625,9 @@ def upload():
                 app.logger.info("✅ Batch completion email sent (sync)")
             else:
                 app.logger.warning("No user email from token; skipping batch completion email")
+            if upload_batch_id:
+                from jobs.process_submission import _write_batch_verification_summary
+                _write_batch_verification_summary(upload_batch_id)
         except Exception as email_err:
             app.logger.warning(f"Failed to send batch completion email: {email_err}")
 
@@ -1648,9 +1650,9 @@ def serve_pdf(file_path):
     # Try requested path first, then alternate extensions, then top-level path for chunk paths
     file_bytes = download_file(file_path, access_token=access_token)
 
-    if not file_bytes and file_path.endswith((".pdf", ".png", ".jpg", ".jpeg")):
+    if not file_bytes and "." in file_path:
         base_path = file_path.rsplit(".", 1)[0]
-        for ext in [".pdf", ".png", ".jpg", ".jpeg"]:
+        for ext in [".pdf", ".png", ".jpg", ".jpeg", ".doc", ".docx"]:
             if not file_path.endswith(ext):
                 alt_path = f"{base_path}{ext}"
                 file_bytes = download_file(alt_path, access_token=access_token)
@@ -1667,7 +1669,7 @@ def serve_pdf(file_path):
             parts = file_path.split("/")
             if len(parts) >= 2:
                 top_level = f"{parts[0]}/{parts[1]}"
-                for ext in [".pdf", ".png", ".jpg", ".jpeg"]:
+                for ext in [".pdf", ".png", ".jpg", ".jpeg", ".doc", ".docx"]:
                     candidate = f"{top_level}/original{ext}"
                     file_bytes = download_file(candidate, access_token=access_token)
                     if file_bytes and candidate.endswith(".pdf"):
@@ -1693,7 +1695,7 @@ def serve_pdf(file_path):
         parts = file_path.split("/")
         if len(parts) >= 2:
             top_level = f"{parts[0]}/{parts[1]}"
-            for ext in [".pdf", ".png", ".jpg", ".jpeg"]:
+            for ext in [".pdf", ".png", ".jpg", ".jpeg", ".doc", ".docx"]:
                 candidate = f"{top_level}/original{ext}"
                 file_bytes = download_file(candidate, access_token=access_token)
                 if file_bytes:
@@ -1708,6 +1710,10 @@ def serve_pdf(file_path):
             mimetype = "image/png"
         elif file_path.endswith((".jpg", ".jpeg")):
             mimetype = "image/jpeg"
+        elif file_path.endswith(".doc"):
+            mimetype = "application/msword"
+        elif file_path.endswith(".docx"):
+            mimetype = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         else:
             mimetype = "application/octet-stream"
         

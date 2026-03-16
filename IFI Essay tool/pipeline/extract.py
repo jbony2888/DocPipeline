@@ -9,20 +9,24 @@ import unicodedata
 from typing import Optional, Union
 
 
-# Bilingual label aliases (English + Spanish)
+# Bilingual label aliases (English + Spanish).
+# Standard IFI form (e.g. 2025 IFI Fatherhood Essay Contest) uses clear labels that make
+# extraction reliable: value is on same line after ":" or on the next line.
 STUDENT_NAME_ALIASES = [
-    "student's name", "student name", "students name", "name", "student:",
-    "nombre del estudiante", "estudiante", "nombre", "nombre:", "estudiante:"
+    "student's name", "student name", "students name", "student name:", "student's name:",
+    "student's name / nombre del estudiante", "nombre del estudiante",
+    "name", "student:",
+    "estudiante", "nombre", "nombre:", "estudiante:"
 ]
 
 SCHOOL_ALIASES = [
     "school", "school name", "school:",
-    "escuela", "escuela:", "nombre de la escuela"
+    "school / escuela", "escuela", "escuela:", "nombre de la escuela"
 ]
 
 GRADE_ALIASES = [
     "grade", "grade level", "grade:",
-    "grado", "grado:"
+    "grade / grado", "grado", "grado:"
 ]
 
 FATHER_FIGURE_ALIASES = [
@@ -54,26 +58,25 @@ LABEL_KEYWORDS = {
 def normalize_text(text: str) -> str:
     """
     Normalize text for matching by:
+    - Normalizing Unicode apostrophes/quotes to ASCII (so "Student's" matches)
     - Converting to lowercase
     - Removing accents (á → a, ñ → n)
     - Collapsing whitespace
-    
-    Args:
-        text: Input text
-        
-    Returns:
-        Normalized text
+
+    Fixes #6: PDFs often use Unicode RIGHT SINGLE QUOTATION MARK (') instead of
+    ASCII apostrophe ('), so "Student's Name" in docs would not match aliases.
     """
+    if not text:
+        return ""
+    # Normalize Unicode apostrophes/quotes to ASCII so label matching works
+    text = text.replace("\u2019", "'").replace("\u2018", "'").replace("\u201c", '"').replace("\u201d", '"')
     # Convert to lowercase
     text = text.lower()
-    
     # Remove accents (NFD decomposition, then filter out combining marks)
     text = unicodedata.normalize('NFD', text)
     text = ''.join(char for char in text if unicodedata.category(char) != 'Mn')
-    
     # Collapse whitespace
     text = ' '.join(text.split())
-    
     return text
 
 
@@ -220,6 +223,7 @@ def extract_value_near_label(
     start_index: int = 0,
     max_length: int = 60,
     same_line_only: bool = False,
+    value_after_label_only: bool = False,
 ) -> Optional[str]:
     """
     Find a line containing any label alias and extract the associated value.
@@ -227,11 +231,12 @@ def extract_value_near_label(
     Tries multiple strategies:
     1. Value after ':' on same line
     2. Value after alias text on same line
-    3. Value on previous 1-2 lines (if same_line_only is False)
+    3. Value on previous 1-2 lines (if same_line_only and value_after_label_only are False)
     4. Value on next 1-2 lines (if same_line_only is False)
     
-    When same_line_only is True (e.g. typed forms), only strategies 1-2 are used:
-    value must be on the same line as the label, not on the next/previous line.
+    When same_line_only is True (e.g. typed forms), only strategies 1-2 are used.
+    When value_after_label_only is True (e.g. scanned forms), only use text that comes
+    AFTER the label: same line or next line(s). Never use text above the label.
     
     Args:
         lines: List of text lines
@@ -239,6 +244,7 @@ def extract_value_near_label(
         start_index: Index to start searching from
         max_length: Maximum length for value
         same_line_only: If True, only extract value from the same line as the label
+        value_after_label_only: If True, only use value on same line or next line(s); skip previous lines
         
     Returns:
         Extracted value or None
@@ -254,7 +260,19 @@ def extract_value_near_label(
                 # Strategy 1: Value after colon on same line
                 value = extract_value_after_colon(line)
                 if value:
-                    return value
+                    # Guard: when extracting student_name, never treat Father/Father-Figure label
+                    # text itself as the value (e.g. \"Father's-Figure Name\").
+                    val_norm = normalize_text(value)
+                    if any(
+                        kw in val_norm
+                        for kw in (
+                            "father", "father-", "padre", "figura paterna", "grandfather",
+                            "stepdad", "abuelo"
+                        )
+                    ):
+                        value = None
+                    if value:
+                        return value
                 
                 # Strategy 2: Value after alias on same line (no colon)
                 # Handle patterns like:
@@ -306,9 +324,21 @@ def extract_value_near_label(
                         else:
                             break  # Stop at first trailing word
                     original_after = ' '.join(filtered_words).strip()
-                    
+
                     if original_after and is_valid_value_candidate(original_after, max_length):
-                        return original_after
+                        # Guard: for student_name extraction, do not return values that
+                        # are clearly the Father/Father-Figure label text.
+                        val_norm = normalize_text(original_after)
+                        if any(
+                            kw in val_norm
+                            for kw in (
+                                "father", "father-", "padre", "figura paterna", "grandfather",
+                                "stepdad", "abuelo"
+                            )
+                        ):
+                            original_after = ""
+                        if original_after:
+                            return original_after
                 
                 # Fallback: Remove the alias from normalized line and check if value remains
                 line_after_alias = line_norm.replace(alias_norm, '', 1).strip()
@@ -331,29 +361,53 @@ def extract_value_near_label(
                                     original_after = line[variant_match.end():].strip()
                                     original_after = original_after.lstrip(':/-').strip()
                                     if original_after and is_valid_value_candidate(original_after, max_length):
-                                        return original_after
+                                        val_norm = normalize_text(original_after)
+                                        if any(
+                                            kw in val_norm
+                                            for kw in (
+                                                "father", "father-", "padre", "figura paterna",
+                                                "grandfather", "stepdad", "abuelo"
+                                            )
+                                        ):
+                                            original_after = ""
+                                        if original_after:
+                                            return original_after
                     # Last resort: return normalized version (will be lowercase but better than nothing)
-                    return line_after_alias
+                    val_norm = line_after_alias
+                    if any(
+                        kw in val_norm
+                        for kw in (
+                            "father", "father-", "padre", "figura paterna", "grandfather",
+                            "stepdad", "abuelo"
+                        )
+                    ):
+                        return None
+                    return val_norm
                 
                 if same_line_only:
                     # Typed-form layout: value is only on same line as label; do not use next/previous lines
                     return None
                 
-                # Strategy 3: Check previous 1-2 lines for value (form may have value above label)
-                for j in range(1, 3):
-                    if i - j >= start_index:
-                        prev_line = lines[i - j].strip()
-                        if prev_line and is_valid_value_candidate(prev_line, max_length):
-                            # Make sure this isn't another label
-                            if not is_likely_label_line(prev_line):
-                                return prev_line
+                # Strategy 3: Check previous 1-2 lines (only when not value_after_label_only)
+                # For scans we only target text that comes AFTER the label.
+                if not value_after_label_only:
+                    for j in range(1, 3):
+                        if i - j >= start_index:
+                            prev_line = lines[i - j].strip()
+                            if prev_line and is_valid_value_candidate(prev_line, max_length):
+                                if not is_likely_label_line(prev_line):
+                                    return prev_line
                 
-                # Strategy 4: Check next 1-2 lines for value
+                # Strategy 4: Check next 1-2 lines for value (text after the label)
                 for j in range(1, 3):
                     if i + j < len(lines):
                         next_line = lines[i + j].strip()
-                        if next_line and is_valid_value_candidate(next_line, max_length):
-                            return next_line
+                        if not next_line or not is_valid_value_candidate(next_line, max_length):
+                            continue
+                        # Don't use a line that is itself another label (e.g. "Father/Father-Figure Name")
+                        if is_likely_label_line(next_line):
+                            continue
+                        return next_line
                 
                 # Found label but no value - return None for this search
                 return None
@@ -516,24 +570,30 @@ def extract_fields_rules(contact_block: str, return_debug: bool = False) -> dict
         "extraction_method": "rule-based"
     }
     
-    # Extract student name
-    student_name = extract_value_near_label(lines, STUDENT_NAME_ALIASES)
+    # Extract student name (scans: only use text that comes after the label)
+    student_name = extract_value_near_label(
+        lines, STUDENT_NAME_ALIASES, value_after_label_only=True
+    )
     debug["matches"]["student_name"] = {
         "aliases_searched": STUDENT_NAME_ALIASES,
         "value_found": student_name,
         "matched": student_name is not None
     }
     
-    # Extract school
-    school_name = extract_value_near_label(lines, SCHOOL_ALIASES)
+    # Extract school (scans: only use text that comes after the label)
+    school_name = extract_value_near_label(
+        lines, SCHOOL_ALIASES, value_after_label_only=True
+    )
     debug["matches"]["school_name"] = {
         "aliases_searched": SCHOOL_ALIASES,
         "value_found": school_name,
         "matched": school_name is not None
     }
     
-    # Extract grade
-    grade_text = extract_value_near_label(lines, GRADE_ALIASES, max_length=30)
+    # Extract grade (scans: only use text that comes after the label)
+    grade_text = extract_value_near_label(
+        lines, GRADE_ALIASES, max_length=30, value_after_label_only=True
+    )
     grade = parse_grade(grade_text)
 
     # Fallback: only near Grade/Grado anchor (no full-block scan, no essay-body numbers)
@@ -575,24 +635,30 @@ def extract_fields_rules(contact_block: str, return_debug: bool = False) -> dict
                 city_or_location = value
                 break
     
-    # Extract father figure name (optional, for IFI form)
-    father_figure_name = extract_value_near_label(lines, FATHER_FIGURE_ALIASES, max_length=80)
+    # Extract father figure name (optional, for IFI form; value after label only)
+    father_figure_name = extract_value_near_label(
+        lines, FATHER_FIGURE_ALIASES, max_length=80, value_after_label_only=True
+    )
     debug["matches"]["father_figure_name"] = {
         "aliases_searched": FATHER_FIGURE_ALIASES[:3],  # Show first 3
         "value_found": father_figure_name,
         "matched": father_figure_name is not None
     }
     
-    # Extract phone (optional)
-    phone = extract_value_near_label(lines, PHONE_ALIASES, max_length=30)
+    # Extract phone (optional; value after label only)
+    phone = extract_value_near_label(
+        lines, PHONE_ALIASES, max_length=30, value_after_label_only=True
+    )
     debug["matches"]["phone"] = {
         "aliases_searched": PHONE_ALIASES,
         "value_found": phone,
         "matched": phone is not None
     }
     
-    # Extract email (optional)
-    email = extract_value_near_label(lines, EMAIL_ALIASES, max_length=80)
+    # Extract email (optional; value after label only)
+    email = extract_value_near_label(
+        lines, EMAIL_ALIASES, max_length=80, value_after_label_only=True
+    )
     debug["matches"]["email"] = {
         "aliases_searched": EMAIL_ALIASES[:3],  # Show first 3
         "value_found": email,

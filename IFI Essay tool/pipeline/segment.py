@@ -54,15 +54,19 @@ def split_contact_vs_essay(raw_text: str) -> tuple[str, str]:
     # Markers that suggest the essay is starting or essay prompt area
     essay_start_markers = [
         'character maximum', 'maximo de caracteres', 'máximo de caracteres',
-        'reaction to this essay', 'reaccion', 'reacción'
+        'reaction to this essay', 'reaccion', 'reacción',
+        'what my father', 'what my dad', 'lo que mi padre',
+        'father means to me', 'padre significa para mi',
     ]
-    
+
     # Markers that indicate the PROMPT section (after this, essay content follows)
     essay_prompt_markers = [
         'father / padre',
         'grandfather',
         'stepdad',
-        'father-figure / figura paterna'
+        'father-figure / figura paterna',
+        'father / grandfather',
+        'figura paterna',
     ]
     
     # Strategy: Find where form ends and essay begins
@@ -129,8 +133,8 @@ def split_contact_vs_essay(raw_text: str) -> tuple[str, str]:
                 consecutive_long_lines = 0
                 contact_end_idx = max(contact_end_idx, idx + 1)
     
-    # Ensure we don't cut off too early
-    contact_end_idx = max(contact_end_idx, 10)
+    # Ensure we don't cut off too early; relax from 10 to 6 for forms with few header lines
+    contact_end_idx = max(contact_end_idx, 6)
     
     # Split at the transition point
     contact_lines = lines[:contact_end_idx]

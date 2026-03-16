@@ -1,0 +1,252 @@
+{
+  "summary": {
+    "total_files": 8,
+    "success_count": 8,
+    "error_count": 0,
+    "total_records": 8,
+    "generated_at": "2026-03-13T21:41:24.214992+00:00",
+    "ocr_provider": "stub"
+  },
+  "files": [
+    {
+      "filename": "tc01_standard_form_26-IFI-filled.pdf",
+      "file_path": "/Users/jerrybony/Documents/GitHub/DocPipeline/IFI Essay tool/docs/client_test_instructions/typed_form_8_test_cases/tc01_standard_form_26-IFI-filled.pdf",
+      "status": "success",
+      "error": null,
+      "doc_class": "MULTI_PAGE_SINGLE",
+      "structure": "single",
+      "format": "native_text",
+      "chunk_count": 1,
+      "records": [
+        {
+          "submission_id": "4b6cd7ef25f2",
+          "doc_class": "MULTI_PAGE_SINGLE",
+          "student_name": "Jordan Altman",
+          "school_name": "Lincoln Park High School",
+          "grade": 10,
+          "teacher_name": null,
+          "city_or_location": null,
+          "father_figure_name": "Michael Altman",
+          "phone": "312-555-0101",
+          "email": "m.altman@example.com",
+          "word_count": 882,
+          "ocr_confidence_avg": 1.0,
+          "needs_review": true,
+          "review_reason_codes": "UNKNOWN_SCHOOL",
+          "artifact_dir": "local_verification/0253ee3481ff/chunk_0_4b6cd7ef25f2",
+          "essay_preview": "play. When I was little he taught me to ride a bike in the park, and when I fell he didn't make a big \ndeal\u2014he just said get back on. That's how he is about everything: calm, steady, and there.\nI used to get frustrated when he had to travel for work. Now I see how hard he works so we can have \na goo..."
+        }
+      ]
+    },
+    {
+      "filename": "tc02_standard_form_26-IFI-filled.pdf",
+      "file_path": "/Users/jerrybony/Documents/GitHub/DocPipeline/IFI Essay tool/docs/client_test_instructions/typed_form_8_test_cases/tc02_standard_form_26-IFI-filled.pdf",
+      "status": "success",
+      "error": null,
+      "doc_class": "MULTI_PAGE_SINGLE",
+      "structure": "single",
+      "format": "native_text",
+      "chunk_count": 1,
+      "records": [
+        {
+          "submission_id": "e877e1ab18c7",
+          "doc_class": "MULTI_PAGE_SINGLE",
+          "student_name": "Maria Santos",
+          "school_name": "Roosevelt Elementary",
+          "grade": 6,
+          "teacher_name": null,
+          "city_or_location": null,
+          "father_figure_name": "Carlos Santos",
+          "phone": "773-555-0102",
+          "email": "c.santos@example.com",
+          "word_count": 882,
+          "ocr_confidence_avg": 1.0,
+          "needs_review": true,
+          "review_reason_codes": "UNKNOWN_SCHOOL",
+          "artifact_dir": "local_verification/341a24756c13/chunk_0_e877e1ab18c7",
+          "essay_preview": "backyard. At first I thought it was boring\u2014just dirt and waiting. But he said patience is the key to \neverything, and when the first tomato turned red I was so excited I ran inside to show my mom.\nAbuelo also tells me stories about when he was a boy in Mexico. He had to walk a long way to school \nan..."
+        }
+      ]
+    },
+    {
+      "filename": "tc03_standard_form_26-IFI-filled.pdf",
+      "file_path": "/Users/jerrybony/Documents/GitHub/DocPipeline/IFI Essay tool/docs/client_test_instructions/typed_form_8_test_cases/tc03_standard_form_26-IFI-filled.pdf",
+      "status": "success",
+      "error": null,
+      "doc_class": "MULTI_PAGE_SINGLE",
+      "structure": "single",
+      "format": "native_text",
+      "chunk_count": 1,
+      "records": [
+        {
+          "submission_id": "b307b1908a90",
+          "doc_class": "MULTI_PAGE_SINGLE",
+          "student_name": "Alex Chen",
+          "school_name": "Whitney Young Magnet High School",
+          "grade": 12,
+          "teacher_name": null,
+          "city_or_location": null,
+          "father_figure_name": "James Chen",
+          "phone": null,
+          "email": null,
+          "word_count": 924,
+          "ocr_confidence_avg": 1.0,
+          "needs_review": true,
+          "review_reason_codes": "UNKNOWN_SCHOOL",
+          "artifact_dir": "local_verification/e8e4a9927de3/chunk_0_b307b1908a90",
+          "essay_preview": "Dad's Response: This means a lot. Alex has grown so much. Grateful to be part of this family.\nFather/Father-Figure Name: James Chen\nEmail: j.chen@example.com\nPhone: 847-555-0103\nGrade: 12\nSchool: Whitney Young Magnet High School\n\n2026 IFI Fatherhood Essay Contest\nFather/Grandfather/Step-Dad/Father-F..."
+        }
+      ]
+    },
+    {
+      "filename": "tc04_standard_form_26-IFI-filled.pdf",
+      "file_path": "/Users/jerrybony/Documents/GitHub/DocPipeline/IFI Essay tool/docs/client_test_instructions/typed_form_8_test_cases/tc04_standard_form_26-IFI-filled.pdf",
+      "status": "success",
+      "error": null,
+      "doc_class": "MULTI_PAGE_SINGLE",
+      "structure": "single",
+      "format": "native_text",
+      "chunk_count": 1,
+      "records": [
+        {
+          "submission_id": "c96c1f00e00d",
+          "doc_class": "MULTI_PAGE_SINGLE",
+          "student_name": "Sofia Williams",
+          "school_name": "Oak Park Elementary",
+          "grade": 3,
+          "teacher_name": null,
+          "city_or_location": null,
+          "father_figure_name": "David Williams",
+          "phone": "630-555-0104",
+          "email": "d.williams@example.com",
+          "word_count": 860,
+          "ocr_confidence_avg": 1.0,
+          "needs_review": true,
+          "review_reason_codes": "UNKNOWN_SCHOOL",
+          "artifact_dir": "local_verification/b0d1ac00a930/chunk_0_c96c1f00e00d",
+          "essay_preview": "My daddy reads me stories every night before bed. He does the best voices\u2014sometimes he sounds \nlike a bear and sometimes like a little mouse. My favorite is when he reads the dragon book and he \nmakes a big roar. I laugh every time.\nOn weekends we go to the park and he pushes me on the swing really ..."
+        }
+      ]
+    },
+    {
+      "filename": "tc05_standard_form_26-IFI-filled.pdf",
+      "file_path": "/Users/jerrybony/Documents/GitHub/DocPipeline/IFI Essay tool/docs/client_test_instructions/typed_form_8_test_cases/tc05_standard_form_26-IFI-filled.pdf",
+      "status": "success",
+      "error": null,
+      "doc_class": "MULTI_PAGE_SINGLE",
+      "structure": "single",
+      "format": "native_text",
+      "chunk_count": 1,
+      "records": [
+        {
+          "submission_id": "7106c9edcc1a",
+          "doc_class": "MULTI_PAGE_SINGLE",
+          "student_name": "Ethan Johnson",
+          "school_name": "Early Learning Center",
+          "grade": "K",
+          "teacher_name": null,
+          "city_or_location": null,
+          "father_figure_name": "Robert Johnson",
+          "phone": "815-555-0105",
+          "email": "r.johnson@example.com",
+          "word_count": 806,
+          "ocr_confidence_avg": 1.0,
+          "needs_review": true,
+          "review_reason_codes": "UNKNOWN_SCHOOL",
+          "artifact_dir": "local_verification/13bdacc69a3c/chunk_0_7106c9edcc1a",
+          "essay_preview": "I love my dad. He plays with me every day. We go to the park and he pushes me on the swing. We \nplay catch with the ball. Sometimes we build with blocks and he makes really tall towers and I knock \nthem down and we laugh.\nMy dad reads me a story at night. He tucks me in and gives me a hug. He says g..."
+        }
+      ]
+    },
+    {
+      "filename": "tc06_standard_form_missing_grade.pdf",
+      "file_path": "/Users/jerrybony/Documents/GitHub/DocPipeline/IFI Essay tool/docs/client_test_instructions/typed_form_8_test_cases/tc06_standard_form_missing_grade.pdf",
+      "status": "success",
+      "error": null,
+      "doc_class": "MULTI_PAGE_SINGLE",
+      "structure": "single",
+      "format": "native_text",
+      "chunk_count": 1,
+      "records": [
+        {
+          "submission_id": "33d4dcd77b0b",
+          "doc_class": "MULTI_PAGE_SINGLE",
+          "student_name": "Sam Rivera",
+          "school_name": "Westside Middle School",
+          "grade": null,
+          "teacher_name": null,
+          "city_or_location": null,
+          "father_figure_name": "Miguel Rivera",
+          "phone": "312-555-0199",
+          "email": "m.rivera@example.com",
+          "word_count": 607,
+          "ocr_confidence_avg": 1.0,
+          "needs_review": true,
+          "review_reason_codes": "MISSING_GRADE;UNKNOWN_SCHOOL",
+          "artifact_dir": "local_verification/146ae75911a2/chunk_0_33d4dcd77b0b",
+          "essay_preview": "\u0016\u0013\u0013\u0013\u0003&KDrDFWer\u00030D[LPXP\u0003/\u00030\u00e1[LPo\u0003de\u0003&DrDFWeres\n\u0015\u0013\u0013\u0013\u0003&KDrDFWer\u00030D[LPXP\u0003/\u00030\u00e1[LPo\u0003de\u0003&DrDFWeres \n* Father-Figure can be a stepdad, grandfather, uncle, pastor/rabbi/shaman, God, or an ideal vision of a father.\n*Una figura paterna puede ser un padrastro, un abuelo, un t\u00edo, un pastor/rabino/cham\u00e1n, Dios, o..."
+        }
+      ]
+    },
+    {
+      "filename": "tc07_standard_form_missing_student_name.pdf",
+      "file_path": "/Users/jerrybony/Documents/GitHub/DocPipeline/IFI Essay tool/docs/client_test_instructions/typed_form_8_test_cases/tc07_standard_form_missing_student_name.pdf",
+      "status": "success",
+      "error": null,
+      "doc_class": "MULTI_PAGE_SINGLE",
+      "structure": "single",
+      "format": "native_text",
+      "chunk_count": 1,
+      "records": [
+        {
+          "submission_id": "beb5dcc299b4",
+          "doc_class": "MULTI_PAGE_SINGLE",
+          "student_name": null,
+          "school_name": "Northside Academy",
+          "grade": 8,
+          "teacher_name": null,
+          "city_or_location": null,
+          "father_figure_name": "Chris Moore",
+          "phone": "312-555-0200",
+          "email": "c.moore@example.com",
+          "word_count": 576,
+          "ocr_confidence_avg": 1.0,
+          "needs_review": true,
+          "review_reason_codes": "MISSING_STUDENT_NAME;UNKNOWN_SCHOOL",
+          "artifact_dir": "local_verification/032f6d7c3622/chunk_0_beb5dcc299b4",
+          "essay_preview": "\u0016\u0013\u0013\u0013\u0003&KDrDFWer\u00030D[LPXP\u0003/\u00030\u00e1[LPo\u0003de\u0003&DrDFWeres\n\u0015\u0013\u0013\u0013\u0003&KDrDFWer\u00030D[LPXP\u0003/\u00030\u00e1[LPo\u0003de\u0003&DrDFWeres \n* Father-Figure can be a stepdad, grandfather, uncle, pastor/rabbi/shaman, God, or an ideal vision of a father.\n*Una figura paterna puede ser un padrastro, un abuelo, un t\u00edo, un pastor/rabino/cham\u00e1n, Dios, o..."
+        }
+      ]
+    },
+    {
+      "filename": "tc08_standard_form_missing_school_name.pdf",
+      "file_path": "/Users/jerrybony/Documents/GitHub/DocPipeline/IFI Essay tool/docs/client_test_instructions/typed_form_8_test_cases/tc08_standard_form_missing_school_name.pdf",
+      "status": "success",
+      "error": null,
+      "doc_class": "MULTI_PAGE_SINGLE",
+      "structure": "single",
+      "format": "native_text",
+      "chunk_count": 1,
+      "records": [
+        {
+          "submission_id": "fd9e08d3d42f",
+          "doc_class": "MULTI_PAGE_SINGLE",
+          "student_name": "Jasmine Lee",
+          "school_name": null,
+          "grade": 7,
+          "teacher_name": null,
+          "city_or_location": null,
+          "father_figure_name": "Daniel Lee",
+          "phone": "773-555-0201",
+          "email": "d.lee@example.com",
+          "word_count": 583,
+          "ocr_confidence_avg": 1.0,
+          "needs_review": true,
+          "review_reason_codes": "MISSING_SCHOOL_NAME",
+          "artifact_dir": "local_verification/915ae0f998a0/chunk_0_fd9e08d3d42f",
+          "essay_preview": "\u0016\u0013\u0013\u0013\u0003&KDrDFWer\u00030D[LPXP\u0003/\u00030\u00e1[LPo\u0003de\u0003&DrDFWeres\n\u0015\u0013\u0013\u0013\u0003&KDrDFWer\u00030D[LPXP\u0003/\u00030\u00e1[LPo\u0003de\u0003&DrDFWeres \n* Father-Figure can be a stepdad, grandfather, uncle, pastor/rabbi/shaman, God, or an ideal vision of a father.\n*Una figura paterna puede ser un padrastro, un abuelo, un t\u00edo, un pastor/rabino/cham\u00e1n, Dios, o..."
+        }
+      ]
+    }
+  ]
+}

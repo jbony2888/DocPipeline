@@ -108,6 +108,8 @@ def ingest_upload_supabase(
         ".png": "image/png",
         ".jpg": "image/jpeg",
         ".jpeg": "image/jpeg",
+        ".doc": "application/msword",
+        ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     }
     content_type = content_type_map.get(file_ext, "application/octet-stream")
     

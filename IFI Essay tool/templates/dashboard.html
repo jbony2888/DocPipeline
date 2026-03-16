@@ -30,8 +30,8 @@
             <div class="mb-3">
                 <label for="files" class="form-label">Choose entry form(s)</label>
                 <input type="file" class="form-control" id="files" name="files" 
-                       accept=".png,.jpg,.jpeg,.pdf" multiple>
-                <div class="form-text">Upload IFI essay contest entry form(s) (PNG, JPG, or PDF)</div>
+                       accept=".png,.jpg,.jpeg,.pdf,.doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" multiple>
+                <div class="form-text">Upload IFI essay contest entry form(s): PNG, JPG, PDF, or Word (.doc, .docx)</div>
             </div>
             
             <!-- Selected Files List -->
@@ -300,6 +300,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 let iconClass = 'bi-file-pdf text-danger';
                 if (['png', 'jpg', 'jpeg'].includes(ext)) {
                     iconClass = 'bi-file-image text-primary';
+                } else if (['doc', 'docx'].includes(ext)) {
+                    iconClass = 'bi-file-earmark-word text-primary';
                 }
                 
                 fileItem.innerHTML = `

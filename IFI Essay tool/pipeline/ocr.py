@@ -100,9 +100,9 @@ def extract_pdf_text_layer(
 def get_ocr_result_from_pdf_text_layer(pdf_path: str) -> OcrResult | None:
     """
     Build an OcrResult from the PDF text layer only (no OCR).
-    Returns None only if the PDF has no pages or page 0 has no text (caller should use OCR).
-    Other pages may be empty (e.g. image-only); we still use page-0 form fields and text.
-    Use for typed form submissions (native_text) to avoid OCR.
+    Returns None if: no pages; page 0 has no text; or multi-page with any non-first page
+    missing text (caller should use OCR so page 2+ content is included, e.g. essay on page 2).
+    Use for typed form submissions (native_text) to avoid OCR when all pages have text.
     """
     try:
         per_page, _ = extract_pdf_text_layer(pdf_path, pages=None, mode="full", include_text=True)
@@ -111,7 +111,7 @@ def get_ocr_result_from_pdf_text_layer(pdf_path: str) -> OcrResult | None:
     if not per_page:
         return None
     sorted_pages = sorted(per_page, key=lambda x: int(x.get("page_index", 0)))
-    # Require only page 0 to have text so we can use form fields and avoid OCR when page 2 is image-only
+    # Require page 0 to have text
     page0_text = (sorted_pages[0].get("text") or "").strip()
     if not page0_text:
         return None
@@ -122,6 +122,11 @@ def get_ocr_result_from_pdf_text_layer(pdf_path: str) -> OcrResult | None:
         texts.append(t if t else "")
         if form_field_values is None and p.get("form_field_values"):
             form_field_values = p["form_field_values"]
+    # Multi-page: if any page after the first has no text (e.g. essay on page 2 is image-only),
+    # return None so caller uses OCR and gets content from all pages (fixes #2/#10).
+    if len(sorted_pages) > 1:
+        if not all(texts):
+            return None
     full_text = "\n\n".join(texts)
     lines = full_text.split("\n") if full_text else []
     return OcrResult(

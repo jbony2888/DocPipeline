@@ -10,6 +10,8 @@ import json
 import re
 from typing import Dict, Any, Optional, List
 import logging
+import json
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +22,34 @@ _LLM_RUNTIME_STATE = {
     "disabled_logged": False,
     "no_key_warned": False,
 }
+
+
+# #region agent log
+def _agent_debug_log(hypothesis_id: str, message: str, data: dict) -> None:
+    """
+    Lightweight debug logger for this debug session.
+    Writes NDJSON lines to the shared debug log file; failures are ignored.
+    """
+    payload = {
+        "sessionId": "3725b5",
+        "runId": "pre-fix",
+        "hypothesisId": hypothesis_id,
+        "location": "pipeline/extract_ifi.py",
+        "message": message,
+        "data": data,
+        "timestamp": int(time.time() * 1000),
+    }
+    try:
+        with open(
+            "/Users/jerrybony/Documents/GitHub/DocPipeline/.cursor/debug-3725b5.log",
+            "a",
+            encoding="utf-8",
+        ) as f:
+            f.write(json.dumps(payload) + "\n")
+    except Exception:
+        # Never let debug logging break the pipeline
+        pass
+# #endregion agent log
 
 
 def _disable_llm_runtime(reason: str) -> None:
@@ -124,6 +154,18 @@ def extract_ifi_submission(
         
         logger.info(f"IFI extraction complete: doc_type={result.get('doc_type')}, "
                    f"student={result.get('student_name')}, grade={result.get('grade')}")
+        # #region agent log
+        _agent_debug_log(
+            hypothesis_id="H1",
+            message="LLM extraction result",
+            data={
+                "doc_type": result.get("doc_type"),
+                "student_name": result.get("student_name"),
+                "school_name": result.get("school_name"),
+                "grade": result.get("grade"),
+            },
+        )
+        # #endregion agent log
         
         return result
     
@@ -131,11 +173,24 @@ def extract_ifi_submission(
         reason = f"{type(e).__name__}: {e}"
         _disable_llm_runtime(reason)
         logger.warning("IFI LLM extraction failed, switching to fallback mode: %s", reason)
-        return _extract_ifi_fallback(
+        fallback = _extract_ifi_fallback(
             raw_ocr_text,
             original_filename,
             fallback_reason=f"llm_error:{reason}",
         )
+        # #region agent log
+        _agent_debug_log(
+            hypothesis_id="H2",
+            message="Fallback IFI extraction (LLM error)",
+            data={
+                "reason": reason,
+                "student_name": fallback.get("student_name"),
+                "school_name": fallback.get("school_name"),
+                "grade": fallback.get("grade"),
+            },
+        )
+        # #endregion agent log
+        return fallback
 
 
 def _build_ifi_extraction_prompt(ocr_text: str, filename: str = None) -> str:
@@ -173,6 +228,7 @@ Classify as ONE of these doc_types:
    - Format usually: Name, School, Grade on separate lines or inline
    - Example: "John Smith / Lincoln Elementary / 3rd Grade"
    - Then essay body follows
+   - Kami exports and similar tools may use this format - check first 15 lines carefully
 
 4. ESSAY_ONLY
    - Pure essay text with NO metadata
@@ -197,6 +253,7 @@ REQUIRED SCHEMA FIELDS (SubmissionRecord - extract these when present; use null 
 Extract these fields (DO NOT GUESS - only extract if explicitly present or reasonably inferred from OCR):
 
 student_name (string | null):
+- CRITICAL: Use ONLY the value next to "Student's Name" / "Nombre del Estudiante" (or header). NEVER use "Father/Father-Figure Name" or any name from the essay body as student_name.
 - From "Student's Name / Nombre del Estudiante" label (official forms)
 - From first line (header metadata format)
 - Look for names near labels like "Name:", "Student:", "Estudiante:"
@@ -204,12 +261,14 @@ student_name (string | null):
 - Names are typically 2-4 words (first + last name, sometimes middle)
 - Correct OCR errors (e.g., "Alv4rez" -> "Alvarez", "J0rdan" -> "Jordan")
 - If you see a name that looks like a person's name (capitalized words, 2-4 words), extract it
+- When no labels present: the first 2-4 word capitalized line is often the student name
 - DO NOT extract from filename - only from PDF document content
 - null ONLY if absolutely no name is visible in the document
 
 school_name (string | null):
 - From "School / Escuela" label proximity
-- From header lines containing "School", "Elementary", "Middle", "High"
+- From header lines containing "School", "Elementary", "Middle", "High", "Academy"
+- When no labels present: a line with school-like words (Elementary, Middle, High, School) is often the school
 - null if not found
 
 grade (integer 1-12 OR "K" | null):
@@ -425,6 +484,78 @@ def _extract_freeform_name_school_grade(text: str) -> Dict[str, Any]:
     return {}
 
 
+def _extract_unlabeled_header_metadata(text: str) -> Dict[str, Any]:
+    """
+    Extract student name and school from header when NO labels are present.
+    For documents like Henry Yedinak, Bevin Brummel - name on first line, school on second.
+    Scans first 8 lines for: first plausible name, then line with school keywords.
+    """
+    if not text or not text.strip():
+        return {}
+    from pipeline.extract import is_plausible_student_name, is_valid_value_candidate, looks_like_essay_fragment
+    from pipeline.normalize import sanitize_grade
+
+    lines = [ln.strip() for ln in text.split("\n") if ln.strip()]
+    if len(lines) < 1:
+        return {}
+
+    result = {}
+    header_zone = lines[:8]
+
+    # School keywords (unlabeled school often contains these)
+    school_keywords = ("elementary", "middle", "high", "school", "academy", "prep", "charter")
+
+    # "Name: X" / "Nombre: X" pattern (scanned/Kami forms - line has label but value is after colon)
+    name_label_re = re.compile(r"^\s*(?:name|nombre)\s*[:\-]\s*(.+)$", re.IGNORECASE)
+    for ln in header_zone:
+        m = name_label_re.match(ln)
+        if m:
+            val = m.group(1).strip()
+            if val and len(val) <= 40 and "father" not in ln.lower():
+                if is_plausible_student_name(val, max_line_length=40):
+                    result["student_name"] = val
+                    break
+
+    # First plausible name (no label nearby) - only if "Name:" pattern didn't find one
+    if not result.get("student_name"):
+        for i, ln in enumerate(header_zone):
+            if not ln or len(ln) > 40:
+                continue
+            low = ln.lower()
+            if any(x in low for x in ("student", "grade", "school", "escuela", "name", "nombre", "essay", "father")):
+                continue
+            if looks_like_essay_fragment(ln):
+                continue
+            if is_plausible_student_name(ln, max_line_length=40) and is_valid_value_candidate(ln, max_length=40):
+                result["student_name"] = ln
+                break
+
+    # School: line with school keywords, not a label
+    for ln in header_zone:
+        if not ln or len(ln) < 4 or len(ln) > 120:
+            continue
+        low = ln.lower()
+        if not any(kw in low for kw in school_keywords):
+            continue
+        if low in ("school", "escuela", "school name"):
+            continue
+        if is_valid_value_candidate(ln, max_length=120) and not looks_like_essay_fragment(ln):
+            result["school_name"] = ln
+            break
+
+    # Grade from "Nth grade" or "Grade N" in header
+    grade_re = re.compile(r"\b([1-9]|1[0-2])(?:st|nd|rd|th)?\s*grade\b", re.IGNORECASE)
+    for ln in header_zone:
+        m = grade_re.search(ln)
+        if m:
+            g = int(m.group(1))
+            if 1 <= g <= 12:
+                result["grade"] = sanitize_grade(g)
+                break
+
+    return result
+
+
 # Typed freeform: header-only zone for Groq (fewer lines = better extraction)
 FREEFORM_HEADER_LINES = 25
 FREEFORM_HEADER_CHARS = 2500
@@ -563,18 +694,24 @@ def _extract_freeform_heuristics(contact_block: str, raw_text: str) -> Dict[str,
         from pipeline.normalize import sanitize_grade
 
         if result.get("student_name") is None:
-            sn = extract_value_near_label(top_lines, STUDENT_NAME_ALIASES, max_length=40)
+            sn = extract_value_near_label(
+                top_lines, STUDENT_NAME_ALIASES, max_length=40, value_after_label_only=True
+            )
             if sn:
                 low = sn.lower()
                 if low not in ("student's name", "student name", "nombre del estudiante"):
                     if is_plausible_student_name(sn, max_line_length=40):
                         result["student_name"] = sn
         if result.get("school_name") is None:
-            school = extract_value_near_label(top_lines, SCHOOL_ALIASES, max_length=120)
+            school = extract_value_near_label(
+                top_lines, SCHOOL_ALIASES, max_length=120, value_after_label_only=True
+            )
             if school and is_valid_value_candidate(school, max_length=120) and not looks_like_essay_fragment(school):
                 result["school_name"] = school
         if result.get("grade") is None:
-            grade_text = extract_value_near_label(top_lines, GRADE_ALIASES, max_length=30)
+            grade_text = extract_value_near_label(
+                top_lines, GRADE_ALIASES, max_length=30, value_after_label_only=True
+            )
             g = parse_grade(grade_text) if grade_text else find_grade_fallback(top_lines)
             if g is not None:
                 result["grade"] = sanitize_grade(g)
@@ -631,13 +768,33 @@ def _extract_ifi_fallback(
         result['essay_text'] = None
         result['notes'].append('Possible blank template - very short content')
     else:
-        # Freeform pattern: "Name" on one line, "School Nth grade" on next (top or bottom of doc)
-        freeform = _extract_freeform_name_school_grade(ocr_text)
-        if freeform:
-            for k in ("student_name", "school_name", "grade"):
-                if freeform.get(k) is not None:
-                    result[k] = freeform[k]
-            logger.info("Fallback: extracted name/school/grade from freeform pattern")
+        lowered = ocr_text.lower()
+        is_ifi_official_form = "ifi fatherhood essay contest" in lowered
+
+        # For IFI official forms, freeform/unlabeled header heuristics are dangerous:
+        # they can pick up the father's name or another student's header from a
+        # multi-entry packet. In those cases, we rely on downstream label-based
+        # extraction only and keep student/school/grade unset here.
+        if not is_ifi_official_form:
+            # Freeform pattern: "Name" on one line, "School Nth grade" on next (top or bottom of doc)
+            freeform = _extract_freeform_name_school_grade(ocr_text)
+            if freeform:
+                for k in ("student_name", "school_name", "grade"):
+                    if freeform.get(k) is not None:
+                        result[k] = freeform[k]
+                logger.info("Fallback: extracted name/school/grade from freeform pattern")
+            # Unlabeled header fallback when freeform didn't find anything
+            if not any(result.get(k) for k in ("student_name", "school_name", "grade")):
+                unlabeled = _extract_unlabeled_header_metadata(ocr_text)
+                if unlabeled:
+                    for k in ("student_name", "school_name", "grade"):
+                        if unlabeled.get(k) is not None:
+                            result[k] = unlabeled[k]
+                    logger.info("Fallback: extracted from unlabeled header")
+        else:
+            result['notes'].append(
+                'Detected IFI Fatherhood Essay Contest header; skipping freeform/unlabeled header heuristics.'
+            )
 
     return result
 
@@ -707,7 +864,9 @@ def _extract_grade_by_placement(
     if contact_block:
         from pipeline.extract import extract_value_near_label, find_grade_fallback, parse_grade, GRADE_ALIASES
         cb_lines = [ln.strip() for ln in contact_block.split("\n") if ln.strip()]
-        grade_text = extract_value_near_label(cb_lines, GRADE_ALIASES, max_length=30)
+        grade_text = extract_value_near_label(
+            cb_lines, GRADE_ALIASES, max_length=30, value_after_label_only=True
+        )
         g = parse_grade(grade_text) if grade_text else None
         if g is not None:
             return sanitize_grade(g)
@@ -1184,7 +1343,9 @@ def extract_fields_ifi(
     if not student_name and contact_block and not is_ifi_typed_form:
         from pipeline.extract import extract_value_near_label, STUDENT_NAME_ALIASES
         lines = [line.strip() for line in contact_block.split('\n') if line.strip()]
-        student_name = extract_value_near_label(lines, STUDENT_NAME_ALIASES, max_length=40)
+        student_name = extract_value_near_label(
+            lines, STUDENT_NAME_ALIASES, max_length=40, value_after_label_only=True
+        )
         if student_name:
             low = student_name.lower()
             if low not in ("student's name", "student name", "student's", "nombre del estudiante"):
@@ -1215,6 +1376,32 @@ def extract_fields_ifi(
                         logger.info(f"Freeform pattern: {k}={freeform[k]!r}")
                 if freeform.get("student_name"):
                     student_name = student_name or freeform["student_name"]
+                    # #region agent log
+                    _agent_debug_log(
+                        hypothesis_id="H3",
+                        message="Freeform header override",
+                        data={
+                            "student_name": freeform.get("student_name"),
+                            "school_name": freeform.get("school_name"),
+                            "grade": freeform.get("grade"),
+                        },
+                    )
+                    # #endregion agent log
+        # Fallback: Unlabeled header (name/school with no labels, e.g. Henry Yedinak, Fatherhood Essay)
+        still_missing = (
+            (ifi_result.get('student_name') is None) or
+            (ifi_result.get('school_name') is None) or
+            (ifi_result.get('grade') is None)
+        )
+        if still_missing:
+            unlabeled = _extract_unlabeled_header_metadata(text)
+            if unlabeled:
+                for k in ("student_name", "school_name", "grade"):
+                    if unlabeled.get(k) is not None and ifi_result.get(k) is None:
+                        ifi_result[k] = unlabeled[k]
+                        logger.info(f"Unlabeled header extraction: {k}={unlabeled[k]!r}")
+                if unlabeled.get("student_name"):
+                    student_name = student_name or unlabeled["student_name"]
 
     # Prefer form field values when present (source of truth for fillable PDFs)
     if form_student_name:

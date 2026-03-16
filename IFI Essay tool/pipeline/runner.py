@@ -21,6 +21,39 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _student_name_from_filename(filename: str | None) -> str | None:
+    """
+    Try to get a plausible student name from filename when form field is empty.
+    E.g. "Maritza-Medrano-2022-IFI-Fatherhood-Essay-Contest.pdf" -> "Maritza Medrano".
+    Only used as fallback for IFI typed forms when Student's Name field is empty (#9).
+    """
+    if not filename or not filename.strip():
+        return None
+    from pipeline.extract import is_plausible_student_name
+    stem = Path(filename).stem
+    # Split on hyphens or spaces; take first 2 tokens that look like name parts (alpha, 2–25 chars)
+    parts = re.split(r"[-_\s]+", stem)
+    name_parts = []
+    for p in parts:
+        if not p or not p.isalpha():
+            continue
+        if len(p) < 2 or len(p) > 25:
+            continue
+        # Skip common non-name leading tokens
+        low = p.lower()
+        if low in ("ifi", "essay", "contest", "fatherhood", "form", "export", "pdf", "the", "and"):
+            continue
+        name_parts.append(p)
+        if len(name_parts) >= 2:
+            break
+    if len(name_parts) < 2:
+        return None
+    candidate = " ".join(name_parts)
+    if not is_plausible_student_name(candidate, max_line_length=40):
+        return None
+    return candidate
+
+
 def _extract_typed_form_acroform_fields(form_field_values: dict | None) -> dict:
     """
     Extract student/school/grade from AcroForm fields only.
@@ -46,9 +79,13 @@ def _extract_typed_form_acroform_fields(form_field_values: dict | None) -> dict:
 def _extract_header_fields_from_text(text: str) -> dict:
     """Extract student/school/grade from header-like OCR text."""
     txt = text or ""
+    # Unicode apostrophe \u2019 (e.g. "Student's Name" from Word/PDF) so labeled name is captured (#6)
     patterns = {
         "student_name": [
-            r"(?im)\b(?:student(?:'s)?\s*name|nombre(?:\s+del)?\s+estudiante)\s*[:\-]?\s*([^\n\r]{2,80})",
+            r"(?im)\b(?:student(?:[\u2019']s)?\s*name|nombre(?:\s+del)?\s+estudiante)\s*[:\-]?\s*([^\n\r]{2,80})",
+            r"(?im)\b(?:student(?:[\u2019']s)?\s*name|nombre(?:\s+del)?\s+estudiante)\s*[:\-]?\s*\n\s*([^\n\r]{2,80})",  # value on next line
+            r"(?m)^\s*name\s*[:\-]\s*([^\n\r]{2,80})",  # "Name: Andrick Vargas Hernandez" (scanned/Kami)
+            r"(?m)^\s*nombre\s*[:\-]\s*([^\n\r]{2,80})",  # "Nombre: ..."
         ],
         "school_name": [
             r"(?im)\b(?:school(?:\s+name)?|escuela|campus)\s*[:\-]?\s*([^\n\r]{2,120})",
@@ -66,6 +103,11 @@ def _extract_header_fields_from_text(text: str) -> dict:
             if not match:
                 continue
             value = re.sub(r"\s+", " ", (match.group(1) or "")).strip(" .,:;-\t")
+            # Reject "Name:" matches that are clearly father-figure (e.g. "Father-Figure Name: John")
+            if field == "student_name" and value:
+                line_lower = (match.group(0) or "").lower()
+                if "father" in line_lower or "figura paterna" in line_lower:
+                    continue
             extracted[field] = value or None
             if extracted[field]:
                 break
@@ -92,26 +134,38 @@ def _get_best_essay_text(essay_block: str, llm_essay_text: str = None, raw_text:
     # Count words in each source
     essay_block_words = len(essay_block.split()) if essay_block else 0
     llm_words = len(llm_essay_text.split()) if llm_essay_text else 0
-    
-    # If segmentation found substantial text (> 50 words), use it
-    if essay_block_words > 50:
+
+    # Lower threshold (30) so LLM essay is used more often when segmentation fails
+    SUBSTANTIAL_THRESHOLD = 30
+
+    # If segmentation found substantial text (> 30 words), use it
+    if essay_block_words > SUBSTANTIAL_THRESHOLD:
         return essay_block, "segmentation"
-    
-    # If LLM extracted substantial essay text (> 50 words), use it as fallback
-    if llm_essay_text and llm_words > 50:
-        logger.info(f"Using LLM-extracted essay_text as fallback (segmentation found only {essay_block_words} words, LLM found {llm_words})")
+
+    # If LLM extracted substantial essay text (> 30 words), prefer it over weak segmentation
+    if llm_essay_text and llm_words > SUBSTANTIAL_THRESHOLD:
+        logger.info(
+            f"Using LLM-extracted essay_text (segmentation found {essay_block_words} words, "
+            f"LLM found {llm_words} - threshold {SUBSTANTIAL_THRESHOLD})"
+        )
         return llm_essay_text, "llm_extraction"
-    
-    # If segmentation found some text (even if < 50 words), use it
+
+    # If segmentation found some text (even if < 30 words), use it
     if essay_block_words > 0:
         return essay_block, "segmentation"
-    
+
     # If LLM found some text, use it
     if llm_essay_text and llm_words > 0:
         logger.info(f"Using LLM-extracted essay_text (segmentation found 0 words, LLM found {llm_words})")
         return llm_essay_text, "llm_extraction"
-    
-    # Last resort: return segmented block (will be empty, but preserves original behavior)
+
+    # Last resort: raw text if it has substantial content (segmentation may have failed)
+    raw_words = len((raw_text or "").split()) if raw_text else 0
+    if raw_text and raw_words > SUBSTANTIAL_THRESHOLD and essay_block_words == 0:
+        logger.info(f"Using raw_text fallback (segmentation and LLM found nothing, raw has {raw_words} words)")
+        return raw_text.strip(), "raw_text_fallback"
+
+    # Return segmented block (will be empty if segmentation failed)
     return essay_block, "segmentation"
 
 
@@ -207,8 +261,40 @@ def process_submission(
         # Stage 3: Extraction (IFI-specific two-phase extraction)
         from pipeline.extract_ifi import extract_fields_ifi
         form_field_values = getattr(ocr_result, "form_field_values", None)
+        # For chunked multi-page submissions (e.g. metadata page + essay page), restrict contact
+        # extraction to the first page only so the LLM does not pick a wrong name from the essay
+        # or from "Father/Father-Figure Name" (e.g. record showed "Kimberly Ortega" but PDF had "Katelyn Colin").
+        extraction_contact_block = contact_block
+        extraction_raw_text = ocr_result.text
+        chunk_meta_pre = chunk_metadata or {}
+        if chunk_meta_pre.get("is_chunk") and str(image_path).lower().endswith(".pdf"):
+            try:
+                per_page_stats, _ = extract_pdf_text_layer(
+                    image_path, pages=None, mode="full", include_text=True
+                )
+                if not per_page_stats or not (per_page_stats[0].get("text") or "").strip():
+                    per_page_stats, _ = ocr_pdf_pages(
+                        image_path,
+                        pages=None,
+                        mode="full",
+                        provider_name=ocr_provider_name,
+                        provider=ocr_provider,
+                        include_text=True,
+                    )
+                per_page_sorted = sorted(per_page_stats, key=lambda r: int(r.get("page_index", 0)))
+                if len(per_page_sorted) > 1:
+                    first_page_text = (per_page_sorted[0].get("text") or "").strip()
+                    if len(first_page_text) > 50:
+                        extraction_contact_block, _ = split_contact_vs_essay(first_page_text)
+                        extraction_raw_text = first_page_text
+                        logger.info(
+                            "Chunked submission: using first page only for contact extraction (%d chars)",
+                            len(first_page_text),
+                        )
+            except Exception as exc:
+                logger.warning("First-page-only extraction prep failed, using full chunk text: %s", exc)
         contact_fields = extract_fields_ifi(
-            contact_block, ocr_result.text, original_filename,
+            extraction_contact_block, extraction_raw_text, original_filename,
             form_field_values=form_field_values,
             doc_format=doc_format,
         )
@@ -318,14 +404,23 @@ def process_submission(
                         contact_fields[key] = start_fields[key]
                         field_attribution["field_source_pages"][key] = absolute_start_page
                     else:
-                        if not multi_page_typed:
+                        # Only clear when field came from a non-start page (attribution risk)
+                        if not multi_page_typed and found_on_non_start[key]:
                             contact_fields[key] = None
-                        if found_on_non_start[key]:
+                            field_attribution["attribution_risk_fields"].append(key)
+                        elif found_on_non_start[key]:
                             field_attribution["attribution_risk_fields"].append(key)
 
                 field_attribution["chunk_scoped_enforced"] = True
             except Exception as exc:
                 logger.warning(f"Chunk attribution guardrail failed for {submission_id}: {exc}")
+
+        # Fallback: student name from filename when still missing (e.g. IFI form with empty Student's Name field, #9)
+        if not contact_fields.get("student_name") and original_filename:
+            name_from_file = _student_name_from_filename(original_filename)
+            if name_from_file:
+                contact_fields["student_name"] = name_from_file
+                logger.info("Student name from filename (form/content empty): %s", name_from_file)
 
         # Deterministic normalization
         grade_raw = contact_fields.get("grade")
@@ -340,6 +435,36 @@ def process_submission(
         contact_fields["school_canonical_key"] = school_key
         # Use cleaned school in structured output; null when confidence too low (< 3 chars)
         contact_fields["school_name"] = school_norm
+
+        # #region agent log
+        try:
+            import json as _json
+            import time as _time
+            debug_payload = {
+                "sessionId": "3725b5",
+                "runId": "pre-fix",
+                "hypothesisId": "H4",
+                "location": "pipeline/runner.py",
+                "message": "Final contact fields before record creation",
+                "data": {
+                    "submission_id": submission_id,
+                    "student_name": contact_fields.get("student_name"),
+                    "school_name": contact_fields.get("school_name"),
+                    "grade": contact_fields.get("grade"),
+                    "doc_format": doc_format,
+                    "chunk_meta": chunk_meta,
+                },
+                "timestamp": int(_time.time() * 1000),
+            }
+            with open(
+                "/Users/jerrybony/Documents/GitHub/DocPipeline/.cursor/debug-3725b5.log",
+                "a",
+                encoding="utf-8",
+            ) as _f:
+                _f.write(_json.dumps(debug_payload) + "\n")
+        except Exception:
+            pass
+        # #endregion agent log
         
         # Determine which model was used (Groq for normalization; OpenAI not used)
         if os.environ.get("GROQ_API_KEY"):
@@ -396,6 +521,9 @@ def process_submission(
         with open(artifact_path / "essay_block.txt", "w", encoding="utf-8") as f:
             f.write(final_essay_text)
         
+        # Essay preview for verification scripts (first 300 chars)
+        text = final_essay_text or ""
+        processing_report["essay_preview"] = (text[:300] + "...") if len(text) > 300 else (text or None)
         processing_report["stages"]["segmentation"] = {
             "contact_lines": len(contact_block.split('\n')),
             "essay_lines": len(final_essay_text.split('\n')),
@@ -408,6 +536,13 @@ def process_submission(
         extraction_stage_start = time.perf_counter()
         essay_metrics = compute_essay_metrics(final_essay_text)
         essay_metrics["essay_source"] = essay_source  # Track which source was used for debugging
+
+        # Log when essay extraction failed for image inputs (helps debug PNG/scan issues)
+        if essay_metrics.get("word_count", 0) == 0 and doc_format in ("image_only", "hybrid"):
+            logger.warning(
+                f"Essay extraction yielded 0 words for image submission {submission_id} "
+                f"(format={doc_format}). Consider re-uploading or check image quality."
+            )
         # Canonical validation text is the full OCR/text-layer aggregation.
         canonical_validation_text = ocr_result.text or final_essay_text or ""
         canonical_validation_word_count = compute_essay_metrics(canonical_validation_text)["word_count"]

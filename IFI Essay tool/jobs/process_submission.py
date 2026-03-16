@@ -16,11 +16,102 @@ from pipeline.supabase_storage import ingest_upload_supabase
 from pipeline.supabase_db import save_record as save_db_record
 from pipeline.supabase_metrics import save_processing_metric
 from utils.email_notification import send_batch_completion_email, get_review_url, get_user_email_from_token
-from pipeline.document_analysis import analyze_document, make_chunk_submission_id, get_page_level_ranges_for_batch
+from pipeline.document_analysis import analyze_document, make_chunk_submission_id, get_batch_iter_ranges
 from pipeline.schema import DocClass
 import fitz  # PyMuPDF
 
 logger = logging.getLogger(__name__)
+
+# Image extensions we convert to single-page PDF so the rest of the pipeline always sees a PDF (#5).
+IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg")
+
+
+def _image_to_pdf(image_path: str) -> str | None:
+    """
+    Convert a single image (PNG, JPEG) to a one-page PDF using PyMuPDF.
+    Returns path to the temp PDF, or None on failure.
+    Ensures PNG/image submissions are processed like PDFs (fixes Angel Sagado #5).
+    """
+    try:
+        # Try to open as image to get dimensions (works in many PyMuPDF versions)
+        try:
+            img_doc = fitz.open(image_path)
+            if len(img_doc) > 0:
+                page_rect = img_doc[0].rect
+                img_doc.close()
+                out_doc = fitz.open()
+                page = out_doc.new_page(width=page_rect.width, height=page_rect.height)
+                page.insert_image(page.rect, filename=image_path)
+            else:
+                img_doc.close()
+                raise ValueError("Empty image document")
+        except Exception:
+            # Fallback: create default page and insert image (image may scale)
+            out_doc = fitz.open()
+            page = out_doc.new_page()
+            page.insert_image(page.rect, filename=image_path)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            out_doc.save(tmp.name)
+            path = tmp.name
+        out_doc.close()
+        return path
+    except Exception as e:
+        logger.warning("Image-to-PDF conversion failed for %s: %s", image_path, e)
+        return None
+
+
+def _write_batch_verification_summary(upload_batch_id: str) -> None:
+    """Write batch results to verification_summary.json in project root for feedback verification."""
+    if not upload_batch_id:
+        return
+    try:
+        from pipeline.supabase_db import _get_service_role_client
+        from collections import defaultdict
+        client = _get_service_role_client()
+        if not client:
+            return
+        result = (
+            client.table("submissions")
+            .select("submission_id, filename, doc_class, student_name, school_name, grade, word_count, needs_review, review_reason_codes")
+            .eq("upload_batch_id", upload_batch_id)
+            .order("created_at", desc=False)
+            .execute()
+        )
+        submissions = result.data or []
+        if not submissions:
+            return
+        by_filename = defaultdict(list)
+        for s in submissions:
+            fn = s.get("filename") or "unknown"
+            by_filename[fn].append({
+                "submission_id": s.get("submission_id"),
+                "doc_class": s.get("doc_class"),
+                "student_name": s.get("student_name"),
+                "school_name": s.get("school_name"),
+                "grade": s.get("grade"),
+                "word_count": s.get("word_count"),
+                "needs_review": s.get("needs_review"),
+                "review_reason_codes": s.get("review_reason_codes") or "",
+            })
+        files = []
+        for filename, records in sorted(by_filename.items()):
+            files.append({"filename": filename, "chunk_count": len(records), "records": records})
+        summary = {
+            "batch_id": upload_batch_id,
+            "total_files": len(by_filename),
+            "total_records": len(submissions),
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "source": "app_production",
+        }
+        payload = {"summary": summary, "files": files}
+        repo_root = Path(__file__).resolve().parent.parent
+        out_path = repo_root / "verification_summary.json"
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(out_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+        logger.info(f"📄 Wrote verification summary to {out_path}")
+    except Exception as e:
+        logger.warning(f"Failed to write verification summary: {e}")
 
 
 def _maybe_send_batch_completion(
@@ -54,6 +145,7 @@ def _maybe_send_batch_completion(
         redis.delete(key)
         redis.delete(f"{key}:completed")
         logger.info("✅ Batch completion email sent")
+        _write_batch_verification_summary(upload_batch_id)
     except Exception as e:
         logger.warning(f"Failed to send batch completion email: {e}")
 
@@ -87,6 +179,7 @@ def process_submission_job(
     analysis = None
     chunk_context = None
     queue_wait_ms = None
+    converted_pdf_path = None
     try:
         try:
             from rq import get_current_job
@@ -123,22 +216,45 @@ def process_submission_job(
             tmp_file.write(file_bytes)
             tmp_path = tmp_file.name
 
+        # Convert Word or image (PNG/JPEG) to PDF before analysis so pipeline always sees a PDF (#5)
+        ext = Path(filename).suffix.lower()
+        if ext in (".doc", ".docx"):
+            from pipeline.word_converter import convert_word_to_pdf
+            converted_pdf_path = convert_word_to_pdf(tmp_path)
+            if not converted_pdf_path:
+                raise ValueError(
+                    f"Could not convert Word document to PDF. "
+                    f"For .doc files, LibreOffice must be installed. "
+                    f"For .docx, python-docx and reportlab are required."
+                )
+            processing_path = converted_pdf_path
+        elif ext in IMAGE_EXTENSIONS:
+            converted_pdf_path = _image_to_pdf(tmp_path)
+            if not converted_pdf_path:
+                raise ValueError(
+                    f"Could not convert image ({ext}) to PDF. The file may be corrupted or in an unsupported format."
+                )
+            processing_path = converted_pdf_path
+            logger.info(f"📷 Converted image to single-page PDF for processing")
+        else:
+            processing_path = tmp_path
+
         # Analyze document for format/structure and chunking
-        analysis = analyze_document(tmp_path, ocr_provider_name=ocr_provider)
+        analysis = analyze_document(processing_path, ocr_provider_name=ocr_provider)
         logger.info(f"🧭 Analysis: format={analysis.format}, structure={analysis.structure}, chunks={len(analysis.chunk_ranges)}")
 
-        # BULK_SCANNED_BATCH: one submission per page (no chunk-level extraction); parent is container only, not saved
+        # BULK_SCANNED_BATCH: paired metadata+essay when alternating; else one submission per page
         iter_ranges = (
-            get_page_level_ranges_for_batch(analysis.page_count)
+            get_batch_iter_ranges(analysis)
             if analysis.doc_class == DocClass.BULK_SCANNED_BATCH
             else analysis.chunk_ranges
         )
         if analysis.doc_class == DocClass.BULK_SCANNED_BATCH:
-            logger.info(f"📑 BULK_SCANNED_BATCH: splitting into {len(iter_ranges)} independent submissions (one per page)")
+            logger.info(f"📑 BULK_SCANNED_BATCH: splitting into {len(iter_ranges)} submission(s)")
 
         first_result = None
         processed_count = 0
-        doc = fitz.open(tmp_path)
+        doc = fitz.open(processing_path)
 
         traceability_entries = []
         try:
@@ -149,7 +265,7 @@ def process_submission_job(
                 chunk_path = None
                 try:
                     chunk_doc.insert_pdf(doc, from_page=chunk.start_page, to_page=chunk.end_page, widgets=0)
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=Path(filename).suffix) as chunk_file:
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as chunk_file:
                         chunk_doc.save(chunk_file.name)
                         chunk_path = chunk_file.name
                 finally:
@@ -162,7 +278,7 @@ def process_submission_job(
 
                 # For single-chunk docs (e.g. typed form), use the original PDF so AcroForm widgets
                 # (Student's Name, School, Grade) are present; the chunk PDF strips widgets and yields N/A.
-                image_path = tmp_path if len(iter_ranges) == 1 else chunk_path
+                image_path = processing_path if len(iter_ranges) == 1 else chunk_path
 
                 chunk_submission_id = make_chunk_submission_id(ingest_data["submission_id"], idx)
                 run_id = ingest_data["submission_id"]
@@ -385,6 +501,11 @@ def process_submission_job(
                 os.unlink(tmp_path)
             except Exception:
                 pass
+            if converted_pdf_path:
+                try:
+                    os.unlink(converted_pdf_path)
+                except Exception:
+                    pass
 
         # Persist analysis JSON to storage for audit
         try:

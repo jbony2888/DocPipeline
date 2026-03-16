@@ -175,15 +175,16 @@ def detect_ifi_official_typed_form(text: str) -> bool:
     lowered = text.lower()
     top_hits = sum(1 for lbl in IFI_TYPED_FORM_TOP_LABELS if lbl in lowered)
     bottom_hits = sum(1 for lbl in IFI_TYPED_FORM_BOTTOM_LABELS if lbl in lowered)
-    # Need contest/form identifier + header labels + footer labels
+    # Need contest/form identifier + header labels
     has_contest = "ifi" in lowered and "fatherhood" in lowered
-    if not has_contest:
+    has_kami_or_similar = "kami" in lowered  # Kami exports often include "Kami" in doc
+    if not has_contest and not has_kami_or_similar:
         return False
     # At least 2 header labels (e.g. contest + student name, or student + grade/school)
     if top_hits < 2:
         return False
-    # At least 1 footer label (email, phone, or father-figure) - consistent placement
-    if bottom_hits < 1:
+    # At least 1 footer label (email, phone, or father-figure) - relax for Kami exports
+    if bottom_hits < 1 and not has_kami_or_similar:
         return False
     return True
 
@@ -693,6 +694,98 @@ def get_page_level_ranges_for_batch(page_count: int) -> List[ChunkRange]:
     Used so each page becomes an independent submission (no chunk-level extraction in batch mode).
     """
     return [ChunkRange(start_page=i, end_page=i) for i in range(page_count)]
+
+
+def _is_metadata_essay_alternating_pattern(
+    page_count: int,
+    pages: List[PageAnalysis],
+    doc_format: str,
+) -> bool:
+    """
+    Detect "metadata page + essay page" pairs: even-indexed pages (0,2,4...) have IFI header,
+    odd-indexed pages (1,3,5...) have low header (essay content). When true, we should use
+    paired chunks (0,1), (2,3), ... instead of one submission per page.
+
+    Common format: teacher asks for metadata on page 1, essay on page 2 (Valerie Pantoja).
+    """
+    if page_count < 2 or page_count % 2 != 0:
+        return False
+    use_relaxed = doc_format in ("image_only", "hybrid")
+    score_threshold = 0.15 if use_relaxed else 0.2
+    chars_threshold = 5 if use_relaxed else 10
+
+    for i in range(0, page_count, 2):
+        # Metadata page (even index) should have IFI header
+        meta = pages[i]
+        header_chars = meta.text_layer_chars if meta.text_layer_chars > 0 else meta.ocr_top_strip_chars
+        score = _header_signature_score_relaxed(meta.top_text) if use_relaxed else meta.header_signature_score
+        top_lower = (meta.top_text or "").lower()
+        has_contest = (
+            ("ifi" in top_lower or "illinois" in top_lower or "essay" in top_lower)
+            and ("father" in top_lower or "fatherhood" in top_lower)
+        )
+        if score < score_threshold or header_chars < chars_threshold or not has_contest:
+            # Strict check failed; try fallback heuristic
+            break
+    else:
+        # All metadata pages passed; check essay pages
+        for i in range(1, page_count, 2):
+            essay_page = pages[i]
+            score = _header_signature_score_relaxed(essay_page.top_text) if use_relaxed else essay_page.header_signature_score
+            if score >= 0.35:  # Relaxed from 0.25: allow some header-like content on essay pages
+                break
+        else:
+            return True
+
+    # Fallback: when even page count >= 4, odd pages have less header content than even pages
+    if page_count >= 4 and page_count % 2 == 0:
+        even_scores = [
+            (_header_signature_score_relaxed(p.top_text) if use_relaxed else p.header_signature_score)
+            for i, p in enumerate(pages) if i % 2 == 0
+        ]
+        odd_scores = [
+            (_header_signature_score_relaxed(p.top_text) if use_relaxed else p.header_signature_score)
+            for i, p in enumerate(pages) if i % 2 == 1
+        ]
+        if even_scores and odd_scores:
+            avg_even = sum(even_scores) / len(even_scores)
+            avg_odd = sum(odd_scores) / len(odd_scores)
+            if avg_even > 0 and avg_odd < avg_even * 1.15:
+                logger.info(
+                    "BULK: metadata+essay fallback (odd avg=%.3f < even avg=%.3f*1.15), using paired chunks",
+                    avg_odd, avg_even,
+                )
+                return True
+
+    return False
+
+
+def get_paired_metadata_essay_ranges(page_count: int) -> List[ChunkRange]:
+    """Return ChunkRange for metadata+essay pairs: (0,1), (2,3), ..."""
+    if page_count < 2 or page_count % 2 != 0:
+        return []
+    return [
+        ChunkRange(start_page=i, end_page=i + 1)
+        for i in range(0, page_count, 2)
+    ]
+
+
+def get_batch_iter_ranges(analysis: DocumentAnalysis) -> List[ChunkRange]:
+    """
+    Return chunk ranges for BULK_SCANNED_BATCH. Uses paired metadata+essay chunks
+    when the alternating pattern is detected; otherwise one chunk per page.
+    """
+    if analysis.doc_class != DocClass.BULK_SCANNED_BATCH:
+        return analysis.chunk_ranges
+    if _is_metadata_essay_alternating_pattern(
+        analysis.page_count, analysis.pages, analysis.format
+    ):
+        logger.info(
+            "BULK: detected metadata+essay alternating pattern, using paired chunks "
+            "(0,1), (2,3), ... instead of one per page"
+        )
+        return get_paired_metadata_essay_ranges(analysis.page_count)
+    return get_page_level_ranges_for_batch(analysis.page_count)
 
 
 def make_chunk_submission_id(base_submission_id: str, chunk_index: int) -> str:

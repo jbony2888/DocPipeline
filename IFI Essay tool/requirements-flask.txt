@@ -11,6 +11,8 @@ google-cloud-vision
 google-auth
 python-dotenv
 PyMuPDF
+python-docx
+reportlab
 flask-cors
 pytest
 pytest-mock

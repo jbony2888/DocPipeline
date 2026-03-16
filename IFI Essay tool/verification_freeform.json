@@ -1,0 +1,102 @@
+{
+  "summary": {
+    "total_files": 3,
+    "success_count": 3,
+    "error_count": 0,
+    "total_records": 3,
+    "generated_at": "2026-03-15T15:17:09.550352+00:00",
+    "ocr_provider": "stub"
+  },
+  "files": [
+    {
+      "filename": "Father-Hood-Essay-1.pdf",
+      "file_path": "/Users/jerrybony/Documents/GitHub/DocPipeline/IFI Essay tool/docs/client_test_instructions/standard_freeform_essay/Father-Hood-Essay-1.pdf",
+      "status": "success",
+      "error": null,
+      "doc_class": "SINGLE_TYPED",
+      "structure": "single",
+      "format": "native_text",
+      "chunk_count": 1,
+      "records": [
+        {
+          "submission_id": "da23c70fdcfc",
+          "doc_class": "SINGLE_TYPED",
+          "student_name": "David Coronel",
+          "school_name": "Rachel Carson School",
+          "grade": 6,
+          "teacher_name": null,
+          "city_or_location": null,
+          "father_figure_name": null,
+          "phone": null,
+          "email": null,
+          "word_count": 328,
+          "ocr_confidence_avg": 1.0,
+          "needs_review": true,
+          "review_reason_codes": "UNKNOWN_SCHOOL",
+          "artifact_dir": "local_verification/62daeaf52f3f/chunk_0_da23c70fdcfc",
+          "essay_preview": "David Coronel\nRachel Carson School 6th grade\nI always hear people talking about how important a mothers\nlove is. But never hear people talking about the importance of the love of a father. People never\nseem to talk about how powerful and important the love of a father is.  And my father means the\nwo..."
+        }
+      ]
+    },
+    {
+      "filename": "Fatherhood-Essay-1-5.pdf",
+      "file_path": "/Users/jerrybony/Documents/GitHub/DocPipeline/IFI Essay tool/docs/client_test_instructions/standard_freeform_essay/Fatherhood-Essay-1-5.pdf",
+      "status": "success",
+      "error": null,
+      "doc_class": "MULTI_PAGE_SINGLE",
+      "structure": "single",
+      "format": "native_text",
+      "chunk_count": 1,
+      "records": [
+        {
+          "submission_id": "04ac8ea0e261",
+          "doc_class": "MULTI_PAGE_SINGLE",
+          "student_name": "Isabella Almaraz",
+          "school_name": "Rachel Carson School",
+          "grade": null,
+          "teacher_name": null,
+          "city_or_location": null,
+          "father_figure_name": null,
+          "phone": null,
+          "email": null,
+          "word_count": 747,
+          "ocr_confidence_avg": 1.0,
+          "needs_review": true,
+          "review_reason_codes": "MISSING_GRADE;UNKNOWN_SCHOOL",
+          "artifact_dir": "local_verification/d5cf3498b934/chunk_0_04ac8ea0e261",
+          "essay_preview": "can see my Father is very fun.\nMe and my dad spend a lot together and have a lot of\ntogether. Sometimes I think about those memories to remind me how\nmuch fun I had in the past. I love my father because he is kind,smart\nand fun. Also many more that I can't explain. My father is so special to\nme beca..."
+        }
+      ]
+    },
+    {
+      "filename": "Fatherhood-Essay-14.pdf",
+      "file_path": "/Users/jerrybony/Documents/GitHub/DocPipeline/IFI Essay tool/docs/client_test_instructions/standard_freeform_essay/Fatherhood-Essay-14.pdf",
+      "status": "success",
+      "error": null,
+      "doc_class": "MULTI_PAGE_SINGLE",
+      "structure": "single",
+      "format": "native_text",
+      "chunk_count": 1,
+      "records": [
+        {
+          "submission_id": "4060b2ca36de",
+          "doc_class": "MULTI_PAGE_SINGLE",
+          "student_name": "Guadalupe Custodio",
+          "school_name": "Rachel Carson School",
+          "grade": 6,
+          "teacher_name": null,
+          "city_or_location": null,
+          "father_figure_name": null,
+          "phone": null,
+          "email": null,
+          "word_count": 551,
+          "ocr_confidence_avg": 1.0,
+          "needs_review": true,
+          "review_reason_codes": "UNKNOWN_SCHOOL",
+          "artifact_dir": "local_verification/f279f025e4be/chunk_0_4060b2ca36de",
+          "essay_preview": "dad, and a fun man. My dad to me is like my friend that I can tell everything no matter\nwhat happens. He's always there for me when I really need him the most. He's always\nand forever going to be there for me because he's always taking care of me and also\nmy siblings. To me my own dad is perfect bec..."
+        }
+      ]
+    }
+  ]
+}
