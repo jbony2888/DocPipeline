@@ -652,61 +652,72 @@ def upload():
 
 @app.route("/api/scan_duplicates", methods=["POST"])
 def scan_duplicates():
-    """Scan uploaded files for duplicate submissions without enqueueing."""
+    """Scan uploaded files for duplicate submissions without enqueueing.
+    Always returns JSON (never HTML) so the frontend can parse the response safely.
+    """
     if not require_auth():
         return unauthorized_response()
 
-    user_id = session.get("user_id")
-    access_token = session.get("supabase_access_token")
+    try:
+        user_id = session.get("user_id")
+        access_token = session.get("supabase_access_token")
 
-    if "files" not in request.files:
-        return jsonify({"success": False, "error": "No files selected"}), 400
+        if "files" not in request.files:
+            return jsonify({"success": False, "error": "No files selected"}), 400
 
-    files = request.files.getlist("files")
-    if not files or files[0].filename == "":
-        return jsonify({"success": False, "error": "Please select at least one file"}), 400
+        files = request.files.getlist("files")
+        if not files or files[0].filename == "":
+            return jsonify({"success": False, "error": "Please select at least one file"}), 400
 
-    results = []
-    errors = []
+        results = []
+        errors = []
 
-    from pipeline.supabase_db import check_duplicate_submission
-    import hashlib
+        from pipeline.supabase_db import check_duplicate_submission
+        import hashlib
 
-    for idx, file in enumerate(files):
-        if file and allowed_file(file.filename):
-            try:
-                file_bytes = file.read()
-                sha256_hash = hashlib.sha256(file_bytes).hexdigest()
-                submission_id = sha256_hash[:12]
+        for idx, file in enumerate(files):
+            if file and allowed_file(file.filename):
+                try:
+                    file_bytes = file.read()
+                    sha256_hash = hashlib.sha256(file_bytes).hexdigest()
+                    submission_id = sha256_hash[:12]
 
-                refresh_token = session.get("supabase_refresh_token")
-                duplicate_info = check_duplicate_submission(
-                    submission_id=submission_id,
-                    current_user_id=user_id,
-                    access_token=access_token,
-                    refresh_token=refresh_token
-                )
-                results.append({
-                    "index": idx,
-                    "filename": file.filename,
-                    "submission_id": submission_id,
-                    "is_duplicate": duplicate_info.get("is_duplicate", False),
-                    "is_own_duplicate": duplicate_info.get("is_own_duplicate", False),
-                    "existing_filename": duplicate_info.get("existing_filename")
-                })
-            except Exception as e:
-                errors.append(f"{file.filename}: {str(e)}")
-        else:
-            errors.append(f"{file.filename}: Invalid file type")
+                    refresh_token = session.get("supabase_refresh_token")
+                    duplicate_info = check_duplicate_submission(
+                        submission_id=submission_id,
+                        current_user_id=user_id,
+                        access_token=access_token,
+                        refresh_token=refresh_token
+                    )
+                    results.append({
+                        "index": idx,
+                        "filename": file.filename,
+                        "submission_id": submission_id,
+                        "is_duplicate": duplicate_info.get("is_duplicate", False),
+                        "is_own_duplicate": duplicate_info.get("is_own_duplicate", False),
+                        "existing_filename": duplicate_info.get("existing_filename")
+                    })
+                except Exception as e:
+                    errors.append(f"{file.filename}: {str(e)}")
+            else:
+                fname = file.filename if file else "unknown"
+                errors.append(f"{fname}: Invalid file type")
 
-    if not results:
-        return jsonify({"success": False, "error": "No valid files to scan.", "errors": errors}), 400
+        if not results:
+            return jsonify({"success": False, "error": "No valid files to scan.", "errors": errors}), 400
 
-    return jsonify({
-        "success": True,
-        "results": results,
-        "errors": errors if errors else None
-    })
+        return jsonify({
+            "success": True,
+            "results": results,
+            "errors": errors if errors else None
+        })
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            "success": False,
+            "error": f"Scan failed: {str(e)}"
+        }), 500
 
 
 @app.route("/review")

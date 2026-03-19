@@ -548,13 +548,23 @@ document.addEventListener('DOMContentLoaded', function() {
         return fetch('{{ url_for("scan_duplicates") }}', {
             method: 'POST',
             body: formData
-        }).then(r => {
-            if (!r.ok) {
-                return r.json().then(data => {
-                    throw new Error(data.error || `HTTP ${r.status}: ${r.statusText}`);
-                });
+        }).then(async r => {
+            const contentType = r.headers.get('Content-Type') || '';
+            const isJson = contentType.includes('application/json');
+            let data;
+            try {
+                data = isJson ? await r.json() : null;
+            } catch (_) {
+                throw new Error(r.ok ? 'Invalid server response' : `Server error (${r.status}). Please try again or refresh and log in.`);
             }
-            return r.json();
+            if (!r.ok) {
+                if (data?.redirect && (data?.error === 'session_expired' || r.status === 401)) {
+                    window.location.href = data.redirect;
+                    throw new Error('__REDIRECT__');
+                }
+                throw new Error(data?.error || `HTTP ${r.status}: ${r.statusText}`);
+            }
+            return data;
         });
     }
 
@@ -785,6 +795,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     });
                 })
                 .catch(error => {
+                    if (error.message === '__REDIRECT__') return;
                     console.error('Error scanning duplicates:', error);
                     setInteractionLock(false);
                     showToastModal('Error scanning files: ' + error.message, 'error');
