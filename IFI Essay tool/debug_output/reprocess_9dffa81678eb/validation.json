@@ -1,0 +1,35 @@
+{
+  "is_valid": false,
+  "needs_review": true,
+  "issues": [
+    "MISSING_GRADE"
+  ],
+  "review_reason_codes": [
+    "MISSING_GRADE"
+  ],
+  "review_reason_codes_db": "MISSING_GRADE",
+  "validation_policy_version": "v1",
+  "policy_version": "v1",
+  "doc_type": "ifi_typed_form_submission",
+  "doc_role": "document",
+  "ocr_provider": "google",
+  "extraction_method": "typed_form_rule_based",
+  "parse_model": "llama-3.3-70b-versatile (Groq)",
+  "word_count": 1004,
+  "final_text_char_count": 5853,
+  "auto_approve_eligible": false,
+  "auto_approve_blockers": [
+    "MISSING_GRADE"
+  ],
+  "grade_normalization": {
+    "raw": null,
+    "normalized": null,
+    "method": "missing"
+  },
+  "school_reference_validation": {
+    "matched": true,
+    "method": "partial",
+    "confidence": 0.95,
+    "reference_version": "schools.csv:20"
+  }
+}

@@ -1,0 +1,122 @@
+{
+  "submission_id": "782044297f15",
+  "filename": "fatherhood essay.pdf",
+  "record": {
+    "submission_id": "782044297f15",
+    "doc_class": "SINGLE_TYPED",
+    "student_name": "Abigail Castaneda",
+    "school_name": "De La Salle Institute",
+    "grade": 10,
+    "teacher_name": null,
+    "city_or_location": null,
+    "father_figure_name": "AntonioCastaneda",
+    "phone": "312-385-0538",
+    "email": null,
+    "word_count": 1082,
+    "ocr_confidence_avg": 0.9445800120883179,
+    "needs_review": true,
+    "review_reason_codes": "UNKNOWN_SCHOOL",
+    "artifact_dir": "171919fc-53d6-475b-9495-ccba2ccc65da/86e8e045bb1f/artifacts/86e8e045bb1f/chunk_0_782044297f15"
+  },
+  "report_stages": {
+    "ocr": {
+      "confidence_avg": 0.9445800120883179,
+      "confidence_min": 0.9322997416020673,
+      "confidence_p10": 0.9322997416020673,
+      "low_conf_page_count": 0,
+      "line_count": 91
+    },
+    "segmentation": {
+      "contact_lines": 17,
+      "essay_lines": 74,
+      "essay_source": "segmentation",
+      "initial_essay_words": 1004,
+      "final_essay_words": 1004
+    },
+    "extraction": {
+      "fields_extracted": 11,
+      "word_count": 1004
+    },
+    "validation": {
+      "is_valid": false,
+      "needs_review": true,
+      "issues": [
+        "UNKNOWN_SCHOOL"
+      ],
+      "review_reason_codes": [
+        "UNKNOWN_SCHOOL"
+      ],
+      "review_reason_codes_db": "UNKNOWN_SCHOOL",
+      "validation_policy_version": "v1",
+      "policy_version": "v1",
+      "doc_type": "bulk_scanned_batch",
+      "doc_role": "document",
+      "ocr_provider": "google",
+      "extraction_method": "typed_form_rule_based",
+      "parse_model": "llama-3.3-70b-versatile (Groq)",
+      "word_count": 1082,
+      "final_text_char_count": 6201,
+      "auto_approve_eligible": false,
+      "auto_approve_blockers": [
+        "UNKNOWN_SCHOOL"
+      ],
+      "grade_normalization": {
+        "raw": 10,
+        "normalized": 10,
+        "method": "numeric"
+      },
+      "school_reference_validation": {
+        "matched": false,
+        "method": "none",
+        "confidence": 0.342857,
+        "reference_version": "schools.csv:14"
+      }
+    }
+  },
+  "extraction_debug": {
+    "extraction_method": "typed_form_rule_based",
+    "model": "llama-3.3-70b-versatile (Groq)",
+    "fields_extracted": 10,
+    "required_fields_found": {
+      "student_name": true,
+      "school_name": true,
+      "grade": true
+    },
+    "result": {
+      "student_name": "Abigail Castaneda",
+      "school_name": "De La Salle Institute",
+      "grade": 10,
+      "teacher_name": null,
+      "city_or_location": null,
+      "father_figure_name": "AntonioCastaneda",
+      "phone": "312-385-0538",
+      "email": null,
+      "grade_raw": 10,
+      "grade_normalized": 10,
+      "grade_norm_reason": "parsed",
+      "school_raw": "De la salle institute",
+      "school_normalized": "De La Salle Institute",
+      "school_canonical_key": null
+    },
+    "normalization": {
+      "grade_raw": 10,
+      "grade_normalized": 10,
+      "grade_norm_reason": "parsed",
+      "school_raw": "De la salle institute",
+      "school_normalized": "De La Salle Institute",
+      "school_canonical_key": null
+    },
+    "ifi_classification": {
+      "doc_type": "IFI_OFFICIAL_FORM_FILLED",
+      "is_blank_template": false,
+      "language": null,
+      "topic": null,
+      "is_off_prompt": null,
+      "notes": [
+        "IFI typed form: extracted via layout/label rules (no OCR, no LLM)"
+      ]
+    },
+    "doc_class": null
+  },
+  "essay_preview": "My dad isn't the best person at explaining how he feels, yet I know that doesn't mean he doesn't\ncare. He is one of the most prominent figures in my life that taught me how to love. He taught me how\nto overcome issues that come my way because that's life. When something bad happens no matter\nwhat you have to keep moving forward. At times it might seem like everyone around you is moving\nforward and leaving you behind but he taught me that when you feel that way is the time when you\nwork even hard"
+}

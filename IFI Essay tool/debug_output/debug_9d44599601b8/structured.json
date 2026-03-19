@@ -1,0 +1,33 @@
+{
+  "student_name": "Samuel Vidal Alpizar.",
+  "school_name": "Rachel Carson Elementry",
+  "grade": 5,
+  "teacher_name": null,
+  "city_or_location": null,
+  "father_figure_name": null,
+  "phone": null,
+  "email": null,
+  "_ifi_metadata": {
+    "doc_type": "IFI_OFFICIAL_FORM_FILLED",
+    "is_blank_template": false,
+    "extraction_method": "typed_form_rule_based",
+    "notes": [
+      "IFI typed form: extracted via layout/label rules (no OCR, no LLM)"
+    ],
+    "student_name": "Samuel Vidal Alpizar.",
+    "grade": 5,
+    "school_name": "Rachel Carson Elementry",
+    "phone": null,
+    "email": null
+  },
+  "grade_raw": 5,
+  "grade_normalized": 5,
+  "grade_norm_reason": "parsed",
+  "school_raw": "Rachel Carson Elementry",
+  "school_normalized": "Rachel Carson Elementry",
+  "school_canonical_key": null,
+  "word_count": 759,
+  "char_count": 4511,
+  "paragraph_count": 4,
+  "essay_source": "segmentation"
+}

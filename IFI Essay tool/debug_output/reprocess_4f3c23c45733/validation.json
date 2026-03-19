@@ -1,0 +1,35 @@
+{
+  "is_valid": false,
+  "needs_review": true,
+  "issues": [
+    "TEMPLATE_ONLY"
+  ],
+  "review_reason_codes": [
+    "TEMPLATE_ONLY"
+  ],
+  "review_reason_codes_db": "TEMPLATE_ONLY",
+  "validation_policy_version": "v1",
+  "policy_version": "v1",
+  "doc_type": "template",
+  "doc_role": "document",
+  "ocr_provider": "google",
+  "extraction_method": "typed_form_rule_based",
+  "parse_model": "llama-3.3-70b-versatile (Groq)",
+  "word_count": 197,
+  "final_text_char_count": 1069,
+  "auto_approve_eligible": false,
+  "auto_approve_blockers": [
+    "TEMPLATE_ONLY"
+  ],
+  "grade_normalization": {
+    "raw": 5,
+    "normalized": 5,
+    "method": "numeric"
+  },
+  "school_reference_validation": {
+    "matched": false,
+    "method": "skipped",
+    "confidence": 0.0,
+    "reference_version": "schools.csv:20"
+  }
+}

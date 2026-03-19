@@ -1,0 +1,40 @@
+{
+  "student_name": "Abby Castaneda",
+  "school_name": null,
+  "grade": null,
+  "teacher_name": null,
+  "city_or_location": null,
+  "father_figure_name": null,
+  "phone": null,
+  "email": null,
+  "_ifi_metadata": {
+    "doc_type": "UNKNOWN",
+    "is_blank_template": false,
+    "language": "English",
+    "student_name": "Abby Castaneda",
+    "school_name": null,
+    "grade": null,
+    "father_figure_name": null,
+    "father_figure_type": null,
+    "essay_text": "Abby Castaneda\nFatherhood essay\nEnglish\n3/17/2026\nMy dad isn't the best person at explaining how he feels, yet I know that doesn't mean he doesn't\ncare. He is one of the most prominent figures in my life that taught me how to love. He taught\nme how to overcome issues that come my way because that's life. When something bad happens\nno matter what you have to keep moving forward. At times it might seem like everyone around\nyou is moving forward and leaving you behind but he taught me that when you feel that way\nis\nthe time when you work even harder to catch up. He has helped me through so many things\nwhich he is unaware of. My dad has worked unbelievably hard his entire life for me, my sister,\nmy mom himself, the people around him and the rest of my family. These things led me to\nbelieve he is the most selfless person I have ever met in my life.\nMy dad was born in Mexico or more specifically in Ocotlan, Jalisco. He had 12 siblings along\nwith his mother and father. My dad grew up very poor and had to share everything and by the\nage of 10 he was working in a bakery as a delivery boy to help support his family. One thing I\nrealized through my life is how appreciative my dad is of the small things he gets. Most things he\nwould appreciate is what people along with myself generally view as an everyday thing. When I\nasked him why he has so much appreciation for small things he explained that when he was\nyounger he would see something as small as soda and chips as a major treat. A few months ago I\nbrought home a bag of Lays potato chips from school and I asked him if he wanted them, he\nimmediately took them and ate them quickly and I messed with him and said \"wow you really\nlike these chips?\". He told me a story of when he and his brother Ricardo were younger, one of\ntheir more wealthy uncles, invited them to help out at a country club and they would get paid.\nThey agreed because it was easy money, they worked for about 3 hours helping serve and they\nwere paid a bit of money, yet along with the money they got a bottle of soda and a bag of lays\nchips. My dad and his brother were in shock that they got soda and chips and were beyond\nappreciative and my dad said it was one of the best things he ever tasted. For that reason it\nbecame his favorite kind of chip and everytime he has a bag it takes him back to that day.\nAll his life my dad has had to work for what he has and has never had an easy way out. Not only\nthis but he constantly put others before himself. He has helped me and my family in every\npossible way, shape, and form. I believe the best part of all he does is how little he notices he's\ndoing something nice. He just does, he doesn't expect in return. If you are a genuine person you\ndon't expect things in return for being a good person, you are just good. He has taught me that\nnothing ever comes for free. You have to work for what you have if you want to make it. There is\nno easy way in life, if you want the results you inspire to reach, you must do it yourself. He\ntaught me that we make our own paths. We make our own choices in life which will foreshadow\nour future. Going through life we make small decisions we forget about that we don't think will\nmatter in the moment. Yet I was taught that every minor careless decision you make does affect\nyou in the long run. We chose where we go, and we chose whether to quit or use what we have to\nmove forward. My dad taught me that you can have absolutely nothing yet if you truly want\nsomething so bad for yourself you can take nothing and make it into something for yourself.\nIn conclusion, my dad has raised me to be the absolute best version of myself that I can. At times,\nlike everyone else, he makes me mad especially when he has a temper but I realize he's just\nhuman like everyone else. We all get one life and we are all living for the first time. He taught\nme that it's okay to make mistakes and that if we didn't make mistakes we wouldn't be human.\nAll of us are imperfect and it's okay to be that too. He taught me to be confident in what I do and\nto ignore people in life who try to discourage me. I love my dad so much and though at times I\nfeel too vulnerable to express it out loud I do. He has taught me almost everything I know and I\naspire to work as hard, love as much, and be as selfless as he is in my lifetime.",
+    "parent_reaction_text": null,
+    "topic": "Father",
+    "is_off_prompt": false,
+    "notes": [
+      "Fallback extraction - no LLM available",
+      "Fallback reason: llm_error:AuthenticationError: Error code: 401 - {'error': {'message': 'Invalid API Key', 'type': 'invalid_request_error', 'code': 'invalid_api_key'}}"
+    ],
+    "extraction_method": "fallback",
+    "model": "none"
+  },
+  "grade_raw": null,
+  "grade_normalized": null,
+  "grade_norm_reason": "missing",
+  "school_raw": null,
+  "school_normalized": null,
+  "school_canonical_key": null,
+  "word_count": 422,
+  "char_count": 2078,
+  "paragraph_count": 1,
+  "essay_source": "segmentation"
+}

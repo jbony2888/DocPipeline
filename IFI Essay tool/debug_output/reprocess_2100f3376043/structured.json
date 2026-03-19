@@ -1,0 +1,38 @@
+{
+  "student_name": "Sarah",
+  "school_name": "Carson",
+  "grade": null,
+  "teacher_name": null,
+  "city_or_location": null,
+  "father_figure_name": null,
+  "phone": null,
+  "email": null,
+  "_ifi_metadata": {
+    "doc_type": "ESSAY_WITH_HEADER_METADATA",
+    "is_blank_template": false,
+    "extraction_method": "llm_ifi_freeform_heuristics_then_groq_normalize",
+    "notes": [
+      "Typed freeform: heuristics extract \u2192 Groq normalize"
+    ],
+    "student_name": "Sarah",
+    "school_name": "Carson",
+    "grade": null,
+    "essay_text": "Sarah \nRoom 101 \nCarson \n \nWhat my father means to me \nMy father is very special to me.  He is always there for me. My dad \nalso takes me nd my family to places like the stores. My dad also buys \nus food and other stuff we need.  My dad goes to work from 6:00 am \nto 3:00 pm.  He works hard to bring me stuff to make me happy.  That \nis why my father is so special to me.  I am lucky to call him dad.",
+    "father_figure_name": null,
+    "father_figure_type": null,
+    "parent_reaction_text": null,
+    "topic": "Father",
+    "is_off_prompt": false,
+    "language": "English"
+  },
+  "grade_raw": null,
+  "grade_normalized": null,
+  "grade_norm_reason": "missing",
+  "school_raw": "Carson",
+  "school_normalized": "Carson",
+  "school_canonical_key": null,
+  "word_count": 61,
+  "char_count": 276,
+  "paragraph_count": 1,
+  "essay_source": "segmentation"
+}

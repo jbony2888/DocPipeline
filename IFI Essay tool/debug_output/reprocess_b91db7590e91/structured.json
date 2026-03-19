@@ -1,0 +1,38 @@
+{
+  "student_name": "Peter Hurlock",
+  "school_name": null,
+  "grade": null,
+  "teacher_name": null,
+  "city_or_location": null,
+  "father_figure_name": null,
+  "phone": null,
+  "email": null,
+  "_ifi_metadata": {
+    "doc_type": "ESSAY_WITH_HEADER_METADATA",
+    "is_blank_template": false,
+    "extraction_method": "llm_ifi_freeform_heuristics_then_groq_normalize",
+    "notes": [
+      "Typed freeform: heuristics extract \u2192 Groq normalize"
+    ],
+    "student_name": null,
+    "school_name": "school",
+    "grade": null,
+    "essay_text": "\u200bFatherhood Essay\u200b\n\u200bIt\u200b\u200bwas\u200b\u200ban\u200b\u200bintensely\u200b\u200bsnowy\u200b\u200bday,\u200b\u200bso\u200b\u200bmuch\u200b\u200bthat\u200b\u200bthe\u200b\u200bschool\u200b\u200baccepted\u200b\u200bif\u200b\u200bpeople\u200b\n\u200bwere\u200b \u200bnot\u200b \u200bgoing\u200b \u200bto\u200b \u200bshow\u200b \u200bup\u200b \u200bthat\u200b \u200bday\u200b \u200band\u200b \u200bgive\u200b \u200bthe\u200b \u200bstudents\u200b \u200ba\u200b \u200bthree\u200b \u200bday\u200b\n\u200bweekend.\u200b \u200bHowever\u200b \u200bI\u200b \u200bdidn\u2019t\u200b \u200bget\u200b \u200bthat\u200b \u200bcourtesy\u200b \u200bas\u200b \u200bI\u200b\u200bwas\u200b\u200balready\u200b\u200bon\u200b\u200bmy\u200b\u200bway.\u200b\n\u200bWhen\u200b\u200bI\u200b\u200barrived\u200b\u200bI\u200b\u200bsoon\u200b\u200brealized\u200b\u200bthat\u200b\u200bI\u200b\u200bwas\u200b\u200bone\u200b\u200bof\u200b\u200bthe\u200b\u200bonly\u200b\u200bpeople\u200b\u200bthere,\u200b\u200baside\u200b\n\u200bfrom\u200b\u200ba\u200b\u200bcouple\u200b\u200bof\u200b\u200byounger\u200b\u200bstudents\u200b\u200band\u200b\u200bone\u200b\u200bof\u200b\u200bmy\u200b\u200bclassmates,\u200b\u200bKailynn.\u200b\u200bThe\u200b\n\u200bBrowns,\u200b \u200bMr.\u200b \u200band\u200b \u200bMrs.\u200b \u200bBrown\u200b \u200btook\u200b \u200bthis\u200b \u200bas\u200b \u200ban\u200b \u200bopportunity\u200b \u200bto\u200b \u200bhave\u200b \u200ba\u200b\u200bsnow\u200b\n\u200bday.\u200b \u200bSnow\u200b \u200bdays\u200b \u200bonly\u200b \u200bever\u200b \u200boccurred\u200b \u200bonce\u200b \u200bevery\u200b \u200bblue\u200b \u200bmoon\u200b \u200band\u200b \u200busually\u200b\n\u200bconsisted\u200b\u200bof\u200b\u200bno\u200b\u200bschoolwork\u200b\u200bat\u200b\u200ball.\u200b\u200bMy\u200b\u200bface\u200b\u200binstantly\u200b\u200bbrightened\u200b\u200bas\u200b\u200bI\u200b\u200brealized\u200b\n\u200bthat my efforts to get here were not just for a regular day.\u200b\n\u200bFirst,\u200b \u200bthe\u200b \u200bBrowns\u200b \u200bstarted\u200b \u200bby\u200b \u200bordering,\u200b \u200bthe\u200b \u200bfour\u200b \u200bof\u200b \u200bus\u200b \u200bsome\u200b \u200bChinese\u200b \u200bfood\u200b\n\u200bfrom\u200b\u200bdown\u200b\u200bthe\u200b\u200bstreet\u200b\u200band\u200b\u200bgetting\u200b\u200bit\u200b\u200bdelivered\u200b\u200bto\u200b\u200bthe\u200b\u200bschool,\u200b\u200bseeing\u200b\u200bas\u200b\u200bsince\u200b\n\u200bit\u200b \u200bwas\u200b \u200bthe\u200b \u200bfour\u200b \u200bof\u200b \u200bus\u200b \u200bit\u200b \u200bwas\u200b \u200baffordable\u200b \u200bfor\u200b \u200bthe\u200b \u200bday.\u200b \u200bWhile\u200b \u200bwe\u200b \u200bwaited,\u200b \u200bMr.\u200b\n\u200bBrown\u200b\u200bhad\u200b\u200bwent\u200b\u200bto\u200b\u200bput\u200b\u200bon\u200b\u200ba\u200b\u200bvariety\u200b\u200bof\u200b\u200bChristmas\u200b\u200bmovies\u200b\u200bfor\u200b\u200bus\u200b\u200bto\u200b\u200bwatch.\u200b\u200bHe\u200b\n\u200btracked\u200b \u200bhis\u200b \u200bcomputer\u200b \u200bcursor\u200b \u200ball\u200b \u200bthe\u200b \u200bway\u200b \u200bto\u200b \u200bThe\u200b \u200bNightmare\u200b \u200bBefore\u200b\n\u200bChristmas\u200b.\u200b \u200bMr.\u200b \u200bBrown\u200b \u200bput\u200b \u200bon\u200b \u200bthe\u200b \u200bmovie\u200b \u200bas\u200b \u200bthe\u200b \u200bfour\u200b \u200bof\u200b \u200bus\u200b \u200bset\u200b \u200bup\u200b \u200bchairs.\u200b\n\u200bAbout\u200b\u200bhalfway\u200b\u200bthrough\u200b\u200bthe\u200b\u200bmovie,\u200b\u200bthe\u200b\u200bChinese\u200b\u200bfood\u200b\u200bhad\u200b\u200barrived\u200b\u200bfor\u200b\u200ball\u200b\u200bof\u200b\n\u200bus to eat.\u200b\n\u200bDuring\u200b\u200bthe\u200b\u200bmoment,\u200b\u200bI\u200b\u200bfelt\u200b\u200ba\u200b\u200bsense\u200b\u200bof\u200b\u200bgratitude\u200b\u200band\u200b\u200bfamilial\u200b\u200bbond\u200b\u200btowards\u200b\n\u200bMr.\u200b \u200bBrown.\u200b \u200bSimply\u200b \u200bthe\u200b \u200bfact\u200b \u200bthat\u200b \u200bhe\u200b \u200bwas\u200b \u200bkine\u200b \u200benough\u200b \u200bto\u200b \u200bput\u200b \u200baside\u200b \u200bhis\u200b\n\u200bteaching\u200b \u200bfor\u200b \u200ba\u200b \u200bday\u200b\u200bfor\u200b\u200bus\u200b\u200bto\u200b\u200bhave\u200b\u200ba\u200b\u200bday\u200b\u200bof\u200b\u200bfun.\u200b\u200bWe\u200b\u200bcontinued\u200b\u200bto\u200b\u200beat\u200b\u200band\u200b\n\u200bthen\u200b \u200bwalked\u200b \u200bdown\u200b \u200bto\u200b \u200bthe\u200b \u200bgymnasium\u200b \u200bso\u200b \u200bthat\u200b \u200bwe\u200b \u200bcould\u200b \u200bplay\u200b \u200bsome\u200b\n\u200bbasketball.\u200b\u200bIn\u200b\u200bthe\u200b\u200bheat\u200b\u200bof\u200b\u200bthe\u200b\u200bmoment\u200b\u200bI\u200b\u200bwas\u200b\u200bjust\u200b\u200bso\u200b\u200bglad\u200b\u200bto\u200b\u200bhave\u200b\u200bMr.\u200b\u200bBrown\u200b\n\u200bas\u200b\u200ba\u200b\u200bteacher\u200b\u200bbut\u200b\u200balso\u200b\u200bto\u200b\u200bhave\u200b\u200bhim\u200b\u200baround\u200b\u200bas\u200b\u200ba\u200b\u200bfather\u200b\u200bfigure\u200b\u200bas\u200b\u200bwell.\u200b\u200bFinally\u200b\n\u200bto\u200b\u200bend\u200b\u200boff\u200b\u200bthe\u200b\u200bday\u200b\u200bwe\u200b\u200bwalked\u200b\u200bback\u200b\u200bto\u200b\u200bthe\u200b\u200boriginal\u200b\u200bclassroom\u200b\u200bto\u200b\u200bhave\u200b\u200bsome\u200b\n\u200btime\u200b\u200bfor\u200b\u200bquiet\u200b\u200band\u200b\u200bpeace.\u200b\u200bDuring\u200b\u200bthe\u200b\u200bwhole\u200b\u200bday\u200b\u200bI\u200b\u200bknew\u200b\u200bthat\u200b\u200bnot\u200b\u200bonly\u200b\u200bwas\u200b\u200bMr.\u200b\n\u200bBrown a father figure, it was like having him as a secondary father as well.\u200b",
+    "father_figure_name": null,
+    "father_figure_type": null,
+    "parent_reaction_text": null,
+    "topic": "Father",
+    "is_off_prompt": false,
+    "language": "English"
+  },
+  "grade_raw": null,
+  "grade_normalized": null,
+  "grade_norm_reason": "missing",
+  "school_raw": null,
+  "school_normalized": null,
+  "school_canonical_key": null,
+  "word_count": 179,
+  "char_count": 2310,
+  "paragraph_count": 1,
+  "essay_source": "llm_extraction"
+}

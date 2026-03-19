@@ -1,0 +1,132 @@
+{
+  "submission_id": "016f1ff517fe",
+  "filename": "fatherhood essay.pdf",
+  "record": {
+    "submission_id": "016f1ff517fe",
+    "doc_class": "SINGLE_TYPED",
+    "student_name": "Abby Castaneda",
+    "school_name": null,
+    "grade": null,
+    "teacher_name": null,
+    "city_or_location": null,
+    "father_figure_name": null,
+    "phone": null,
+    "email": null,
+    "word_count": 865,
+    "ocr_confidence_avg": 0.9740608050130286,
+    "needs_review": true,
+    "review_reason_codes": "DOC_TYPE_UNKNOWN;EXTRACTION_FALLBACK_USED;MISSING_GRADE;MISSING_SCHOOL_NAME",
+    "artifact_dir": "41676398-c7d5-4871-af5f-bdb29cb962a3/b7aa6525969d/artifacts/b7aa6525969d/chunk_0_016f1ff517fe"
+  },
+  "report_stages": {
+    "ocr": {
+      "confidence_avg": 0.9740608050130286,
+      "confidence_min": 0.9728364389233956,
+      "confidence_p10": 0.9728364389233956,
+      "low_conf_page_count": 0,
+      "line_count": 51
+    },
+    "segmentation": {
+      "contact_lines": 29,
+      "essay_lines": 22,
+      "essay_source": "segmentation",
+      "initial_essay_words": 422,
+      "final_essay_words": 422
+    },
+    "extraction": {
+      "fields_extracted": 3,
+      "word_count": 422
+    },
+    "validation": {
+      "is_valid": false,
+      "needs_review": true,
+      "issues": [
+        "DOC_TYPE_UNKNOWN",
+        "EXTRACTION_FALLBACK_USED",
+        "MISSING_GRADE",
+        "MISSING_SCHOOL_NAME"
+      ],
+      "review_reason_codes": [
+        "DOC_TYPE_UNKNOWN",
+        "EXTRACTION_FALLBACK_USED",
+        "MISSING_GRADE",
+        "MISSING_SCHOOL_NAME"
+      ],
+      "review_reason_codes_db": "DOC_TYPE_UNKNOWN;EXTRACTION_FALLBACK_USED;MISSING_GRADE;MISSING_SCHOOL_NAME",
+      "validation_policy_version": "v1",
+      "policy_version": "v1",
+      "doc_type": "unknown",
+      "doc_role": "document",
+      "ocr_provider": "google",
+      "extraction_method": "fallback",
+      "parse_model": "none",
+      "word_count": 865,
+      "final_text_char_count": 4331,
+      "auto_approve_eligible": false,
+      "auto_approve_blockers": [
+        "DOC_TYPE_UNKNOWN",
+        "EXTRACTION_FALLBACK_USED",
+        "MISSING_GRADE",
+        "MISSING_SCHOOL_NAME"
+      ],
+      "grade_normalization": {
+        "raw": null,
+        "normalized": null,
+        "method": "missing"
+      },
+      "school_reference_validation": {
+        "matched": false,
+        "method": "skipped",
+        "confidence": 0.0,
+        "reference_version": "schools.csv:14"
+      }
+    }
+  },
+  "extraction_debug": {
+    "extraction_method": "fallback",
+    "model": "none",
+    "fields_extracted": 2,
+    "required_fields_found": {
+      "student_name": true,
+      "school_name": false,
+      "grade": false
+    },
+    "result": {
+      "student_name": "Abby Castaneda",
+      "school_name": null,
+      "grade": null,
+      "teacher_name": null,
+      "city_or_location": null,
+      "father_figure_name": null,
+      "phone": null,
+      "email": null,
+      "grade_raw": null,
+      "grade_normalized": null,
+      "grade_norm_reason": "missing",
+      "school_raw": null,
+      "school_normalized": null,
+      "school_canonical_key": null
+    },
+    "normalization": {
+      "grade_raw": null,
+      "grade_normalized": null,
+      "grade_norm_reason": "missing",
+      "school_raw": null,
+      "school_normalized": null,
+      "school_canonical_key": null
+    },
+    "ifi_classification": {
+      "doc_type": "UNKNOWN",
+      "is_blank_template": false,
+      "language": "English",
+      "topic": "Father",
+      "is_off_prompt": false,
+      "notes": [
+        "Fallback extraction - no LLM available",
+        "Fallback reason: llm_error:AuthenticationError: Error code: 401 - {'error': {'message': 'Invalid API Key', 'type': 'invalid_request_error', 'code': 'invalid_api_key'}}"
+      ]
+    },
+    "doc_class": null
+  },
+  "essay_preview": "became his favorite kind of chip and everytime he has a bag it takes him back to that day.\nAll his life my dad has had to work for what he has and has never had an easy way out. Not only\nthis but he constantly put others before himself. He has helped me and my family in every\npossible way, shape, and form. I believe the best part of all he does is how little he notices he's\ndoing something nice. He just does, he doesn't expect in return. If you are a genuine person you\ndon't expect things in ret"
+}

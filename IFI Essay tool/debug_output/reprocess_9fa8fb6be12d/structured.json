@@ -1,0 +1,33 @@
+{
+  "student_name": "Mariangel Matias",
+  "school_name": "Rachel Carson",
+  "grade": 5,
+  "teacher_name": null,
+  "city_or_location": null,
+  "father_figure_name": null,
+  "phone": null,
+  "email": null,
+  "_ifi_metadata": {
+    "doc_type": "IFI_OFFICIAL_FORM_FILLED",
+    "is_blank_template": false,
+    "extraction_method": "typed_form_rule_based",
+    "notes": [
+      "IFI typed form: extracted via layout/label rules (no OCR, no LLM)"
+    ],
+    "student_name": "Mariangel Matias",
+    "grade": 5,
+    "school_name": "Rachel Carson",
+    "phone": null,
+    "email": null
+  },
+  "grade_raw": 5,
+  "grade_normalized": 5,
+  "grade_norm_reason": "parsed",
+  "school_raw": "Rachel Carson",
+  "school_normalized": "Rachel Carson",
+  "school_canonical_key": "RACHEL_CARSON",
+  "word_count": 734,
+  "char_count": 4552,
+  "paragraph_count": 3,
+  "essay_source": "segmentation"
+}

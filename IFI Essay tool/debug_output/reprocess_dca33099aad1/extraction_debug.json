@@ -1,0 +1,45 @@
+{
+  "extraction_method": "typed_form_rule_based",
+  "model": "llama-3.3-70b-versatile (Groq)",
+  "fields_extracted": 5,
+  "required_fields_found": {
+    "student_name": true,
+    "school_name": true,
+    "grade": false
+  },
+  "result": {
+    "student_name": "Samantha Lara",
+    "school_name": "March 19",
+    "grade": null,
+    "teacher_name": null,
+    "city_or_location": null,
+    "father_figure_name": null,
+    "phone": null,
+    "email": null,
+    "grade_raw": null,
+    "grade_normalized": null,
+    "grade_norm_reason": "missing",
+    "school_raw": "March 19",
+    "school_normalized": "March 19",
+    "school_canonical_key": null
+  },
+  "normalization": {
+    "grade_raw": null,
+    "grade_normalized": null,
+    "grade_norm_reason": "missing",
+    "school_raw": "March 19",
+    "school_normalized": "March 19",
+    "school_canonical_key": null
+  },
+  "ifi_classification": {
+    "doc_type": "IFI_OFFICIAL_FORM_FILLED",
+    "is_blank_template": false,
+    "language": null,
+    "topic": null,
+    "is_off_prompt": null,
+    "notes": [
+      "IFI typed form: extracted via layout/label rules (no OCR, no LLM)"
+    ]
+  },
+  "doc_class": null
+}

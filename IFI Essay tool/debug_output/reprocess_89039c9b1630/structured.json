@@ -1,0 +1,38 @@
+{
+  "student_name": "What my",
+  "school_name": null,
+  "grade": null,
+  "teacher_name": null,
+  "city_or_location": null,
+  "father_figure_name": null,
+  "phone": null,
+  "email": null,
+  "_ifi_metadata": {
+    "doc_type": "ESSAY_WITH_HEADER_METADATA",
+    "is_blank_template": false,
+    "extraction_method": "llm_ifi_freeform_heuristics_then_groq_normalize",
+    "notes": [
+      "Typed freeform: heuristics extract \u2192 Groq normalize"
+    ],
+    "student_name": null,
+    "school_name": null,
+    "grade": null,
+    "essay_text": "What my father means to me is that he's \nhardworking,caring,funny towards us.Hes my whole life to me and \nmy family.He shows that he is all those things because of all his \nactions.He  car  that he's hardworking because he works hard to \npay the necessary stuff like food.He\u2019s caring to my family because \nhe doesn't yell at us or really get mad at us.He\u2019s funny because \nhe jokes around with me and sometimes scare\u2019s me which I think \nis funny.Thats all the reasons why he means alot for me and my \nfamily.We are lucky to have him.",
+    "father_figure_name": null,
+    "father_figure_type": null,
+    "parent_reaction_text": null,
+    "topic": "Father",
+    "is_off_prompt": false,
+    "language": "English"
+  },
+  "grade_raw": null,
+  "grade_normalized": null,
+  "grade_norm_reason": "missing",
+  "school_raw": null,
+  "school_normalized": null,
+  "school_canonical_key": null,
+  "word_count": 31,
+  "char_count": 160,
+  "paragraph_count": 1,
+  "essay_source": "segmentation"
+}

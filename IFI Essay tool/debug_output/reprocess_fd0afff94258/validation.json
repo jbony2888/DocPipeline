@@ -1,0 +1,35 @@
+{
+  "is_valid": false,
+  "needs_review": true,
+  "issues": [
+    "MISSING_GRADE"
+  ],
+  "review_reason_codes": [
+    "MISSING_GRADE"
+  ],
+  "review_reason_codes_db": "MISSING_GRADE",
+  "validation_policy_version": "v1",
+  "policy_version": "v1",
+  "doc_type": "standard_freeform_essay",
+  "doc_role": "document",
+  "ocr_provider": "google",
+  "extraction_method": "llm_ifi_freeform_heuristics_then_groq_normalize",
+  "parse_model": "llama-3.3-70b-versatile (Groq)",
+  "word_count": 96,
+  "final_text_char_count": 530,
+  "auto_approve_eligible": false,
+  "auto_approve_blockers": [
+    "MISSING_GRADE"
+  ],
+  "grade_normalization": {
+    "raw": null,
+    "normalized": null,
+    "method": "missing"
+  },
+  "school_reference_validation": {
+    "matched": true,
+    "method": "partial",
+    "confidence": 0.95,
+    "reference_version": "schools.csv:20"
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "student_name": "Salome",
+  "school_name": "Carson",
+  "grade": 4,
+  "teacher_name": null,
+  "city_or_location": null,
+  "father_figure_name": null,
+  "phone": null,
+  "email": null,
+  "_ifi_metadata": {
+    "doc_type": "ESSAY_WITH_HEADER_METADATA",
+    "is_blank_template": false,
+    "extraction_method": "llm_ifi_freeform_heuristics_then_groq_normalize",
+    "notes": [
+      "Typed freeform: heuristics extract \u2192 Groq normalize"
+    ],
+    "student_name": "Salome",
+    "school_name": "Carson",
+    "grade": 4,
+    "essay_text": "Nombre:Salome     March/4/26 \nCarson/101             4th grade  \n \nMi papa significa mucho para mi. \nMi pap\u00e1 es el mejor porque el siempre me apoya en las \nbuenas y en las malas.Me dice que nunca me tengo que \nrendir.Un ejemplo de que mi papa es el mejor es que el \nsiempre me apoya.Me da lo que yo quiero.Tambi\u00e9n porque \nsiempre se preocupa por mi.Por eso mi papa es el mejor.Me \nhace sentir especial y eso me hace feliz.Mi pap\u00e1 es una \npersona maravillosa.Es muy bueno conmigo y por eso \nsignifica mucho para mi.",
+    "father_figure_name": null,
+    "father_figure_type": null,
+    "parent_reaction_text": null,
+    "topic": "Father",
+    "is_off_prompt": false,
+    "language": "English"
+  },
+  "grade_raw": 4,
+  "grade_normalized": 4,
+  "grade_norm_reason": "parsed",
+  "school_raw": "Carson",
+  "school_normalized": "Carson",
+  "school_canonical_key": null,
+  "word_count": 89,
+  "char_count": 514,
+  "paragraph_count": 1,
+  "essay_source": "llm_extraction"
+}

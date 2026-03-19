@@ -1,0 +1,32 @@
+{
+  "student_name": "P d",
+  "school_name": "667 B",
+  "grade": null,
+  "teacher_name": null,
+  "city_or_location": null,
+  "father_figure_name": null,
+  "phone": null,
+  "email": null,
+  "_ifi_metadata": {
+    "doc_type": "IFI_OFFICIAL_FORM_FILLED",
+    "is_blank_template": false,
+    "extraction_method": "typed_form_rule_based",
+    "notes": [
+      "IFI typed form: extracted via layout/label rules (no OCR, no LLM)"
+    ],
+    "student_name": "P d",
+    "school_name": "# 667 B",
+    "phone": null,
+    "email": null
+  },
+  "grade_raw": null,
+  "grade_normalized": null,
+  "grade_norm_reason": "missing",
+  "school_raw": "# 667 B",
+  "school_normalized": "667 B",
+  "school_canonical_key": null,
+  "word_count": 10,
+  "char_count": 27,
+  "paragraph_count": 2,
+  "essay_source": "segmentation"
+}

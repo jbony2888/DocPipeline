@@ -1,0 +1,34 @@
+{
+  "student_name": "Addison Arroyo",
+  "school_name": "Mundelein",
+  "grade": 10,
+  "teacher_name": null,
+  "city_or_location": null,
+  "father_figure_name": "reaction to this essay:",
+  "phone": "224-475-6697",
+  "email": "Addisonjarroyo@gmail.com",
+  "_ifi_metadata": {
+    "doc_type": "IFI_OFFICIAL_FORM_FILLED",
+    "is_blank_template": false,
+    "extraction_method": "typed_form_rule_based",
+    "notes": [
+      "IFI typed form: extracted via layout/label rules (no OCR, no LLM)"
+    ],
+    "student_name": "Addison Arroyo",
+    "school_name": "Mundelein",
+    "grade": 10,
+    "father_figure_name": "reaction to this essay:",
+    "phone": "224-475-6697",
+    "email": "Addisonjarroyo@gmail.com"
+  },
+  "grade_raw": 10,
+  "grade_normalized": 10,
+  "grade_norm_reason": "parsed",
+  "school_raw": "Mundelein",
+  "school_normalized": "Mundelein",
+  "school_canonical_key": null,
+  "word_count": 955,
+  "char_count": 5070,
+  "paragraph_count": 1,
+  "essay_source": "segmentation"
+}

@@ -1,0 +1,116 @@
+{
+  "submission_id": "6ceb603d139a",
+  "filename": "Santiago Flores - 26-IFI-Essay-Form-Eng-and-Spanish.pdf",
+  "record": {
+    "submission_id": "6ceb603d139a",
+    "doc_class": "SINGLE_TYPED",
+    "student_name": "Santiago Flores",
+    "school_name": "Rachel Carson Elementary",
+    "grade": 5,
+    "teacher_name": null,
+    "city_or_location": null,
+    "father_figure_name": null,
+    "phone": null,
+    "email": null,
+    "word_count": 721,
+    "ocr_confidence_avg": 1.0,
+    "needs_review": false,
+    "review_reason_codes": "",
+    "artifact_dir": "6a73f2e6-5005-4aa4-ba35-a43aab25962a/9b95d20e6309/artifacts/9b95d20e6309/chunk_0_6ceb603d139a"
+  },
+  "report_stages": {
+    "ocr": {
+      "confidence_avg": 1.0,
+      "confidence_min": 1.0,
+      "confidence_p10": 1.0,
+      "low_conf_page_count": 0,
+      "line_count": 76
+    },
+    "segmentation": {
+      "contact_lines": 9,
+      "essay_lines": 67,
+      "essay_source": "segmentation",
+      "initial_essay_words": 683,
+      "final_essay_words": 683
+    },
+    "extraction": {
+      "fields_extracted": 10,
+      "word_count": 683
+    },
+    "validation": {
+      "is_valid": true,
+      "needs_review": false,
+      "issues": [],
+      "review_reason_codes": [],
+      "review_reason_codes_db": "",
+      "validation_policy_version": "v1",
+      "policy_version": "v1",
+      "doc_type": "ifi_official_form_filled",
+      "doc_role": "document",
+      "ocr_provider": "google",
+      "extraction_method": "typed_form_rule_based",
+      "parse_model": "llama-3.3-70b-versatile (Groq)",
+      "word_count": 721,
+      "final_text_char_count": 4431,
+      "auto_approve_eligible": true,
+      "auto_approve_blockers": [],
+      "grade_normalization": {
+        "raw": 5,
+        "normalized": 5,
+        "method": "numeric"
+      },
+      "school_reference_validation": {
+        "matched": true,
+        "method": "partial",
+        "confidence": 0.95,
+        "reference_version": "schools.csv:16"
+      }
+    }
+  },
+  "extraction_debug": {
+    "extraction_method": "typed_form_rule_based",
+    "model": "llama-3.3-70b-versatile (Groq)",
+    "fields_extracted": 9,
+    "required_fields_found": {
+      "student_name": true,
+      "school_name": true,
+      "grade": true
+    },
+    "result": {
+      "student_name": "Santiago Flores",
+      "school_name": "Rachel Carson Elementary",
+      "grade": 5,
+      "teacher_name": null,
+      "city_or_location": null,
+      "father_figure_name": null,
+      "phone": null,
+      "email": null,
+      "grade_raw": 5,
+      "grade_normalized": 5,
+      "grade_norm_reason": "parsed",
+      "school_raw": "Rachel carson elementary",
+      "school_normalized": "Rachel Carson Elementary",
+      "school_canonical_key": "RACHEL_CARSON"
+    },
+    "normalization": {
+      "grade_raw": 5,
+      "grade_normalized": 5,
+      "grade_norm_reason": "parsed",
+      "school_raw": "Rachel carson elementary",
+      "school_normalized": "Rachel Carson Elementary",
+      "school_canonical_key": "RACHEL_CARSON"
+    },
+    "ifi_classification": {
+      "doc_type": "IFI_OFFICIAL_FORM_FILLED",
+      "is_blank_template": false,
+      "language": null,
+      "topic": null,
+      "is_off_prompt": null,
+      "notes": [
+        "IFI typed form: extracted via layout/label rules (no OCR, no LLM)"
+      ]
+    },
+    "doc_class": null
+  },
+  "essay_preview": "Vroom! There's a big truck full with stuff to repair all inside ready to be used, bumps making the \ncar wobble but the truck keeps going. \n My dad is tired but he still keeps driving, he sees a man surviving off the public bench, my dad \ntell his friend \u201chey, ima stop and park right here and help the homeless man real quick\u201d his \nfriend replies with \u201cOk!\u201d After telling his friend that he's gonna help the man, he gets out of the \ncar and goes to the man and offers him some money. The man agrees a"
+}

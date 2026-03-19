@@ -1,0 +1,20 @@
+{
+  "text": "Sarah \nRoom 101 \nCarson \n \nWhat my father means to me \nMy father is very special to me.  He is always there for me. My dad \nalso takes me nd my family to places like the stores. My dad also buys \nus food and other stuff we need.  My dad goes to work from 6:00 am \nto 3:00 pm.  He works hard to bring me stuff to make me happy.  That \nis why my father is so special to me.  I am lucky to call him dad.",
+  "confidence_avg": 1.0,
+  "confidence_min": 1.0,
+  "confidence_p10": 1.0,
+  "low_conf_page_count": 0,
+  "lines": [
+    "Sarah ",
+    "Room 101 ",
+    "Carson ",
+    " ",
+    "What my father means to me ",
+    "My father is very special to me.  He is always there for me. My dad ",
+    "also takes me nd my family to places like the stores. My dad also buys ",
+    "us food and other stuff we need.  My dad goes to work from 6:00 am ",
+    "to 3:00 pm.  He works hard to bring me stuff to make me happy.  That ",
+    "is why my father is so special to me.  I am lucky to call him dad."
+  ],
+  "form_field_values": null
+}

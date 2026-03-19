@@ -1,0 +1,38 @@
+{
+  "student_name": "Ashley Monje",
+  "school_name": "Carson",
+  "grade": null,
+  "teacher_name": null,
+  "city_or_location": null,
+  "father_figure_name": null,
+  "phone": null,
+  "email": null,
+  "_ifi_metadata": {
+    "doc_type": "ESSAY_WITH_HEADER_METADATA",
+    "is_blank_template": false,
+    "extraction_method": "llm_ifi_freeform_heuristics_then_groq_normalize",
+    "notes": [
+      "Typed freeform: heuristics extract \u2192 Groq normalize"
+    ],
+    "student_name": "Ashley Monje",
+    "school_name": "Carson",
+    "grade": null,
+    "essay_text": "Ashley Monje \nCarson Room 101 \n \nWhat my father means to me is that he is very special to me.  He gives me stuff that I need . He \nhelps me do my homework . That is why I love my dad . The stuff that my dad gives is for school \nor for my room. He knows it makes me happy .He is very giving . He helps me get A and B in \nschool .Everything he does for me shows me that he loves me . That is why he means so much \nto me .",
+    "father_figure_name": null,
+    "father_figure_type": null,
+    "parent_reaction_text": null,
+    "topic": "Father",
+    "is_off_prompt": false,
+    "language": "English"
+  },
+  "grade_raw": null,
+  "grade_normalized": null,
+  "grade_norm_reason": "missing",
+  "school_raw": "Carson",
+  "school_normalized": "Carson",
+  "school_canonical_key": null,
+  "word_count": 97,
+  "char_count": 419,
+  "paragraph_count": 1,
+  "essay_source": "llm_extraction"
+}

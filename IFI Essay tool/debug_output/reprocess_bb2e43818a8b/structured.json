@@ -1,0 +1,38 @@
+{
+  "student_name": "Luis Lopez",
+  "school_name": "Carson",
+  "grade": null,
+  "teacher_name": null,
+  "city_or_location": null,
+  "father_figure_name": null,
+  "phone": null,
+  "email": null,
+  "_ifi_metadata": {
+    "doc_type": "ESSAY_WITH_HEADER_METADATA",
+    "is_blank_template": false,
+    "extraction_method": "llm_ifi_freeform_heuristics_then_groq_normalize",
+    "notes": [
+      "Typed freeform: heuristics extract \u2192 Groq normalize"
+    ],
+    "student_name": "Luis Lopez",
+    "school_name": "Carson",
+    "grade": null,
+    "essay_text": "Luis Lopez \nCarson \nRoom 101 \n \nLo que mi papa significa para mi. \n \nMi papa es muy importante para mi. El que es muy gentil para mi. Tambien \nes muy trabajador para traer comida a la mesa. Tambin es un bueno papa \nen lo que sabe. Mi papa nace cosas que demuestra que es buen papa. Me \napoya en lo que hago. Como si me quiero meter en un equipo de futbol el \ndise que si. Me apoya en mis partidos. Me apoya en todo lo que hago. \nHasta cuando hago algo mal dise que no me sienta mal. Eso es un apoyo. \nSon por todas esas razones que mi papa es muy importante para mi. Estoy \nafortunodo de llomarlo mi papa.",
+    "father_figure_name": null,
+    "father_figure_type": null,
+    "parent_reaction_text": null,
+    "topic": "Father",
+    "is_off_prompt": false,
+    "language": "English"
+  },
+  "grade_raw": null,
+  "grade_normalized": null,
+  "grade_norm_reason": "missing",
+  "school_raw": "Carson",
+  "school_normalized": "Carson",
+  "school_canonical_key": null,
+  "word_count": 121,
+  "char_count": 605,
+  "paragraph_count": 1,
+  "essay_source": "llm_extraction"
+}

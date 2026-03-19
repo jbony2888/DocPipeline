@@ -1,0 +1,45 @@
+{
+  "extraction_method": "llm_ifi_freeform_heuristics_then_groq_normalize",
+  "model": "llama-3.3-70b-versatile (Groq)",
+  "fields_extracted": 5,
+  "required_fields_found": {
+    "student_name": true,
+    "school_name": true,
+    "grade": false
+  },
+  "result": {
+    "student_name": "Kendall Adams",
+    "school_name": "\u200bmy\u200b\u200bgrammar\u200b\u200bschool\u200b\u200byears\u200b\u200bmy\u200b\u200bschool\u200b\u200bhad\u200b\u200blots\u200b\u200bof\u200b\u200bfather\u200b\u200band\u200b\u200bdaughter\u200b\u200bdances\u200b\u200bmy\u200b\u200bfriends\u200b\u200bwould\u200b",
+    "grade": null,
+    "teacher_name": null,
+    "city_or_location": null,
+    "father_figure_name": null,
+    "phone": null,
+    "email": null,
+    "grade_raw": null,
+    "grade_normalized": null,
+    "grade_norm_reason": "missing",
+    "school_raw": "\u200bmy\u200b\u200bgrammar\u200b\u200bschool\u200b\u200byears,\u200b\u200bmy\u200b\u200bschool\u200b\u200bhad\u200b\u200blots\u200b\u200bof\u200b\u200bfather\u200b\u200band\u200b\u200bdaughter\u200b\u200bdances.\u200b\u200bMy\u200b\u200bfriends\u200b\u200bwould\u200b",
+    "school_normalized": "\u200bmy\u200b\u200bgrammar\u200b\u200bschool\u200b\u200byears\u200b\u200bmy\u200b\u200bschool\u200b\u200bhad\u200b\u200blots\u200b\u200bof\u200b\u200bfather\u200b\u200band\u200b\u200bdaughter\u200b\u200bdances\u200b\u200bmy\u200b\u200bfriends\u200b\u200bwould\u200b",
+    "school_canonical_key": null
+  },
+  "normalization": {
+    "grade_raw": null,
+    "grade_normalized": null,
+    "grade_norm_reason": "missing",
+    "school_raw": "\u200bmy\u200b\u200bgrammar\u200b\u200bschool\u200b\u200byears,\u200b\u200bmy\u200b\u200bschool\u200b\u200bhad\u200b\u200blots\u200b\u200bof\u200b\u200bfather\u200b\u200band\u200b\u200bdaughter\u200b\u200bdances.\u200b\u200bMy\u200b\u200bfriends\u200b\u200bwould\u200b",
+    "school_normalized": "\u200bmy\u200b\u200bgrammar\u200b\u200bschool\u200b\u200byears\u200b\u200bmy\u200b\u200bschool\u200b\u200bhad\u200b\u200blots\u200b\u200bof\u200b\u200bfather\u200b\u200band\u200b\u200bdaughter\u200b\u200bdances\u200b\u200bmy\u200b\u200bfriends\u200b\u200bwould\u200b",
+    "school_canonical_key": null
+  },
+  "ifi_classification": {
+    "doc_type": "ESSAY_WITH_HEADER_METADATA",
+    "is_blank_template": false,
+    "language": "English",
+    "topic": "Father",
+    "is_off_prompt": false,
+    "notes": [
+      "Typed freeform: heuristics extract \u2192 Groq normalize"
+    ]
+  },
+  "doc_class": null
+}

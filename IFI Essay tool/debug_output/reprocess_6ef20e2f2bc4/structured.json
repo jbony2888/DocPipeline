@@ -1,0 +1,34 @@
+{
+  "student_name": "Lizetl Molina",
+  "school_name": "Muha",
+  "grade": 10,
+  "teacher_name": null,
+  "city_or_location": null,
+  "father_figure_name": "reaction to this essay:",
+  "phone": "224-245-6959",
+  "email": "120217@gmail.com",
+  "_ifi_metadata": {
+    "doc_type": "IFI_OFFICIAL_FORM_FILLED",
+    "is_blank_template": false,
+    "extraction_method": "typed_form_rule_based",
+    "notes": [
+      "IFI typed form: extracted via layout/label rules (no OCR, no LLM)"
+    ],
+    "student_name": "Lizetl Molina",
+    "grade": 10,
+    "school_name": "Muha",
+    "father_figure_name": "reaction to this essay:",
+    "phone": "224-245-6959",
+    "email": "120217@gmail.com"
+  },
+  "grade_raw": 10,
+  "grade_normalized": 10,
+  "grade_norm_reason": "parsed",
+  "school_raw": "Muha",
+  "school_normalized": "Muha",
+  "school_canonical_key": null,
+  "word_count": 670,
+  "char_count": 3383,
+  "paragraph_count": 1,
+  "essay_source": "segmentation"
+}

@@ -1,0 +1,125 @@
+{
+  "submission_id": "63d034ca515e",
+  "filename": "Yaanai Adame - 26-IFI-Essay-Form-Eng-and-Spanish.pdf",
+  "record": {
+    "submission_id": "63d034ca515e",
+    "doc_class": "SINGLE_TYPED",
+    "student_name": null,
+    "school_name": "Escuela A Dog",
+    "grade": 5,
+    "teacher_name": null,
+    "city_or_location": null,
+    "father_figure_name": "* means to me\"",
+    "phone": "and he",
+    "email": null,
+    "word_count": 757,
+    "ocr_confidence_avg": 1.0,
+    "needs_review": true,
+    "review_reason_codes": "MISSING_STUDENT_NAME;UNKNOWN_SCHOOL",
+    "artifact_dir": "6a73f2e6-5005-4aa4-ba35-a43aab25962a/91386f8a7d49/artifacts/91386f8a7d49/chunk_0_63d034ca515e"
+  },
+  "report_stages": {
+    "ocr": {
+      "confidence_avg": 1.0,
+      "confidence_min": 1.0,
+      "confidence_p10": 1.0,
+      "low_conf_page_count": 0,
+      "line_count": 78
+    },
+    "segmentation": {
+      "contact_lines": 11,
+      "essay_lines": 67,
+      "essay_source": "segmentation",
+      "initial_essay_words": 710,
+      "final_essay_words": 710
+    },
+    "extraction": {
+      "fields_extracted": 11,
+      "word_count": 710
+    },
+    "validation": {
+      "is_valid": false,
+      "needs_review": true,
+      "issues": [
+        "MISSING_STUDENT_NAME",
+        "UNKNOWN_SCHOOL"
+      ],
+      "review_reason_codes": [
+        "MISSING_STUDENT_NAME",
+        "UNKNOWN_SCHOOL"
+      ],
+      "review_reason_codes_db": "MISSING_STUDENT_NAME;UNKNOWN_SCHOOL",
+      "validation_policy_version": "v1",
+      "policy_version": "v1",
+      "doc_type": "ifi_official_form_filled",
+      "doc_role": "document",
+      "ocr_provider": "google",
+      "extraction_method": "typed_form_rule_based",
+      "parse_model": "llama-3.3-70b-versatile (Groq)",
+      "word_count": 757,
+      "final_text_char_count": 4514,
+      "auto_approve_eligible": false,
+      "auto_approve_blockers": [
+        "MISSING_STUDENT_NAME",
+        "UNKNOWN_SCHOOL"
+      ],
+      "grade_normalization": {
+        "raw": 5,
+        "normalized": 5,
+        "method": "numeric"
+      },
+      "school_reference_validation": {
+        "matched": false,
+        "method": "none",
+        "confidence": 0.384615,
+        "reference_version": "schools.csv:16"
+      }
+    }
+  },
+  "extraction_debug": {
+    "extraction_method": "typed_form_rule_based",
+    "model": "llama-3.3-70b-versatile (Groq)",
+    "fields_extracted": 10,
+    "required_fields_found": {
+      "student_name": true,
+      "school_name": true,
+      "grade": true
+    },
+    "result": {
+      "student_name": "/ Nombre del Estudiante",
+      "school_name": "Escuela A Dog",
+      "grade": 5,
+      "teacher_name": null,
+      "city_or_location": null,
+      "father_figure_name": "* means to me\"",
+      "phone": "and he",
+      "email": null,
+      "grade_raw": 5,
+      "grade_normalized": 5,
+      "grade_norm_reason": "parsed",
+      "school_raw": "/ Escuela a dog",
+      "school_normalized": "Escuela A Dog",
+      "school_canonical_key": null
+    },
+    "normalization": {
+      "grade_raw": 5,
+      "grade_normalized": 5,
+      "grade_norm_reason": "parsed",
+      "school_raw": "/ Escuela a dog",
+      "school_normalized": "Escuela A Dog",
+      "school_canonical_key": null
+    },
+    "ifi_classification": {
+      "doc_type": "IFI_OFFICIAL_FORM_FILLED",
+      "is_blank_template": false,
+      "language": null,
+      "topic": null,
+      "is_off_prompt": null,
+      "notes": [
+        "IFI typed form: extracted via layout/label rules (no OCR, no LLM)"
+      ]
+    },
+    "doc_class": null
+  },
+  "essay_preview": "When I was doing math I didnt understand. I asked my dad to help me but  by i \nwas nervous but my fear went away he told me  \u00a8its ok you can try again,\u201d  and he made \nme trust  so I do me my homework in the house  casi alas 1 pm todos los dias en  \nhave dia de tarea. \nMy dad  is nice and patient because in that moment he get his phone and he \nwaits  for me. Then he waits for me to understand  he get a snack  and shares it \nwith me  he shows me hot to do it and wait for me he actually  might be s"
+}

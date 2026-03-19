@@ -1,0 +1,38 @@
+{
+  "student_name": "Mia Vasquez",
+  "school_name": "Carson101",
+  "grade": null,
+  "teacher_name": null,
+  "city_or_location": null,
+  "father_figure_name": null,
+  "phone": null,
+  "email": null,
+  "_ifi_metadata": {
+    "doc_type": "ESSAY_WITH_HEADER_METADATA",
+    "is_blank_template": false,
+    "extraction_method": "llm_ifi_freeform_heuristics_then_groq_normalize",
+    "notes": [
+      "Typed freeform: heuristics extract \u2192 Groq normalize"
+    ],
+    "student_name": "Mia Vasquez",
+    "school_name": "carson101",
+    "grade": null,
+    "essay_text": "Mia Vasquez carson101 march 3, 26 what my grandpa means to me \n \nEstoy feliz de tener a mi abuelito porque siempre me apoya. Tambi\u00e9n porque de peque\u00f1a me \nllevaba a la escuela.el me apoya y me ayuda cuando no puedo puedo hacer algo. Me ayuda a \ncocinar a veces. Mi abuelito significa mucho para mi porque es como mi pap\u00e1\u2019 es muy bueno \ncon mi mam\u00e1\u2019 y con mis hermanos tambi\u00e9n. Estoy agradecida por tenerlo y por apoyarme \nsiempre por eso significa  mucho para mi.\n\nMia Vasquez carson101 march 3, 26 what my grandpa means to me",
+    "father_figure_name": null,
+    "father_figure_type": null,
+    "parent_reaction_text": null,
+    "topic": "Father",
+    "is_off_prompt": false,
+    "language": "English"
+  },
+  "grade_raw": null,
+  "grade_normalized": null,
+  "grade_norm_reason": "missing",
+  "school_raw": "carson101",
+  "school_normalized": "Carson101",
+  "school_canonical_key": null,
+  "word_count": 97,
+  "char_count": 526,
+  "paragraph_count": 2,
+  "essay_source": "llm_extraction"
+}

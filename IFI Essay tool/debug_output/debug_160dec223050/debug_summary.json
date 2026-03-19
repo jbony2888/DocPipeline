@@ -1,0 +1,116 @@
+{
+  "submission_id": "160dec223050",
+  "filename": "Addie Fatherhood.pdf",
+  "record": {
+    "submission_id": "160dec223050",
+    "doc_class": "SINGLE_TYPED",
+    "student_name": "Addison Arroyo",
+    "school_name": "Mundelein",
+    "grade": 10,
+    "teacher_name": null,
+    "city_or_location": null,
+    "father_figure_name": "reaction to this essay:",
+    "phone": "224-475-6697",
+    "email": "Addisonjarroyo@gmail.com",
+    "word_count": 1105,
+    "ocr_confidence_avg": 0.9440883215178761,
+    "needs_review": false,
+    "review_reason_codes": "",
+    "artifact_dir": "20789b74-4221-443b-9132-07b2d0333684/3c82f2f2a457/artifacts/3c82f2f2a457/chunk_2_160dec223050"
+  },
+  "report_stages": {
+    "ocr": {
+      "confidence_avg": 0.9440883215178761,
+      "confidence_min": 0.9108597285067874,
+      "confidence_p10": 0.9108597285067874,
+      "low_conf_page_count": 0,
+      "line_count": 82
+    },
+    "segmentation": {
+      "contact_lines": 28,
+      "essay_lines": 54,
+      "essay_source": "segmentation",
+      "initial_essay_words": 955,
+      "final_essay_words": 955
+    },
+    "extraction": {
+      "fields_extracted": 12,
+      "word_count": 955
+    },
+    "validation": {
+      "is_valid": true,
+      "needs_review": false,
+      "issues": [],
+      "review_reason_codes": [],
+      "review_reason_codes_db": "",
+      "validation_policy_version": "v1",
+      "policy_version": "v1",
+      "doc_type": "bulk_scanned_batch",
+      "doc_role": "document",
+      "ocr_provider": "google",
+      "extraction_method": "typed_form_rule_based",
+      "parse_model": "llama-3.3-70b-versatile (Groq)",
+      "word_count": 1105,
+      "final_text_char_count": 6139,
+      "auto_approve_eligible": true,
+      "auto_approve_blockers": [],
+      "grade_normalization": {
+        "raw": 10,
+        "normalized": 10,
+        "method": "numeric"
+      },
+      "school_reference_validation": {
+        "matched": true,
+        "method": "partial",
+        "confidence": 0.95,
+        "reference_version": "schools.csv:16"
+      }
+    }
+  },
+  "extraction_debug": {
+    "extraction_method": "typed_form_rule_based",
+    "model": "llama-3.3-70b-versatile (Groq)",
+    "fields_extracted": 11,
+    "required_fields_found": {
+      "student_name": true,
+      "school_name": true,
+      "grade": true
+    },
+    "result": {
+      "student_name": "Addison Arroyo",
+      "school_name": "Mundelein",
+      "grade": 10,
+      "teacher_name": null,
+      "city_or_location": null,
+      "father_figure_name": "reaction to this essay:",
+      "phone": "224-475-6697",
+      "email": "Addisonjarroyo@gmail.com",
+      "grade_raw": 10,
+      "grade_normalized": 10,
+      "grade_norm_reason": "parsed",
+      "school_raw": "Mundelein",
+      "school_normalized": "Mundelein",
+      "school_canonical_key": null
+    },
+    "normalization": {
+      "grade_raw": 10,
+      "grade_normalized": 10,
+      "grade_norm_reason": "parsed",
+      "school_raw": "Mundelein",
+      "school_normalized": "Mundelein",
+      "school_canonical_key": null
+    },
+    "ifi_classification": {
+      "doc_type": "IFI_OFFICIAL_FORM_FILLED",
+      "is_blank_template": false,
+      "language": null,
+      "topic": null,
+      "is_off_prompt": null,
+      "notes": [
+        "IFI typed form: extracted via layout/label rules (no OCR, no LLM)"
+      ]
+    },
+    "doc_class": null
+  },
+  "essay_preview": "My Dad is not selfish. He is giving, always doing nice things for me and my family, and always puts everyone first before\nhimself. He is patient, no matter the situation he is always dependable, calm, and understanding.\nMy dad grew up in a family of 4 kids. He is the oldest son with two older sisters and a younger brother. My dad is a shorter\nguy with a kind face and a warm presence. He is often a little unshaven, giving him a relaxed look that matches his easygoing\npersonality. During the week,"
+}

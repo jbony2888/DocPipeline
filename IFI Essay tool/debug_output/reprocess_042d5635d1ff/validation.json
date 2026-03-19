@@ -1,0 +1,35 @@
+{
+  "is_valid": false,
+  "needs_review": true,
+  "issues": [
+    "UNKNOWN_SCHOOL"
+  ],
+  "review_reason_codes": [
+    "UNKNOWN_SCHOOL"
+  ],
+  "review_reason_codes_db": "UNKNOWN_SCHOOL",
+  "validation_policy_version": "v1",
+  "policy_version": "v1",
+  "doc_type": "ifi_official_form_filled",
+  "doc_role": "document",
+  "ocr_provider": "google",
+  "extraction_method": "typed_form_rule_based",
+  "parse_model": "llama-3.3-70b-versatile (Groq)",
+  "word_count": 913,
+  "final_text_char_count": 5581,
+  "auto_approve_eligible": false,
+  "auto_approve_blockers": [
+    "UNKNOWN_SCHOOL"
+  ],
+  "grade_normalization": {
+    "raw": 8,
+    "normalized": 8,
+    "method": "numeric"
+  },
+  "school_reference_validation": {
+    "matched": false,
+    "method": "none",
+    "confidence": 0.339623,
+    "reference_version": "schools.csv:20"
+  }
+}

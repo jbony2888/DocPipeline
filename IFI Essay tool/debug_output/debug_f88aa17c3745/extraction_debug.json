@@ -1,0 +1,45 @@
+{
+  "extraction_method": "typed_form_rule_based",
+  "model": "llama-3.3-70b-versatile (Groq)",
+  "fields_extracted": 11,
+  "required_fields_found": {
+    "student_name": true,
+    "school_name": true,
+    "grade": true
+  },
+  "result": {
+    "student_name": "Jayden Martinez",
+    "school_name": "Rachel Carson Elementary",
+    "grade": 7,
+    "teacher_name": null,
+    "city_or_location": null,
+    "father_figure_name": null,
+    "phone": "3125934728",
+    "email": "Jamartinez124@cps.edu",
+    "grade_raw": 7,
+    "grade_normalized": 7,
+    "grade_norm_reason": "parsed",
+    "school_raw": "Rachel Carson Elementary",
+    "school_normalized": "Rachel Carson Elementary",
+    "school_canonical_key": "RACHEL_CARSON"
+  },
+  "normalization": {
+    "grade_raw": 7,
+    "grade_normalized": 7,
+    "grade_norm_reason": "parsed",
+    "school_raw": "Rachel Carson Elementary",
+    "school_normalized": "Rachel Carson Elementary",
+    "school_canonical_key": "RACHEL_CARSON"
+  },
+  "ifi_classification": {
+    "doc_type": "IFI_OFFICIAL_FORM_FILLED",
+    "is_blank_template": false,
+    "language": null,
+    "topic": null,
+    "is_off_prompt": null,
+    "notes": [
+      "IFI typed form: extracted via layout/label rules (no OCR, no LLM)"
+    ]
+  },
+  "doc_class": null
+}

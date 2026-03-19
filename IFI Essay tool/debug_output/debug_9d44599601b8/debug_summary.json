@@ -1,0 +1,122 @@
+{
+  "submission_id": "9d44599601b8",
+  "filename": "Samuel Vidal-Alpizar - 26-IFI-Essay-Form-Eng-and-Spanish.pdf",
+  "record": {
+    "submission_id": "9d44599601b8",
+    "doc_class": "SINGLE_TYPED",
+    "student_name": null,
+    "school_name": "Rachel Carson Elementry",
+    "grade": 5,
+    "teacher_name": null,
+    "city_or_location": null,
+    "father_figure_name": null,
+    "phone": null,
+    "email": null,
+    "word_count": 818,
+    "ocr_confidence_avg": 1.0,
+    "needs_review": true,
+    "review_reason_codes": "MISSING_STUDENT_NAME",
+    "artifact_dir": "6a73f2e6-5005-4aa4-ba35-a43aab25962a/1445adf67ff7/artifacts/1445adf67ff7/chunk_0_9d44599601b8"
+  },
+  "report_stages": {
+    "ocr": {
+      "confidence_avg": 1.0,
+      "confidence_min": 1.0,
+      "confidence_p10": 1.0,
+      "low_conf_page_count": 0,
+      "line_count": 79
+    },
+    "segmentation": {
+      "contact_lines": 11,
+      "essay_lines": 68,
+      "essay_source": "segmentation",
+      "initial_essay_words": 759,
+      "final_essay_words": 759
+    },
+    "extraction": {
+      "fields_extracted": 9,
+      "word_count": 759
+    },
+    "validation": {
+      "is_valid": false,
+      "needs_review": true,
+      "issues": [
+        "MISSING_STUDENT_NAME"
+      ],
+      "review_reason_codes": [
+        "MISSING_STUDENT_NAME"
+      ],
+      "review_reason_codes_db": "MISSING_STUDENT_NAME",
+      "validation_policy_version": "v1",
+      "policy_version": "v1",
+      "doc_type": "ifi_official_form_filled",
+      "doc_role": "document",
+      "ocr_provider": "google",
+      "extraction_method": "typed_form_rule_based",
+      "parse_model": "llama-3.3-70b-versatile (Groq)",
+      "word_count": 818,
+      "final_text_char_count": 4892,
+      "auto_approve_eligible": false,
+      "auto_approve_blockers": [
+        "MISSING_STUDENT_NAME"
+      ],
+      "grade_normalization": {
+        "raw": 5,
+        "normalized": 5,
+        "method": "numeric"
+      },
+      "school_reference_validation": {
+        "matched": true,
+        "method": "partial",
+        "confidence": 0.95,
+        "reference_version": "schools.csv:16"
+      }
+    }
+  },
+  "extraction_debug": {
+    "extraction_method": "typed_form_rule_based",
+    "model": "llama-3.3-70b-versatile (Groq)",
+    "fields_extracted": 8,
+    "required_fields_found": {
+      "student_name": true,
+      "school_name": true,
+      "grade": true
+    },
+    "result": {
+      "student_name": "Samuel Vidal Alpizar.",
+      "school_name": "Rachel Carson Elementry",
+      "grade": 5,
+      "teacher_name": null,
+      "city_or_location": null,
+      "father_figure_name": null,
+      "phone": null,
+      "email": null,
+      "grade_raw": 5,
+      "grade_normalized": 5,
+      "grade_norm_reason": "parsed",
+      "school_raw": "Rachel Carson Elementry",
+      "school_normalized": "Rachel Carson Elementry",
+      "school_canonical_key": null
+    },
+    "normalization": {
+      "grade_raw": 5,
+      "grade_normalized": 5,
+      "grade_norm_reason": "parsed",
+      "school_raw": "Rachel Carson Elementry",
+      "school_normalized": "Rachel Carson Elementry",
+      "school_canonical_key": null
+    },
+    "ifi_classification": {
+      "doc_type": "IFI_OFFICIAL_FORM_FILLED",
+      "is_blank_template": false,
+      "language": null,
+      "topic": null,
+      "is_off_prompt": null,
+      "notes": [
+        "IFI typed form: extracted via layout/label rules (no OCR, no LLM)"
+      ]
+    },
+    "doc_class": null
+  },
+  "essay_preview": "paterna importante* significa para m\u00ed\"  \nMy dad is very hard worker because he can fix something broken or something broken around \nthe house. My dad does construction work like he can fix like the stairs or something else that is \nbroken. He is funny because sometimes he shows me something funny things or videos. My \ndad is responsible because he takes care of me and gives me something that I need because \nhe is going somewhere.The dialogue about my father is that. He says something that is not"
+}

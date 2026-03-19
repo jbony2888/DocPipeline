@@ -1,0 +1,22 @@
+{
+  "text": "Nombre:Salome     March/4/26 \nCarson/101             4th grade  \n \nMi papa significa mucho para mi. \nMi pap\u00e1 es el mejor porque el siempre me apoya en las \nbuenas y en las malas.Me dice que nunca me tengo que \nrendir.Un ejemplo de que mi papa es el mejor es que el \nsiempre me apoya.Me da lo que yo quiero.Tambi\u00e9n porque \nsiempre se preocupa por mi.Por eso mi papa es el mejor.Me \nhace sentir especial y eso me hace feliz.Mi pap\u00e1 es una \npersona maravillosa.Es muy bueno conmigo y por eso \nsignifica mucho para mi.",
+  "confidence_avg": 1.0,
+  "confidence_min": 1.0,
+  "confidence_p10": 1.0,
+  "low_conf_page_count": 0,
+  "lines": [
+    "Nombre:Salome     March/4/26 ",
+    "Carson/101             4th grade  ",
+    " ",
+    "Mi papa significa mucho para mi. ",
+    "Mi pap\u00e1 es el mejor porque el siempre me apoya en las ",
+    "buenas y en las malas.Me dice que nunca me tengo que ",
+    "rendir.Un ejemplo de que mi papa es el mejor es que el ",
+    "siempre me apoya.Me da lo que yo quiero.Tambi\u00e9n porque ",
+    "siempre se preocupa por mi.Por eso mi papa es el mejor.Me ",
+    "hace sentir especial y eso me hace feliz.Mi pap\u00e1 es una ",
+    "persona maravillosa.Es muy bueno conmigo y por eso ",
+    "significa mucho para mi."
+  ],
+  "form_field_values": null
+}

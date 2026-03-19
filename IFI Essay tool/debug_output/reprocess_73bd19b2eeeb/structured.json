@@ -1,0 +1,38 @@
+{
+  "student_name": "Isabella Yanez",
+  "school_name": "Carson Elementary School",
+  "grade": 7,
+  "teacher_name": null,
+  "city_or_location": null,
+  "father_figure_name": null,
+  "phone": null,
+  "email": null,
+  "_ifi_metadata": {
+    "doc_type": "ESSAY_WITH_HEADER_METADATA",
+    "is_blank_template": false,
+    "extraction_method": "llm_ifi_freeform_heuristics_then_groq_normalize",
+    "notes": [
+      "Typed freeform: heuristics extract \u2192 Groq normalize"
+    ],
+    "student_name": "Isabella Yanez",
+    "school_name": "Carson Elementary School",
+    "grade": 7,
+    "essay_text": "Isabella Yanez \n7th Grade \nCarson Elementary School \nEssay: My Father \n \n A good father figure is always patient. They shouldn't be prone to anger or quick to yell. A good \nfather figure is someone who is kind. Someone who picks you up after you fall and kisses an \ninjured knee. Lastly, a good father figure should try to be there for you, even if sometimes they \ncan't make it somewhere or they're five minutes late, they should at least try. \n \n My father isn't perfect, but he tries. There have been many times where I've been stubborn or \nbeen frustrated with him for a small thing, but he's patient. I can get annoyed quickly and I \nunderstand that I'm not the easiest to deal with most times but I appreciate my dad for staying \npatient with me. My dad stays kind to me. He can recognize when he's done something wrong \nor made me upset and he can apologize for it without making a ton of excuses for himself. My \ndad is busy, he has to work hard to provide for me and he's tired almost everyday. But my dad \nstill sets aside time to see me. Even though I have perfectly good legs that allow me to walk to \nschool and back everyday, my dad still insists on taking me to school while he's going to work, \nbecause he's worried about my safety. My dad also comes to my band concerts. I'm still in \nbeginning class and I'm not good but he still comes and tells me that I did good, even if I didn't. \nMy dad is very sensitive, and although I assure him that i'm not a baby anymore and I can do \nmost stuff on my own without his worries, he still feels bad about not being able to give me \neverything I need, My dad can be wrong sometimes, he doesn't see that he already does so \nmuch for me and I couldn't be more grateful. I love my dad, I can be cruel and I can be rude but \nhe still comes back and never gives up on me.",
+    "father_figure_name": null,
+    "father_figure_type": null,
+    "parent_reaction_text": null,
+    "topic": "Father",
+    "is_off_prompt": false,
+    "language": "English"
+  },
+  "grade_raw": 7,
+  "grade_normalized": 7,
+  "grade_norm_reason": "parsed",
+  "school_raw": "Carson Elementary School",
+  "school_normalized": "Carson Elementary School",
+  "school_canonical_key": null,
+  "word_count": 50,
+  "char_count": 233,
+  "paragraph_count": 1,
+  "essay_source": "segmentation"
+}

@@ -1,0 +1,116 @@
+{
+  "submission_id": "f88aa17c3745",
+  "filename": "25-IFI-Essay-Form-Eng-and-Spanish-2.pdf",
+  "record": {
+    "submission_id": "f88aa17c3745",
+    "doc_class": "SINGLE_TYPED",
+    "student_name": "Jayden Martinez",
+    "school_name": "Rachel Carson Elementary",
+    "grade": 7,
+    "teacher_name": null,
+    "city_or_location": null,
+    "father_figure_name": null,
+    "phone": "3125934728",
+    "email": "Jamartinez124@cps.edu",
+    "word_count": 341,
+    "ocr_confidence_avg": 1.0,
+    "needs_review": false,
+    "review_reason_codes": "",
+    "artifact_dir": "edc94be4-3634-4301-9cce-0973d7b649a7/9102eb75846c/artifacts/9102eb75846c/chunk_0_f88aa17c3745"
+  },
+  "report_stages": {
+    "ocr": {
+      "confidence_avg": 1.0,
+      "confidence_min": 1.0,
+      "confidence_p10": 1.0,
+      "low_conf_page_count": 0,
+      "line_count": 29
+    },
+    "segmentation": {
+      "contact_lines": 10,
+      "essay_lines": 19,
+      "essay_source": "segmentation",
+      "initial_essay_words": 285,
+      "final_essay_words": 285
+    },
+    "extraction": {
+      "fields_extracted": 12,
+      "word_count": 285
+    },
+    "validation": {
+      "is_valid": true,
+      "needs_review": false,
+      "issues": [],
+      "review_reason_codes": [],
+      "review_reason_codes_db": "",
+      "validation_policy_version": "v1",
+      "policy_version": "v1",
+      "doc_type": "ifi_official_form_filled",
+      "doc_role": "document",
+      "ocr_provider": "google",
+      "extraction_method": "typed_form_rule_based",
+      "parse_model": "llama-3.3-70b-versatile (Groq)",
+      "word_count": 341,
+      "final_text_char_count": 1786,
+      "auto_approve_eligible": true,
+      "auto_approve_blockers": [],
+      "grade_normalization": {
+        "raw": 7,
+        "normalized": 7,
+        "method": "numeric"
+      },
+      "school_reference_validation": {
+        "matched": true,
+        "method": "partial",
+        "confidence": 0.95,
+        "reference_version": "schools.csv:14"
+      }
+    }
+  },
+  "extraction_debug": {
+    "extraction_method": "typed_form_rule_based",
+    "model": "llama-3.3-70b-versatile (Groq)",
+    "fields_extracted": 11,
+    "required_fields_found": {
+      "student_name": true,
+      "school_name": true,
+      "grade": true
+    },
+    "result": {
+      "student_name": "Jayden Martinez",
+      "school_name": "Rachel Carson Elementary",
+      "grade": 7,
+      "teacher_name": null,
+      "city_or_location": null,
+      "father_figure_name": null,
+      "phone": "3125934728",
+      "email": "Jamartinez124@cps.edu",
+      "grade_raw": 7,
+      "grade_normalized": 7,
+      "grade_norm_reason": "parsed",
+      "school_raw": "Rachel Carson Elementary",
+      "school_normalized": "Rachel Carson Elementary",
+      "school_canonical_key": "RACHEL_CARSON"
+    },
+    "normalization": {
+      "grade_raw": 7,
+      "grade_normalized": 7,
+      "grade_norm_reason": "parsed",
+      "school_raw": "Rachel Carson Elementary",
+      "school_normalized": "Rachel Carson Elementary",
+      "school_canonical_key": "RACHEL_CARSON"
+    },
+    "ifi_classification": {
+      "doc_type": "IFI_OFFICIAL_FORM_FILLED",
+      "is_blank_template": false,
+      "language": null,
+      "topic": null,
+      "is_off_prompt": null,
+      "notes": [
+        "IFI typed form: extracted via layout/label rules (no OCR, no LLM)"
+      ]
+    },
+    "doc_class": null
+  },
+  "essay_preview": "paterna importante* significa para m\u00ed \nI picked my brother Juan because they care for me and he is like a father figure because he \nmakes sure we go home. He feeds us and I picked him instead of my dad because my dad's \nalways at work because he travels. Also my brother he their for me every times I need him he's \ntheir when I cry and it helps because when I cry in front of my dad because of something bad \nhe makes it wrote like when i feel he started laughing at me with my brother and when I ha"
+}

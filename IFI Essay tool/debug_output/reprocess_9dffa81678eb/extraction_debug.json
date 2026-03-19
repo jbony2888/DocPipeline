@@ -1,0 +1,45 @@
+{
+  "extraction_method": "typed_form_rule_based",
+  "model": "llama-3.3-70b-versatile (Groq)",
+  "fields_extracted": 10,
+  "required_fields_found": {
+    "student_name": true,
+    "school_name": true,
+    "grade": true
+  },
+  "result": {
+    "student_name": "Angel Castro",
+    "school_name": "De La Salle",
+    "grade": "12th",
+    "teacher_name": null,
+    "city_or_location": null,
+    "father_figure_name": "Jose Castro",
+    "phone": "872-218-6358",
+    "email": "280100castro@student.dls.org",
+    "grade_raw": "12th",
+    "grade_normalized": null,
+    "grade_norm_reason": "unparsed",
+    "school_raw": "De La Salle",
+    "school_normalized": "De La Salle",
+    "school_canonical_key": null
+  },
+  "normalization": {
+    "grade_raw": "12th",
+    "grade_normalized": null,
+    "grade_norm_reason": "unparsed",
+    "school_raw": "De La Salle",
+    "school_normalized": "De La Salle",
+    "school_canonical_key": null
+  },
+  "ifi_classification": {
+    "doc_type": "IFI_OFFICIAL_FORM_FILLED",
+    "is_blank_template": false,
+    "language": null,
+    "topic": null,
+    "is_off_prompt": null,
+    "notes": [
+      "IFI typed form: extracted via layout/label rules (no OCR, no LLM)"
+    ]
+  },
+  "doc_class": null
+}

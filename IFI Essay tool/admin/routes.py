@@ -227,10 +227,6 @@ def admin_dashboard():
     school_options, grade_options = _distinct_schools_and_grades(all_rows)
     submissions = _apply_school_grade_filters(all_rows, selected_school, selected_grade)
 
-    failure_stats_all = _failure_reason_stats(all_rows)
-    failure_stats_filtered = _failure_reason_stats(submissions)
-    duplicate_files = _duplicate_filename_hints(all_rows)
-
     return render_template(
         "admin_dashboard.html",
         submissions=submissions,
@@ -242,9 +238,6 @@ def admin_dashboard():
         selected_grade=selected_grade,
         fetch_limit=fetch_limit,
         format_review_reasons=_format_review_reasons,
-        failure_stats_all=failure_stats_all,
-        failure_stats_filtered=failure_stats_filtered,
-        duplicate_files=duplicate_files,
     )
 
 

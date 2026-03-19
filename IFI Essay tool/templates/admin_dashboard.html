@@ -16,8 +16,6 @@
         .badge-needs-review { background: #f59e0b; }
         .badge-approved { background: #10b981; }
         .filter-bar .form-select, .filter-bar .btn { font-size: 0.875rem; }
-        .stat-mini { font-size: 0.8rem; }
-        .failure-table td, .failure-table th { padding: 0.35rem 0.5rem; font-size: 0.8rem; }
     </style>
 </head>
 <body>
@@ -71,73 +69,6 @@
                         <button type="submit" class="btn btn-outline-secondary btn-sm">Apply</button>
                     </div>
                 </form>
-            </div>
-        </div>
-
-        <!-- Failure analysis (for ongoing contest tuning) -->
-        <div class="card mb-3">
-            <div class="card-header py-2 d-flex justify-content-between align-items-center flex-wrap gap-2">
-                <strong><i class="bi bi-graph-up"></i> Review / failure signals</strong>
-                <span class="text-muted small">Per-code counts = times that flag appears (one row can have several)</span>
-            </div>
-            <div class="card-body">
-                <div class="row g-3">
-                    <div class="col-md-6">
-                        <h6 class="text-muted small text-uppercase">Loaded window (all {{ failure_stats_all.total_rows }} rows)</h6>
-                        <p class="stat-mini mb-1">
-                            <span class="badge badge-needs-review">Needs review</span> {{ failure_stats_all.needs_review_count }}
-                            &nbsp;·&nbsp; <span class="badge badge-approved">Approved</span> {{ failure_stats_all.approved_count }}
-                            {% if failure_stats_all.missing_reason_codes_count %}
-                            &nbsp;·&nbsp; <span class="text-warning">No codes (legacy)</span> {{ failure_stats_all.missing_reason_codes_count }}
-                            {% endif %}
-                        </p>
-                        <div class="table-responsive">
-                            <table class="table table-sm failure-table mb-0">
-                                <thead><tr><th>Reason</th><th class="text-end">Count</th></tr></thead>
-                                <tbody>
-                                    {% for c in failure_stats_all.codes %}
-                                    <tr><td>{{ c.label }}</td><td class="text-end">{{ c.count }}</td></tr>
-                                    {% else %}
-                                    <tr><td colspan="2" class="text-muted">No coded reasons in this set</td></tr>
-                                    {% endfor %}
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                    <div class="col-md-6">
-                        <h6 class="text-muted small text-uppercase">Current table{% if selected_school or selected_grade %} (filtered){% endif %}</h6>
-                        <p class="stat-mini mb-1">
-                            <span class="badge badge-needs-review">Needs review</span> {{ failure_stats_filtered.needs_review_count }}
-                            &nbsp;·&nbsp; <span class="badge badge-approved">Approved</span> {{ failure_stats_filtered.approved_count }}
-                        </p>
-                        <div class="table-responsive">
-                            <table class="table table-sm failure-table mb-0">
-                                <thead><tr><th>Reason</th><th class="text-end">Count</th></tr></thead>
-                                <tbody>
-                                    {% for c in failure_stats_filtered.codes %}
-                                    <tr><td>{{ c.label }}</td><td class="text-end">{{ c.count }}</td></tr>
-                                    {% else %}
-                                    <tr><td colspan="2" class="text-muted">No coded reasons</td></tr>
-                                    {% endfor %}
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                </div>
-                {% if duplicate_files %}
-                <hr class="my-3">
-                <h6 class="small text-muted text-uppercase mb-2">Same filename, multiple rows (re-uploads / chunks)</h6>
-                <ul class="small mb-0 text-muted">
-                    {% for d in duplicate_files %}
-                    <li><strong>{{ d.count }}×</strong> {{ d.filename }}</li>
-                    {% endfor %}
-                </ul>
-                {% endif %}
-                <p class="small text-muted mt-3 mb-0">
-                    <strong>While contest is open:</strong> prioritize fixing the highest counts above —
-                    <code>MISSING_*</code> → OCR/extraction; <code>EMPTY_ESSAY</code>/<code>SHORT_ESSAY</code> → segmentation or scans;
-                    <code>TEMPLATE_ONLY</code> → blank uploads. CLI: <code>python scripts/analyze_submission_failures.py</code>
-                </p>
             </div>
         </div>
 

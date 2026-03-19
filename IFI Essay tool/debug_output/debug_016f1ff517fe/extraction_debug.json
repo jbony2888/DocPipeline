@@ -1,0 +1,46 @@
+{
+  "extraction_method": "fallback",
+  "model": "none",
+  "fields_extracted": 2,
+  "required_fields_found": {
+    "student_name": true,
+    "school_name": false,
+    "grade": false
+  },
+  "result": {
+    "student_name": "Abby Castaneda",
+    "school_name": null,
+    "grade": null,
+    "teacher_name": null,
+    "city_or_location": null,
+    "father_figure_name": null,
+    "phone": null,
+    "email": null,
+    "grade_raw": null,
+    "grade_normalized": null,
+    "grade_norm_reason": "missing",
+    "school_raw": null,
+    "school_normalized": null,
+    "school_canonical_key": null
+  },
+  "normalization": {
+    "grade_raw": null,
+    "grade_normalized": null,
+    "grade_norm_reason": "missing",
+    "school_raw": null,
+    "school_normalized": null,
+    "school_canonical_key": null
+  },
+  "ifi_classification": {
+    "doc_type": "UNKNOWN",
+    "is_blank_template": false,
+    "language": "English",
+    "topic": "Father",
+    "is_off_prompt": false,
+    "notes": [
+      "Fallback extraction - no LLM available",
+      "Fallback reason: llm_error:AuthenticationError: Error code: 401 - {'error': {'message': 'Invalid API Key', 'type': 'invalid_request_error', 'code': 'invalid_api_key'}}"
+    ]
+  },
+  "doc_class": null
+}

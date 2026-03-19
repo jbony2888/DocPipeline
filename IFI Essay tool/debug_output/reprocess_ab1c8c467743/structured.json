@@ -1,0 +1,38 @@
+{
+  "student_name": "Danna Lopez",
+  "school_name": "Rachel Carson",
+  "grade": 4,
+  "teacher_name": null,
+  "city_or_location": null,
+  "father_figure_name": null,
+  "phone": null,
+  "email": null,
+  "_ifi_metadata": {
+    "doc_type": "ESSAY_WITH_HEADER_METADATA",
+    "is_blank_template": false,
+    "extraction_method": "llm_ifi_freeform_heuristics_then_groq_normalize",
+    "notes": [
+      "Typed freeform: heuristics extract \u2192 Groq normalize"
+    ],
+    "student_name": "Danna Lopez",
+    "school_name": "Rachel Carson",
+    "grade": 4,
+    "essay_text": "Danna Lopez 101 Rachel Carson march 3, 26 4th grade why my father means to me \n   What my father means to me is that is very kind and strong. He is a god dad because he \nalways helps me with my home work even when he just got off of work .He helps me so much \nand buys me things that my family needs .He is there for my family and does whatever he \nneeds to in order to make us happy.He is very hard working and provides for us daily.That is \nwhy my father is so special to me.We are lucky to have him here or in this life.",
+    "father_figure_name": null,
+    "father_figure_type": null,
+    "parent_reaction_text": null,
+    "topic": "Father",
+    "is_off_prompt": false,
+    "language": "English"
+  },
+  "grade_raw": 4,
+  "grade_normalized": 4,
+  "grade_norm_reason": "parsed",
+  "school_raw": "Rachel Carson",
+  "school_normalized": "Rachel Carson",
+  "school_canonical_key": "RACHEL_CARSON",
+  "word_count": 110,
+  "char_count": 523,
+  "paragraph_count": 1,
+  "essay_source": "llm_extraction"
+}

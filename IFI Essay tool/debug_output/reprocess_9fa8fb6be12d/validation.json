@@ -1,0 +1,29 @@
+{
+  "is_valid": true,
+  "needs_review": false,
+  "issues": [],
+  "review_reason_codes": [],
+  "review_reason_codes_db": "",
+  "validation_policy_version": "v1",
+  "policy_version": "v1",
+  "doc_type": "ifi_official_form_filled",
+  "doc_role": "document",
+  "ocr_provider": "google",
+  "extraction_method": "typed_form_rule_based",
+  "parse_model": "llama-3.3-70b-versatile (Groq)",
+  "word_count": 806,
+  "final_text_char_count": 5013,
+  "auto_approve_eligible": true,
+  "auto_approve_blockers": [],
+  "grade_normalization": {
+    "raw": 5,
+    "normalized": 5,
+    "method": "numeric"
+  },
+  "school_reference_validation": {
+    "matched": true,
+    "method": "exact",
+    "confidence": 1.0,
+    "reference_version": "schools.csv:16"
+  }
+}

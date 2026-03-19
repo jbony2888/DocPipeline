@@ -1,0 +1,31 @@
+{
+  "student_name": "Giovanni Coria",
+  "school_name": "March 19",
+  "grade": null,
+  "teacher_name": null,
+  "city_or_location": null,
+  "father_figure_name": null,
+  "phone": null,
+  "email": null,
+  "_ifi_metadata": {
+    "doc_type": "IFI_OFFICIAL_FORM_FILLED",
+    "is_blank_template": false,
+    "extraction_method": "typed_form_rule_based",
+    "notes": [
+      "IFI typed form: extracted via layout/label rules (no OCR, no LLM)"
+    ],
+    "school_name": "March 19",
+    "phone": null,
+    "email": null
+  },
+  "grade_raw": null,
+  "grade_normalized": null,
+  "grade_norm_reason": "missing",
+  "school_raw": "March 19",
+  "school_normalized": "March 19",
+  "school_canonical_key": null,
+  "word_count": 657,
+  "char_count": 3960,
+  "paragraph_count": 4,
+  "essay_source": "segmentation"
+}

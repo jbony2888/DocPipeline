@@ -1,0 +1,45 @@
+{
+  "extraction_method": "typed_form_rule_based",
+  "model": "llama-3.3-70b-versatile (Groq)",
+  "fields_extracted": 11,
+  "required_fields_found": {
+    "student_name": true,
+    "school_name": true,
+    "grade": true
+  },
+  "result": {
+    "student_name": "Addison Arroyo",
+    "school_name": "Mundelein",
+    "grade": 10,
+    "teacher_name": null,
+    "city_or_location": null,
+    "father_figure_name": "reaction to this essay:",
+    "phone": "224-475-6697",
+    "email": "Addisonjarroyo@gmail.com",
+    "grade_raw": 10,
+    "grade_normalized": 10,
+    "grade_norm_reason": "parsed",
+    "school_raw": "Mundelein",
+    "school_normalized": "Mundelein",
+    "school_canonical_key": null
+  },
+  "normalization": {
+    "grade_raw": 10,
+    "grade_normalized": 10,
+    "grade_norm_reason": "parsed",
+    "school_raw": "Mundelein",
+    "school_normalized": "Mundelein",
+    "school_canonical_key": null
+  },
+  "ifi_classification": {
+    "doc_type": "IFI_OFFICIAL_FORM_FILLED",
+    "is_blank_template": false,
+    "language": null,
+    "topic": null,
+    "is_off_prompt": null,
+    "notes": [
+      "IFI typed form: extracted via layout/label rules (no OCR, no LLM)"
+    ]
+  },
+  "doc_class": null
+}
