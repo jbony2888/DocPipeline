@@ -3,14 +3,17 @@ Admin Blueprint: view all submissions, download files securely.
 Admin-controlled access via Bearer token or session.
 """
 
+import io
 import os
 from pathlib import Path
 
-from flask import Blueprint, abort, jsonify, redirect, render_template, request, session, url_for
+from flask import Blueprint, abort, jsonify, redirect, render_template, request, send_file, session, url_for
+from werkzeug.utils import secure_filename
 
 from pipeline.supabase_db import _get_service_role_client
-from pipeline.supabase_storage import BUCKET_NAME
+from pipeline.supabase_storage import BUCKET_NAME, download_original_with_service_role
 from pipeline.validate import ALLOWED_REASON_CODES
+from pipeline.grouping import normalize_key
 from auth.app_admin import is_app_admin_email
 
 admin_bp = Blueprint("admin", __name__, url_prefix="/admin")
@@ -59,16 +62,6 @@ def _require_admin() -> None:
     abort(403, description="Admin access required")
 
 
-def _get_storage_path(artifact_dir: str, filename: str) -> str:
-    """Build storage path for original file from artifact_dir and filename."""
-    if not artifact_dir:
-        return ""
-    ext = Path(filename or "").suffix.lower()
-    if not ext:
-        ext = ".pdf"
-    return f"{artifact_dir.rstrip('/')}/original{ext}"
-
-
 @admin_bp.route("/login", methods=["GET", "POST"])
 def admin_login():
     """Admin login: validate token and set session."""
@@ -95,29 +88,95 @@ def admin_logout():
     return redirect(url_for("admin.admin_login"))
 
 
+def _fetch_all_submissions(limit: int = 1000) -> list:
+    """Fetch submissions using service role (bypasses RLS)."""
+    sb = _get_service_role_client()
+    if not sb:
+        return []
+
+    cap = min(max(int(limit), 1), 2000)
+    try:
+        result = (
+            sb.table("submissions")
+            .select(
+                "submission_id, student_name, school_name, grade, filename, "
+                "artifact_dir, needs_review, review_reason_codes, created_at, owner_user_id"
+            )
+            .order("created_at", desc=True)
+            .limit(cap)
+            .execute()
+        )
+        return result.data if result.data else []
+    except Exception:
+        return []
+
+
+def _apply_school_grade_filters(rows: list, school: str, grade: str) -> list:
+    """Filter rows by normalized school and/or grade (exact match to chosen dropdown value)."""
+    school_key = normalize_key(school) if (school or "").strip() else ""
+    grade_key = normalize_key(grade) if (grade or "").strip() else ""
+    if not school_key and not grade_key:
+        return list(rows)
+    out = []
+    for r in rows:
+        if school_key and normalize_key(r.get("school_name")) != school_key:
+            continue
+        if grade_key and normalize_key(str(r.get("grade") or "")) != grade_key:
+            continue
+        out.append(r)
+    return out
+
+
+def _distinct_schools_and_grades(rows: list) -> tuple[list[str], list[str]]:
+    schools = sorted(
+        {str(r.get("school_name") or "").strip() for r in rows if str(r.get("school_name") or "").strip()},
+        key=lambda s: s.casefold(),
+    )
+    grades = sorted(
+        {str(r.get("grade") or "").strip() for r in rows if str(r.get("grade") or "").strip()},
+        key=lambda g: (not str(g).isdigit(), str(g).casefold()),
+    )
+    return schools, grades
+
+
 @admin_bp.route("/dashboard")
 def admin_dashboard():
-    """Admin dashboard: view all submissions."""
+    """Admin dashboard: view all submissions with optional school/grade filters."""
     _require_admin()
 
-    limit = min(int(request.args.get("limit", 100)), 500)
-    submissions = _fetch_all_submissions(limit=limit)
+    fetch_limit = min(int(request.args.get("limit", 1000)), 2000)
+    all_rows = _fetch_all_submissions(limit=fetch_limit)
+
+    selected_school = (request.args.get("school") or "").strip()
+    selected_grade = (request.args.get("grade") or "").strip()
+
+    school_options, grade_options = _distinct_schools_and_grades(all_rows)
+    submissions = _apply_school_grade_filters(all_rows, selected_school, selected_grade)
 
     return render_template(
         "admin_dashboard.html",
         submissions=submissions,
         total=len(submissions),
+        total_loaded=len(all_rows),
+        school_options=school_options,
+        grade_options=grade_options,
+        selected_school=selected_school,
+        selected_grade=selected_grade,
+        fetch_limit=fetch_limit,
         format_review_reasons=_format_review_reasons,
     )
 
 
 @admin_bp.route("/submissions", methods=["GET"])
 def get_submissions():
-    """API: list all submissions (JSON)."""
+    """API: list submissions (JSON), optional ?school=&grade=&limit=."""
     _require_admin()
 
-    limit = min(int(request.args.get("limit", 100)), 500)
-    submissions = _fetch_all_submissions(limit=limit)
+    fetch_limit = min(int(request.args.get("limit", 1000)), 2000)
+    all_rows = _fetch_all_submissions(limit=fetch_limit)
+    selected_school = (request.args.get("school") or "").strip()
+    selected_grade = (request.args.get("grade") or "").strip()
+    submissions = _apply_school_grade_filters(all_rows, selected_school, selected_grade)
 
     return jsonify({
         "data": [
@@ -125,6 +184,7 @@ def get_submissions():
                 "id": s["submission_id"],
                 "student_name": s.get("student_name") or "",
                 "school_name": s.get("school_name") or "",
+                "grade": s.get("grade"),
                 "file_name": s.get("filename") or "",
                 "status": "needs_review" if s.get("needs_review") else "approved",
                 "review_reasons": _format_review_reasons(s.get("review_reason_codes", "")),
@@ -133,12 +193,32 @@ def get_submissions():
             }
             for s in submissions
         ],
+        "meta": {
+            "count": len(submissions),
+            "loaded": len(all_rows),
+            "limit": fetch_limit,
+        },
     })
+
+
+def _mimetype_for_storage_path(path: str) -> str:
+    lower = path.lower()
+    if lower.endswith(".pdf"):
+        return "application/pdf"
+    if lower.endswith(".png"):
+        return "image/png"
+    if lower.endswith((".jpg", ".jpeg")):
+        return "image/jpeg"
+    if lower.endswith(".doc"):
+        return "application/msword"
+    if lower.endswith(".docx"):
+        return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    return "application/octet-stream"
 
 
 @admin_bp.route("/submissions/<submission_id>/download", methods=["GET"])
 def download_submission(submission_id: str):
-    """Download submission file via signed URL redirect."""
+    """Download original file (service role + same path resolution as /pdf)."""
     _require_admin()
 
     sb = _get_service_role_client()
@@ -163,49 +243,22 @@ def download_submission(submission_id: str):
     if not artifact_dir:
         abort(404, description="No file path for this submission")
 
-    storage_path = _get_storage_path(artifact_dir, filename)
+    file_bytes, used_path = download_original_with_service_role(sb, artifact_dir, filename)
+    if not file_bytes or not used_path:
+        abort(404, description="Original file not found in storage for this submission.")
 
-    try:
-        # Create signed URL (60 seconds)
-        resp = sb.storage.from_(BUCKET_NAME).create_signed_url(storage_path, 60)
-        signed_url = resp.get("signedUrl") or resp.get("signedURL")
-        if signed_url:
-            return redirect(signed_url)
-    except Exception as e:
-        # Fallback: try common extensions if primary fails
-        for ext in [".pdf", ".png", ".jpg", ".jpeg"]:
-            alt_path = f"{artifact_dir.rstrip('/')}/original{ext}"
-            if alt_path == storage_path:
-                continue
-            try:
-                resp = sb.storage.from_(BUCKET_NAME).create_signed_url(alt_path, 60)
-                signed_url = resp.get("signedUrl") or resp.get("signedURL")
-                if signed_url:
-                    return redirect(signed_url)
-            except Exception:
-                continue
-        abort(404, description=f"File not found in storage: {e}")
+    safe_name = secure_filename(filename) or "download"
+    if used_path and Path(used_path).suffix:
+        # Prefer original stored extension in download name
+        ext = Path(used_path).suffix
+        if safe_name and not Path(safe_name).suffix:
+            safe_name = f"{Path(safe_name).stem}{ext}"
+        elif not safe_name:
+            safe_name = Path(used_path).name
 
-    abort(404, description="Could not generate download URL")
-
-
-def _fetch_all_submissions(limit: int = 100) -> list:
-    """Fetch all submissions using service role (bypasses RLS)."""
-    sb = _get_service_role_client()
-    if not sb:
-        return []
-
-    try:
-        result = (
-            sb.table("submissions")
-            .select(
-                "submission_id, student_name, school_name, grade, filename, "
-                "artifact_dir, needs_review, review_reason_codes, created_at, owner_user_id"
-            )
-            .order("created_at", desc=True)
-            .limit(limit)
-            .execute()
-        )
-        return result.data if result.data else []
-    except Exception:
-        return []
+    return send_file(
+        io.BytesIO(file_bytes),
+        mimetype=_mimetype_for_storage_path(used_path),
+        as_attachment=True,
+        download_name=safe_name,
+    )

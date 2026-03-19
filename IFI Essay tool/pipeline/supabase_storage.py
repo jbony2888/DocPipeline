@@ -8,7 +8,7 @@ import hashlib
 import json
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, Optional
+from typing import Dict, List, Optional, Tuple
 from auth.supabase_client import get_supabase_client
 from storage3.exceptions import StorageApiError
 
@@ -164,6 +164,64 @@ def download_file(file_path: str, access_token: Optional[str] = None) -> Optiona
         import traceback
         print(traceback.format_exc())
         return None
+
+
+def iter_original_object_paths(artifact_dir: str, filename: str) -> List[str]:
+    """
+    Candidate bucket paths for the uploaded original file, matching serve_pdf resolution.
+    Handles chunk/multi-page paths where the file lives at owner/run_id/original.* not under chunk dir.
+    """
+    ad = str(artifact_dir or "").strip().rstrip("/")
+    if not ad:
+        return []
+
+    suffix = Path(filename or "").suffix.lower()
+    exts: List[str] = []
+    if suffix:
+        exts.append(suffix)
+    for e in (".pdf", ".png", ".jpg", ".jpeg", ".doc", ".docx"):
+        if e not in exts:
+            exts.append(e)
+
+    parts = [p for p in ad.split("/") if p]
+    bases: List[str] = [ad]
+    if "/artifacts/" in ad and len(parts) >= 2:
+        top = f"{parts[0]}/{parts[1]}"
+        if top != ad:
+            bases.append(top)
+
+    out: List[str] = []
+    seen: set[str] = set()
+    for base in bases:
+        for ext in exts:
+            p = f"{base}/original{ext}"
+            if p not in seen:
+                seen.add(p)
+                out.append(p)
+    return out
+
+
+def download_original_with_service_role(
+    supabase_client, artifact_dir: str, filename: str
+) -> Tuple[Optional[bytes], Optional[str]]:
+    """
+    Download the original submission bytes using a service-role client.
+    Tries the same path candidates as the /pdf route (chunk vs top-level).
+    """
+    if not supabase_client or not artifact_dir:
+        return None, None
+    for path in iter_original_object_paths(artifact_dir, filename):
+        try:
+            data = supabase_client.storage.from_(BUCKET_NAME).download(path)
+            if data:
+                return data, path
+        except StorageApiError as e:
+            if getattr(e, "code", None) == "not_found" or "not_found" in str(e).lower():
+                continue
+            continue
+        except Exception:
+            continue
+    return None, None
 
 
 def delete_file(file_path: str) -> bool:
