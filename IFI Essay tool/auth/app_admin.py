@@ -13,6 +13,7 @@ from typing import Optional, Set
 _BUILTIN_APP_ADMIN_EMAILS: frozenset[str] = frozenset(
     {
         "jerrybony5@gmail.com",
+        "scotmarcotte@4dads.org",
     }
 )
 
