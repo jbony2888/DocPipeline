@@ -333,7 +333,8 @@ def process_submission_job(
                     filename=filename,
                     owner_user_id=owner_user_id,
                     access_token=storage_token,
-                    upload_batch_id=upload_batch_id
+                    upload_batch_id=upload_batch_id,
+                    essay_text=report.get("essay_text"),
                 )
 
                 if not save_result.get("success", False):

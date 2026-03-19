@@ -286,12 +286,50 @@ class SchoolReferenceValidator:
                 "reference_version": self.reference_version,
             }
 
+        # Partial match: input contains reference or reference contains input (e.g. "Rachel Carson Elementary" vs "Rachel Carson")
+        for ref in self._normalized_rows:
+            if ref in normalized or normalized in ref:
+                return {
+                    "matched": True,
+                    "method": "partial",
+                    "confidence": 0.95,
+                    "reference_version": self.reference_version,
+                }
+
+        # Token-based partial: all words from shorter string fuzzy-match into longer (handles typos like "Rachecl carson")
+        def _words(t: str) -> list[str]:
+            return [w for w in t.split() if len(w) >= 2]
+
+        in_words = _words(normalized)
+        for ref in self._normalized_rows:
+            ref_words = _words(ref)
+            shorter = in_words if len(in_words) <= len(ref_words) else ref_words
+            longer_words = ref_words if len(in_words) <= len(ref_words) else in_words
+            if not shorter:
+                continue
+            all_match = True
+            for sw in shorter:
+                best = max(
+                    (SequenceMatcher(None, sw, lw).ratio() for lw in longer_words),
+                    default=0.0,
+                )
+                if best < 0.8:
+                    all_match = False
+                    break
+            if all_match:
+                return {
+                    "matched": True,
+                    "method": "fuzzy_partial",
+                    "confidence": 0.9,
+                    "reference_version": self.reference_version,
+                }
+
         best_ratio = 0.0
         for ref in self._normalized_rows:
             ratio = SequenceMatcher(None, normalized, ref).ratio()
             if ratio > best_ratio:
                 best_ratio = ratio
-        if best_ratio >= 0.9:
+        if best_ratio >= 0.8:
             return {
                 "matched": True,
                 "method": "fuzzy",

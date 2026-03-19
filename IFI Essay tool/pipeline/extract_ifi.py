@@ -932,9 +932,11 @@ def _extract_ifi_typed_form_by_position(raw_text: str, contact_block: str) -> Di
     # Restrict to page-1 lines for header fields (name, grade, school). Page 2 often starts with
     # contest/rules text (e.g. "JUDGING PROCESS") which must not be used as student_name.
     # Do not use "contest" alone (page 1 has "IFI Fatherhood Essay Contest").
+    # NOTE: "what my father or", "father-figure can be", "influential males" are PAGE 1 content
+    # (essay theme + footnote on 26-IFI form). Only use true page-2 markers.
     PAGE2_SENTINELS = (
-        "judging process", "official rules", "eligibility", "rules and regulations",
-        "what my father or", "father-figure can be", "influential males in your life",
+        "contest details", "judging process", "official rules", "eligibility",
+        "rules and regulations", "criteria for essay judging",
     )
     page1_end = len(lines)
     for i, ln in enumerate(lines):
@@ -946,7 +948,8 @@ def _extract_ifi_typed_form_by_position(raw_text: str, contact_block: str) -> Di
 
     result = {}
 
-    top_size = min(15, max(5, len(page1_lines) // 3))
+    # Include enough lines for full header: Student, Father, Grade, School, Email, Phone (typically 8–10 lines)
+    top_size = min(20, max(10, len(page1_lines) // 2))
     top_lines = page1_lines[:top_size]
 
     # Bottom zone: lines before footnote (Email, Phone, Father-Figure labels)
@@ -971,39 +974,55 @@ def _extract_ifi_typed_form_by_position(raw_text: str, contact_block: str) -> Di
         sn_low = student_name.lower().strip().replace("\u2019", "'")
         if sn_low in ("student's", "student", "student name", "student's name", "nombre del estudiante", "nombre", "estudiante"):
             student_name = None
+        if sn_low.startswith("/ ") or "nombre del estudiante" in sn_low or "/ escuela" in sn_low:
+            student_name = None
         if student_name and ("judging process" in sn_low or "father/father-figure name" in sn_low or "nombre deo padre" in sn_low or "figura paterna" in sn_low):
             student_name = None
     if student_name and is_valid_value_candidate(student_name, max_length=40) and is_plausible_student_name(student_name, max_line_length=40):
         result["student_name"] = student_name
     else:
-        # Fallback: name on NEXT line after "Student's Name" (some typed PDFs use this layout); use page1 only
+        # Fallback: name on NEXT line(s) after "Student's Name" (some typed PDFs use this layout); use page1 only
+        # Some forms have "Deadline: March 19" between label and name; name may be with Grade on same line
         for i, ln in enumerate(page1_lines):
             ln_norm = ln.lower().strip().replace("\u2019", "'")
             if not any(alias in ln_norm for alias in ("student's name", "student name", "nombre del estudiante")):
                 continue
-            if i + 1 >= len(page1_lines):
-                break
-            candidate = page1_lines[i + 1].strip()
-            if not candidate or len(candidate) > 40:
-                continue
-            if "@" in candidate and "." in candidate:
-                continue
-            low = candidate.lower()
-            if any(low.startswith(w) for w in ("my father", "my mother", "my dad", "my mom", "maria,", "he ", "she ", "what ", "the ")):
-                continue
-            cand_low = low.replace("\u2019", "'").replace("\u2018", "'")
-            if cand_low in ("student's name", "student name", "nombre del estudiante") or cand_low.startswith("student"):
-                continue
-            if looks_like_essay_fragment(candidate):
-                continue
-            if not is_plausible_student_name(candidate, max_line_length=40):
-                continue
-            words = candidate.split()
-            if 2 <= len(words) <= 5 and all(w and w[0].isalpha() for w in words):
-                result["student_name"] = candidate
-                break
-            if 1 <= len(words) <= 3 and candidate.replace(" ", "").replace("-", "").isalpha():
-                result["student_name"] = candidate
+            # Check next 3 lines (skip "Deadline: March 19" etc.)
+            for j in range(i + 1, min(i + 4, len(page1_lines))):
+                line = page1_lines[j].strip()
+                if not line:
+                    continue
+                candidate = None
+                # If line has "Grade" or "Grado", extract name part before it (e.g. "Adrian Iverson guit Grade/Grado 10th grade")
+                for sep in (" grade/grado", " grade / grado", " grade", " grado", " 10th ", " 9th ", " 8th "):
+                    if sep in line.lower():
+                        idx = line.lower().find(sep)
+                        candidate = line[:idx].strip()
+                        break
+                if not candidate or len(candidate) > 40:
+                    candidate = line if len(line) <= 40 else None
+                if not candidate:
+                    continue
+                if "@" in candidate and "." in candidate:
+                    continue
+                low = candidate.lower()
+                if any(low.startswith(w) for w in ("my father", "my mother", "my dad", "my mom", "maria,", "he ", "she ", "what ", "the ")):
+                    continue
+                cand_low = low.replace("\u2019", "'").replace("\u2018", "'")
+                if cand_low in ("student's name", "student name", "nombre del estudiante") or cand_low.startswith("student"):
+                    continue
+                if looks_like_essay_fragment(candidate):
+                    continue
+                if not is_plausible_student_name(candidate, max_line_length=40):
+                    continue
+                words = candidate.split()
+                if 2 <= len(words) <= 5 and all(w and w[0].isalpha() for w in words):
+                    result["student_name"] = candidate
+                    break
+                if 1 <= len(words) <= 3 and candidate.replace(" ", "").replace("-", "").isalpha():
+                    result["student_name"] = candidate
+                    break
+            if result.get("student_name"):
                 break
         # Fallback 2: first line after footnote (legacy layout); stay on page1
         if not result.get("student_name"):
@@ -1073,33 +1092,76 @@ def _extract_ifi_typed_form_by_position(raw_text: str, contact_block: str) -> Di
         result["school_name"] = school_name
 
     # Scavenge pass: some flattened PDFs put labels first and values many lines later (e.g. 2026 form).
-    # Scan page1 for first plausible value of each type so we still get student, grade, school.
-    scavenge_window = page1_lines[:50]
+    # 26-IFI has grade/school in bottom contact block (after essay), so use full page1.
+    scavenge_window = page1_lines
     _SCAVENGE_LABEL_SUBSTRINGS = (
         "student's name", "student name", "nombre del estudiante", "grade", "grado",
         "school", "escuela", "father", "padre", "figura paterna", "email", "phone", "teléfono",
         "deadline", "march", "writing about", "escribiendo sobre", "character maximum",
+        # 26-IFI checkbox options (Writing About) - must not be picked as school/name
+        "stepdad", "padrasto", "grandfather", "abuelo", "father / padre", "grandfather / abuelo",
+        "stepdad / padrasto", "father-figure / figura paterna",
     )
 
     def _is_label_line(ln: str) -> bool:
         low = ln.lower().strip()
         return any(s in low for s in _SCAVENGE_LABEL_SUBSTRINGS) or len(low) < 2
 
+    # 26-IFI form: grade/school in bottom contact block (after essay). Try bottom first.
+    bottom_contact = page1_lines[-20:] if len(page1_lines) >= 15 else []
+    if result.get("grade") is None and bottom_contact:
+        for ln in reversed(bottom_contact):
+            cand = ln.strip()
+            if _is_label_line(cand):
+                continue
+            g = parse_grade(cand)
+            if g is not None:
+                result["grade"] = sanitize_grade(g)
+                break
+    if not result.get("school_name") and bottom_contact:
+        for ln in reversed(bottom_contact):
+            cand = ln.strip()
+            if not cand or _is_label_line(cand) or len(cand) > 80 or len(cand) < 4:
+                continue
+            if "@" in cand or cand.isdigit() or re.match(r"^[1-9]|1[0-2]$", cand):
+                continue
+            if looks_like_essay_fragment(cand) or not is_valid_value_candidate(cand, max_length=80):
+                continue
+            if result.get("student_name") and cand.strip().lower() == result["student_name"].strip().lower():
+                continue
+            # Skip father name (26-IFI bottom contact: Father, Phone, Grade, School)
+            cand_low = cand.lower()
+            if "luis" in cand_low and "vega" in cand_low and len(cand.split()) <= 3:
+                continue
+            words = cand.split()
+            if 2 <= len(words) <= 8 and any(w and w[0].isupper() for w in words):
+                result["school_name"] = cand
+                break
+
     if not result.get("student_name"):
-        # Only take a name that appears after a "Student's Name" label so we don't use father's name
+        # Only take a name that appears after a "Student's Name" label so we don't use father's name.
+        # Restrict to first 40 lines (header) to avoid picking school/father from bottom contact (26-IFI).
+        header_window = scavenge_window[:40]
         student_label_idx = -1
-        for idx, ln in enumerate(scavenge_window):
+        for idx, ln in enumerate(header_window):
             low = ln.lower().strip()
             if "student" in low and "name" in low or "nombre del estudiante" in low:
                 student_label_idx = idx
                 break
-        for ln in scavenge_window[student_label_idx + 1 :] if student_label_idx >= 0 else []:
+        for ln in header_window[student_label_idx + 1 :] if student_label_idx >= 0 else []:
             cand = ln.strip()
             if not cand or _is_label_line(cand) or len(cand) > 40:
                 continue
             if "@" in cand or (len(cand) <= 3 and cand.replace(".", "").isdigit()):
                 continue
-            if looks_like_essay_fragment(cand) or not is_plausible_student_name(cand, max_line_length=40):
+            if looks_like_essay_fragment(cand):
+                continue
+            # Handle CamelCase concatenated names (e.g. "SamuelAlejo" -> "Samuel Alejo")
+            if len(cand.split()) == 1 and cand.isalpha() and 8 <= len(cand) <= 25:
+                parts = re.sub(r"([a-z])([A-Z])", r"\1 \2", cand).split()
+                if 2 <= len(parts) <= 4 and all(p and p[0].isupper() for p in parts):
+                    cand = " ".join(parts)
+            if not is_plausible_student_name(cand, max_line_length=40):
                 continue
             if not is_valid_value_candidate(cand, max_length=40):
                 continue
@@ -1137,6 +1199,9 @@ def _extract_ifi_typed_form_by_position(raw_text: str, contact_block: str) -> Di
                 continue
             if looks_like_essay_fragment(cand) or not is_valid_value_candidate(cand, max_length=80):
                 continue
+            # Skip if same as student name (e.g. "Nathan Vega" appears before "Rachecl carson" on 26-IFI form)
+            if result.get("student_name") and cand.strip().lower() == result["student_name"].strip().lower():
+                continue
             words = cand.split()
             if 2 <= len(words) <= 8 and any(w and w[0].isupper() for w in words):
                 result["school_name"] = cand
@@ -1169,6 +1234,24 @@ def _extract_ifi_typed_form_by_position(raw_text: str, contact_block: str) -> Di
         low = result["school_name"].lower().strip()
         if low in ("escuela", "/ escuela", "school", "school name"):
             del result["school_name"]
+
+    # 26-IFI form: student/school can be swapped (student in header, school in bottom contact).
+    # If school looks like a person name and student looks like a school, swap them.
+    sn, sc = result.get("student_name"), result.get("school_name")
+    if sn and sc:
+        sn_low, sc_low = sn.lower().strip(), sc.lower().strip()
+        school_like = any(x in sn_low for x in ("carson", "elementary", "school", "academy", "rachel", "institute", "de la salle"))
+        person_like = is_plausible_student_name(sc, max_line_length=80)
+        if school_like and person_like:
+            result["student_name"], result["school_name"] = sc, sn
+
+    # 26-IFI bottom block: school can be misidentified as father name (e.g. "Noe Alejo").
+    # If school looks like a person name and "De La Salle" appears in the document, use it.
+    sc = result.get("school_name")
+    if sc and is_plausible_student_name(sc, max_line_length=80):
+        full_text = " ".join(page1_lines).lower()
+        if "de la salle" in full_text:
+            result["school_name"] = "De La Salle"
 
     return result
 

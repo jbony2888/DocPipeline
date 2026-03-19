@@ -128,7 +128,7 @@ def check_duplicate_submission(submission_id: str, current_user_id: str, access_
         return {"is_duplicate": False, "existing_owner_user_id": None, "is_own_duplicate": False, "existing_filename": None}
 
 
-def save_record(record: SubmissionRecord, filename: str, owner_user_id: str, access_token: Optional[str] = None, upload_batch_id: Optional[str] = None) -> Dict[str, Any]:
+def save_record(record: SubmissionRecord, filename: str, owner_user_id: str, access_token: Optional[str] = None, upload_batch_id: Optional[str] = None, essay_text: Optional[str] = None) -> Dict[str, Any]:
     """Save a submission record to Supabase."""
     try:
         # Prefer an authenticated client when possible (RLS relies on auth.uid()).
@@ -143,6 +143,8 @@ def save_record(record: SubmissionRecord, filename: str, owner_user_id: str, acc
         record_dict["filename"] = filename
         record_dict["owner_user_id"] = owner_user_id
         record_dict["updated_at"] = datetime.now().isoformat()
+        if essay_text is not None:
+            record_dict["essay_text"] = essay_text if essay_text else None
         
         # Add batch tracking
         if upload_batch_id:

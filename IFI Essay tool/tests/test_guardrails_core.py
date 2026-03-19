@@ -31,7 +31,7 @@ def test_school_reference_exact_and_fuzzy(tmp_path):
     missing = validator.validate("Unknown Academy")
 
     assert exact["matched"] is True and exact["method"] == "exact"
-    assert fuzzy["matched"] is True and fuzzy["method"] == "fuzzy"
+    assert fuzzy["matched"] is True and fuzzy["method"] in ("fuzzy", "fuzzy_partial")
     assert missing["matched"] is False
 
 

@@ -65,6 +65,11 @@ Path("outputs").mkdir(exist_ok=True)
 # Initialize Supabase database
 init_database()
 
+# Supabase magic-link `verify_otp` / redirect `type` query values (token_hash flow)
+MAGIC_LINK_OTP_TYPES = frozenset(
+    {"signup", "invite", "magiclink", "recovery", "email_change", "email"}
+)
+
 # Admin blueprint (view all submissions, secure downloads)
 from admin.routes import admin_bp
 
@@ -196,6 +201,11 @@ def format_review_reasons(reason_codes: str) -> str:
         "OCR_LOW_CONFIDENCE": "Low OCR Confidence",
         "TEMPLATE_ONLY": "Template Only (no submission)",
         "FIELD_ATTRIBUTION_RISK": "Field Attribution Risk",
+        "EXTRACTION_FALLBACK_USED": "Fallback extraction used (review fields)",
+        "DOC_TYPE_UNKNOWN": "Document type unknown",
+        "INVALID_GRADE_RANGE": "Invalid grade (not K–12 / recognized)",
+        "UNKNOWN_SCHOOL": "School not in reference list",
+        "POSSIBLE_FIELD_SWAP": "Possible student/school mix-up",
     }
     
     codes = [
@@ -387,90 +397,116 @@ def login():
     return render_template("login.html")
 
 
+def _establish_flask_session_from_supabase_tokens(
+    supabase, access_token: str, refresh_token: str
+):
+    """Validate Supabase tokens and persist the signed-in user in the Flask session."""
+    if not refresh_token:
+        refresh_token = ""
+    supabase.auth.set_session(access_token=access_token, refresh_token=refresh_token)
+    user_response = supabase.auth.get_user()
+    if user_response and user_response.user:
+        u = user_response.user
+        session["user_id"] = u.id
+        session["user_email"] = u.email
+        session["supabase_access_token"] = access_token
+        if refresh_token:
+            session["supabase_refresh_token"] = refresh_token
+        if is_app_admin_email(u.email):
+            session["admin_authenticated"] = True
+            flash("✅ Login successful! Opening admin submissions view.", "success")
+            return redirect(url_for("admin.admin_dashboard"))
+        flash("✅ Login successful!", "success")
+        return redirect(url_for("index"))
+    flash("❌ Authentication failed: Could not retrieve user information.", "error")
+    return redirect(url_for("login"))
+
+
 @app.route("/auth/callback")
 def auth_callback():
-    """Handle Supabase magic link callback."""
-    access_token = request.args.get("access_token")
-    refresh_token = request.args.get("refresh_token")
-    expires_at = request.args.get("expires_at")
-    
-    # If no tokens in query params, extract from hash fragment using JavaScript
-    if not access_token:
-        return """
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Authenticating...</title>
-            <style>
-                body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }
-                .spinner { border: 4px solid #f3f3f3; border-top: 4px solid #3498db; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 20px auto; }
-                @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-            </style>
-        </head>
-        <body>
-            <h2>🔐 Processing authentication...</h2>
-            <div class="spinner"></div>
-            <p>Please wait while we log you in...</p>
-            <script>
-                if (window.location.hash) {
-                    const hash = window.location.hash.substring(1);
-                    const params = new URLSearchParams(hash);
-                    const accessToken = params.get('access_token');
-                    const refreshToken = params.get('refresh_token');
-                    const expiresAt = params.get('expires_at');
-                    
-                    if (accessToken) {
-                        const callbackUrl = '/auth/callback?access_token=' + encodeURIComponent(accessToken) +
-                                          (refreshToken ? '&refresh_token=' + encodeURIComponent(refreshToken) : '') +
-                                          (expiresAt ? '&expires_at=' + encodeURIComponent(expiresAt) : '');
-                        window.location.replace(callbackUrl);
-                    } else {
-                        document.body.innerHTML = '<h2>❌ Error: No access token found</h2><p>The login link may be invalid or expired.</p>';
-                    }
-                } else {
-                    document.body.innerHTML = '<h2>❌ Error: No authentication data found</h2><p>Please try requesting a new login link.</p>';
-                }
-            </script>
-        </body>
-        </html>
-        """, 200
-    
-    # Process authentication
-    try:
-        supabase = get_supabase_client()
-        # Ensure refresh_token is provided (required by Supabase)
-        if not refresh_token:
-            refresh_token = ""
-        
-        # Set session - Supabase requires both tokens
-        session_response = supabase.auth.set_session(
-            access_token=access_token,
-            refresh_token=refresh_token
-        )
-        
-        user_response = supabase.auth.get_user()
-        
-        if user_response and user_response.user:
-            # Store in Flask session
-            session["user_id"] = user_response.user.id
-            session["user_email"] = user_response.user.email
-            session["supabase_access_token"] = access_token
-            if refresh_token:
-                session["supabase_refresh_token"] = refresh_token
-
-            if is_app_admin_email(user_response.user.email):
-                session["admin_authenticated"] = True
-                flash("✅ Login successful! Opening admin submissions view.", "success")
-                return redirect(url_for("admin.admin_dashboard"))
-
-            flash("✅ Login successful!", "success")
-            return redirect(url_for("index"))
-        else:
-            flash("❌ Authentication failed: Could not retrieve user information.", "error")
-            return redirect(url_for("login"))
-    except Exception as e:
-        flash(f"❌ Authentication error: {str(e)}", "error")
+    """Handle Supabase magic link callback (implicit hash, PKCE code, or token_hash)."""
+    if request.args.get("error") and not request.args.get("access_token"):
+        desc = request.args.get("error_description") or request.args.get("error") or "Unknown error"
+        flash(f"❌ Login could not complete: {desc}", "error")
         return redirect(url_for("login"))
+
+    access_token = request.args.get("access_token")
+    refresh_token = request.args.get("refresh_token") or ""
+    code = request.args.get("code")
+    token_hash = request.args.get("token_hash")
+    link_type = request.args.get("type")
+
+    supabase = get_supabase_client()
+    if not supabase:
+        flash("Authentication is not configured. Please set SUPABASE_URL and SUPABASE_ANON_KEY.", "error")
+        return redirect(url_for("login"))
+
+    if access_token:
+        try:
+            return _establish_flask_session_from_supabase_tokens(
+                supabase, access_token, refresh_token
+            )
+        except Exception as e:
+            app.logger.exception("auth_callback: set_session failed")
+            flash(f"❌ Authentication error: {str(e)}", "error")
+            return redirect(url_for("login"))
+
+    if token_hash and link_type:
+        if link_type not in MAGIC_LINK_OTP_TYPES:
+            flash("❌ Invalid login link. Please request a new magic link.", "error")
+            return redirect(url_for("login"))
+        try:
+            auth_res = supabase.auth.verify_otp(
+                {"token_hash": token_hash, "type": link_type}
+            )
+        except Exception:
+            app.logger.exception("auth_callback: verify_otp failed")
+            flash(
+                "❌ This login link is invalid, expired, or was already used. Please request a new magic link.",
+                "error",
+            )
+            return redirect(url_for("login"))
+        if not auth_res.session:
+            flash("❌ This login link is invalid or expired. Please request a new magic link.", "error")
+            return redirect(url_for("login"))
+        sess = auth_res.session
+        try:
+            return _establish_flask_session_from_supabase_tokens(
+                supabase, sess.access_token, sess.refresh_token or ""
+            )
+        except Exception as e:
+            app.logger.exception("auth_callback: session after verify_otp failed")
+            flash(f"❌ Authentication error: {str(e)}", "error")
+            return redirect(url_for("login"))
+
+    if code:
+        try:
+            auth_res = supabase.auth.exchange_code_for_session({"auth_code": code})
+        except Exception:
+            app.logger.exception("auth_callback: exchange_code_for_session failed")
+            flash(
+                "❌ Could not complete login. If you requested the link on another device or browser, "
+                "open the email link there, or request a new magic link and open it in the same browser you used to sign in.",
+                "error",
+            )
+            return redirect(url_for("login"))
+        if not auth_res.session:
+            flash("❌ Login session could not be created. Please request a new magic link.", "error")
+            return redirect(url_for("login"))
+        sess = auth_res.session
+        try:
+            return _establish_flask_session_from_supabase_tokens(
+                supabase, sess.access_token, sess.refresh_token or ""
+            )
+        except Exception as e:
+            app.logger.exception("auth_callback: session after code exchange failed")
+            flash(f"❌ Authentication error: {str(e)}", "error")
+            return redirect(url_for("login"))
+
+    # No query tokens: extract implicit-flow tokens from URL hash in the browser
+    resp = make_response(render_template("auth_callback.html"))
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return resp
 
 
 @app.route("/clear_results", methods=["POST"])

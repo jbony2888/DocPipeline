@@ -116,6 +116,7 @@ _ESSAY_FRAGMENT_STARTERS = (
     "and ", "at ", "if ", "the ", "to ", "she ", "he ", "my ", "because ", "when ", "that ",
     "so ", "but ", "or ", "in ", "on ", "for ", "with ", "is ", "was ", "has ", "have ",
     "it ", "we ", "they ", "this ", "what ", "and if ", "of ", "as ", "by ", "from ",
+    "a ", "a father to ", "a father to",  # e.g. "a father to Adrian" from father reaction
 )
 
 # Sentence starters / essay fragments to reject as student name (reduce false positives)

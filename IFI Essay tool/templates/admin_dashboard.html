@@ -16,6 +16,8 @@
         .badge-needs-review { background: #f59e0b; }
         .badge-approved { background: #10b981; }
         .filter-bar .form-select, .filter-bar .btn { font-size: 0.875rem; }
+        .stat-mini { font-size: 0.8rem; }
+        .failure-table td, .failure-table th { padding: 0.35rem 0.5rem; font-size: 0.8rem; }
     </style>
 </head>
 <body>
@@ -46,7 +48,7 @@
                     {% endif %}
                     · up to <strong>{{ fetch_limit }}</strong> most recent by date
                 </p>
-                <form method="get" action="{{ url_for('admin.admin_dashboard') }}" class="row g-2 align-items-end filter-bar">
+                <form method="get" action="{{ url_for('admin.admin_dashboard') }}" class="row g-2 align-items-end filter-bar" id="filterForm">
                     <div class="col-md-4 col-lg-3">
                         <label class="form-label small text-muted mb-0">School</label>
                         <select name="school" class="form-select" onchange="this.form.submit()">
@@ -72,11 +74,91 @@
             </div>
         </div>
 
+        <!-- Failure analysis (for ongoing contest tuning) -->
+        <div class="card mb-3">
+            <div class="card-header py-2 d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <strong><i class="bi bi-graph-up"></i> Review / failure signals</strong>
+                <span class="text-muted small">Per-code counts = times that flag appears (one row can have several)</span>
+            </div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <h6 class="text-muted small text-uppercase">Loaded window (all {{ failure_stats_all.total_rows }} rows)</h6>
+                        <p class="stat-mini mb-1">
+                            <span class="badge badge-needs-review">Needs review</span> {{ failure_stats_all.needs_review_count }}
+                            &nbsp;·&nbsp; <span class="badge badge-approved">Approved</span> {{ failure_stats_all.approved_count }}
+                            {% if failure_stats_all.missing_reason_codes_count %}
+                            &nbsp;·&nbsp; <span class="text-warning">No codes (legacy)</span> {{ failure_stats_all.missing_reason_codes_count }}
+                            {% endif %}
+                        </p>
+                        <div class="table-responsive">
+                            <table class="table table-sm failure-table mb-0">
+                                <thead><tr><th>Reason</th><th class="text-end">Count</th></tr></thead>
+                                <tbody>
+                                    {% for c in failure_stats_all.codes %}
+                                    <tr><td>{{ c.label }}</td><td class="text-end">{{ c.count }}</td></tr>
+                                    {% else %}
+                                    <tr><td colspan="2" class="text-muted">No coded reasons in this set</td></tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <h6 class="text-muted small text-uppercase">Current table{% if selected_school or selected_grade %} (filtered){% endif %}</h6>
+                        <p class="stat-mini mb-1">
+                            <span class="badge badge-needs-review">Needs review</span> {{ failure_stats_filtered.needs_review_count }}
+                            &nbsp;·&nbsp; <span class="badge badge-approved">Approved</span> {{ failure_stats_filtered.approved_count }}
+                        </p>
+                        <div class="table-responsive">
+                            <table class="table table-sm failure-table mb-0">
+                                <thead><tr><th>Reason</th><th class="text-end">Count</th></tr></thead>
+                                <tbody>
+                                    {% for c in failure_stats_filtered.codes %}
+                                    <tr><td>{{ c.label }}</td><td class="text-end">{{ c.count }}</td></tr>
+                                    {% else %}
+                                    <tr><td colspan="2" class="text-muted">No coded reasons</td></tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+                {% if duplicate_files %}
+                <hr class="my-3">
+                <h6 class="small text-muted text-uppercase mb-2">Same filename, multiple rows (re-uploads / chunks)</h6>
+                <ul class="small mb-0 text-muted">
+                    {% for d in duplicate_files %}
+                    <li><strong>{{ d.count }}×</strong> {{ d.filename }}</li>
+                    {% endfor %}
+                </ul>
+                {% endif %}
+                <p class="small text-muted mt-3 mb-0">
+                    <strong>While contest is open:</strong> prioritize fixing the highest counts above —
+                    <code>MISSING_*</code> → OCR/extraction; <code>EMPTY_ESSAY</code>/<code>SHORT_ESSAY</code> → segmentation or scans;
+                    <code>TEMPLATE_ONLY</code> → blank uploads. CLI: <code>python scripts/analyze_submission_failures.py</code>
+                </p>
+            </div>
+        </div>
+
+        <div class="card mb-2">
+            <div class="card-body py-2 d-flex flex-wrap align-items-center gap-2">
+                <button type="button" class="btn btn-sm btn-outline-secondary" id="btnSelectAll"><i class="bi bi-check2-square"></i> Select all on page</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary" id="btnSelectNone"><i class="bi bi-square"></i> Clear selection</button>
+                <button type="button" class="btn btn-sm btn-primary" id="btnZipSelected"><i class="bi bi-file-zip"></i> Download selected as ZIP</button>
+                <span class="text-muted small" id="selCount">0 selected</span>
+                <span class="text-muted small ms-auto">Max 50 files per ZIP · skips missing storage</span>
+            </div>
+        </div>
+
         <div class="card overflow-hidden">
             <div class="table-responsive">
                 <table class="table table-hover mb-0">
                     <thead class="table-light">
                         <tr>
+                            <th style="width:2.5rem;">
+                                <input type="checkbox" class="form-check-input" id="checkMaster" title="Toggle all">
+                            </th>
                             <th>Student</th>
                             <th>School</th>
                             <th>Grade</th>
@@ -84,25 +166,34 @@
                             <th>Status</th>
                             <th>Why in review</th>
                             <th>Date</th>
-                            <th>Download</th>
+                            <th>1-file</th>
                         </tr>
                     </thead>
                     <tbody>
                         {% for s in submissions %}
                         <tr>
+                            <td>
+                                {% if s.artifact_dir %}
+                                <input type="checkbox" class="form-check-input row-check" value="{{ s.submission_id }}">
+                                {% endif %}
+                            </td>
                             <td>{{ s.student_name or '—' }}</td>
                             <td>{{ s.school_name or '—' }}</td>
                             <td>{{ s.grade or '—' }}</td>
                             <td>{{ s.filename or '—' }}</td>
                             <td>
-                                {% if s.needs_review %}
+                                {% set has_all_data = s.student_name and s.school_name and s.grade %}
+                                {% set has_reason = (s.review_reason_codes or '')|trim %}
+                                {% if has_all_data and not has_reason %}
+                                <span class="badge badge-approved">Approved</span>
+                                {% elif s.needs_review %}
                                 <span class="badge badge-needs-review">Needs review</span>
                                 {% else %}
                                 <span class="badge badge-approved">Approved</span>
                                 {% endif %}
                             </td>
                             <td class="text-muted small" style="max-width: 220px;">
-                                {% if s.needs_review and s.review_reason_codes %}
+                                {% if has_reason %}
                                 {{ format_review_reasons(s.review_reason_codes) }}
                                 {% else %}
                                 —
@@ -111,7 +202,7 @@
                             <td>{{ s.created_at[:19] if s.created_at else '—' }}</td>
                             <td>
                                 {% if s.artifact_dir %}
-                                <a href="{{ url_for('admin.download_submission', submission_id=s.submission_id) }}" class="btn btn-sm btn-outline-primary" title="Download original">
+                                <a href="{{ url_for('admin.download_submission', submission_id=s.submission_id) }}" class="btn btn-sm btn-outline-primary" title="Download this file">
                                     <i class="bi bi-download"></i>
                                 </a>
                                 {% else %}
@@ -121,7 +212,7 @@
                         </tr>
                         {% else %}
                         <tr>
-                            <td colspan="8" class="text-center text-muted py-4">No submissions match these filters.</td>
+                            <td colspan="9" class="text-center text-muted py-4">No submissions match these filters.</td>
                         </tr>
                         {% endfor %}
                     </tbody>
@@ -129,5 +220,85 @@
             </div>
         </div>
     </main>
+
+    <script>
+        (function() {
+            const master = document.getElementById('checkMaster');
+            const rows = () => Array.from(document.querySelectorAll('input.row-check'));
+            function updateCount() {
+                const n = rows().filter(c => c.checked).length;
+                const el = document.getElementById('selCount');
+                if (el) el.textContent = n + ' selected';
+                if (master) {
+                    const r = rows();
+                    master.checked = r.length && r.every(c => c.checked);
+                    master.indeterminate = r.some(c => c.checked) && !master.checked;
+                }
+            }
+            document.getElementById('btnSelectAll')?.addEventListener('click', function() {
+                rows().forEach(c => { c.checked = true; });
+                updateCount();
+            });
+            document.getElementById('btnSelectNone')?.addEventListener('click', function() {
+                rows().forEach(c => { c.checked = false; });
+                if (master) master.checked = false;
+                updateCount();
+            });
+            master?.addEventListener('change', function() {
+                rows().forEach(c => { c.checked = master.checked; });
+                updateCount();
+            });
+            document.querySelector('table')?.addEventListener('change', function(e) {
+                if (e.target.classList.contains('row-check')) updateCount();
+            });
+            document.getElementById('btnZipSelected')?.addEventListener('click', async function() {
+                const ids = rows().filter(c => c.checked).map(c => c.value);
+                if (!ids.length) {
+                    alert('Select at least one row with a checkbox (rows without storage have no checkbox).');
+                    return;
+                }
+                if (ids.length > 50) {
+                    alert('Maximum 50 submissions per ZIP. Clear some selections.');
+                    return;
+                }
+                const btn = this;
+                btn.disabled = true;
+                try {
+                    const r = await fetch('{{ url_for("admin.bulk_download_submissions") }}', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'Accept': 'application/zip' },
+                        credentials: 'same-origin',
+                        body: JSON.stringify({ submission_ids: ids })
+                    });
+                    if (!r.ok) {
+                        const t = await r.text();
+                        alert('Download failed: ' + (t || r.status));
+                        return;
+                    }
+                    const blob = await r.blob();
+                    const dispo = r.headers.get('Content-Disposition');
+                    let fname = 'submissions.zip';
+                    if (dispo && /filename=/i.test(dispo)) {
+                        const m = dispo.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
+                        if (m && m[1]) fname = m[1].replace(/['"]/g, '');
+                    }
+                    const a = document.createElement('a');
+                    a.href = URL.createObjectURL(blob);
+                    a.download = fname;
+                    a.click();
+                    URL.revokeObjectURL(a.href);
+                    const sk = r.headers.get('X-Admin-Zip-Skipped-Count');
+                    if (sk && parseInt(sk, 10) > 0) {
+                        alert('ZIP created; ' + sk + ' file(s) skipped (missing in storage or size cap).');
+                    }
+                } catch (e) {
+                    alert('Network error: ' + e);
+                } finally {
+                    btn.disabled = false;
+                }
+            });
+            updateCount();
+        })();
+    </script>
 </body>
 </html>

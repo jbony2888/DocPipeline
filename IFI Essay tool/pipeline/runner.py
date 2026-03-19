@@ -177,6 +177,7 @@ def process_submission(
     original_filename: str = None,
     chunk_metadata: dict | None = None,
     doc_format: str | None = None,
+    keep_artifacts_dir: str | None = None,
 ) -> Tuple[SubmissionRecord, dict]:
     """
     Runs the complete processing pipeline for a single submission.
@@ -208,7 +209,11 @@ def process_submission(
     # artifact_dir is now a Supabase Storage path, so we use a temp dir for processing
     import tempfile
     import os
-    temp_artifact_dir = tempfile.mkdtemp(prefix=f"essay_{submission_id}_")
+    if keep_artifacts_dir:
+        Path(keep_artifacts_dir).mkdir(parents=True, exist_ok=True)
+        temp_artifact_dir = keep_artifacts_dir
+    else:
+        temp_artifact_dir = tempfile.mkdtemp(prefix=f"essay_{submission_id}_")
     artifact_path = Path(temp_artifact_dir)
     
     processing_report = {"stages": {}, "timing_ms": {}}
@@ -524,6 +529,7 @@ def process_submission(
         # Essay preview for verification scripts (first 300 chars)
         text = final_essay_text or ""
         processing_report["essay_preview"] = (text[:300] + "...") if len(text) > 300 else (text or None)
+        processing_report["essay_text"] = (final_essay_text or "").strip() or None
         processing_report["stages"]["segmentation"] = {
             "contact_lines": len(contact_block.split('\n')),
             "essay_lines": len(final_essay_text.split('\n')),
@@ -646,10 +652,12 @@ def process_submission(
     
     finally:
         # Clean up temporary directory (artifacts are stored in Supabase Storage, not needed locally)
-        try:
-            import shutil
-            shutil.rmtree(temp_artifact_dir)
-        except Exception as e:
-            logger.warning(f"Could not clean up temp directory {temp_artifact_dir}: {e}")
+        # Skip cleanup when keep_artifacts_dir was provided (local debug)
+        if not keep_artifacts_dir:
+            try:
+                import shutil
+                shutil.rmtree(temp_artifact_dir)
+            except Exception as e:
+                logger.warning(f"Could not clean up temp directory {temp_artifact_dir}: {e}")
     
     return record, processing_report
