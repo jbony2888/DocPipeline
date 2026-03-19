@@ -1052,7 +1052,54 @@ def _extract_ifi_typed_form_by_position(raw_text: str, contact_block: str) -> Di
                             result["student_name"] = candidate.strip()
                             break
                     break
-        # Fallback 3: name appears later in text (page1 only; avoid page-2 content)
+        # Scavenge: first name AFTER "Student's Name" label (before fallback 3 which wrongly picks last name)
+        # Forms like fatherhood-essay.pdf have: labels... Deadline March 19, Nyleah Carrasco, essay, Mrs. Moore...
+        if not result.get("student_name"):
+            _scavenge_label_substrings = (
+                "student's name", "student name", "nombre del estudiante", "grade", "grado",
+                "school", "escuela", "father", "padre", "figura paterna", "email", "phone", "teléfono",
+                "deadline", "march", "writing about", "escribiendo sobre", "character maximum",
+                "stepdad", "padrasto", "grandfather", "abuelo", "father / padre", "grandfather / abuelo",
+                "stepdad / padrasto", "father-figure / figura paterna",
+            )
+
+            def _is_label(ln: str) -> bool:
+                low = ln.lower().strip()
+                return any(s in low for s in _scavenge_label_substrings) or len(low) < 2
+
+            header_window = page1_lines[:40]
+            student_label_idx = -1
+            for idx, ln in enumerate(header_window):
+                low = ln.lower().strip()
+                if ("student" in low and "name" in low) or "nombre del estudiante" in low:
+                    student_label_idx = idx
+                    break
+            for ln in header_window[student_label_idx + 1 :] if student_label_idx >= 0 else []:
+                cand = ln.strip()
+                if not cand or _is_label(cand) or len(cand) > 40:
+                    continue
+                if "@" in cand or (len(cand) <= 3 and cand.replace(".", "").isdigit()):
+                    continue
+                if looks_like_essay_fragment(cand):
+                    continue
+                if len(cand.split()) == 1 and cand.isalpha() and 8 <= len(cand) <= 25:
+                    parts = re.sub(r"([a-z])([A-Z])", r"\1 \2", cand).split()
+                    if 2 <= len(parts) <= 4 and all(p and p[0].isupper() for p in parts):
+                        cand = " ".join(parts)
+                words = cand.split()
+                # Allow 1-word first names (e.g. Dangelo, Maria) or 2-5 word full names
+                if len(words) == 1:
+                    if not (4 <= len(cand) <= 25 and cand[0].isupper() and cand.replace("'", "").replace("-", "").isalpha()):
+                        continue
+                elif not (2 <= len(words) <= 5 and all(w and w[0].isalpha() for w in words)):
+                    continue
+                if not is_valid_value_candidate(cand, max_length=40):
+                    continue
+                if len(words) > 1 and not is_plausible_student_name(cand, max_line_length=40):
+                    continue
+                result["student_name"] = cand
+                break
+        # Fallback 3: last plausible name (only when no Student's Name label found)
         if not result.get("student_name"):
             last_name_candidate = None
             for ln in page1_lines:
@@ -1134,41 +1181,11 @@ def _extract_ifi_typed_form_by_position(raw_text: str, contact_block: str) -> Di
             if "luis" in cand_low and "vega" in cand_low and len(cand.split()) <= 3:
                 continue
             words = cand.split()
-            if 2 <= len(words) <= 8 and any(w and w[0].isupper() for w in words):
+            # Allow single-word schools (e.g. "carson" for Rachel Carson) or multi-word with caps
+            if 1 <= len(words) <= 8 and (len(words) == 1 or any(w and w[0].isupper() for w in words)):
                 result["school_name"] = cand
                 break
 
-    if not result.get("student_name"):
-        # Only take a name that appears after a "Student's Name" label so we don't use father's name.
-        # Restrict to first 40 lines (header) to avoid picking school/father from bottom contact (26-IFI).
-        header_window = scavenge_window[:40]
-        student_label_idx = -1
-        for idx, ln in enumerate(header_window):
-            low = ln.lower().strip()
-            if "student" in low and "name" in low or "nombre del estudiante" in low:
-                student_label_idx = idx
-                break
-        for ln in header_window[student_label_idx + 1 :] if student_label_idx >= 0 else []:
-            cand = ln.strip()
-            if not cand or _is_label_line(cand) or len(cand) > 40:
-                continue
-            if "@" in cand or (len(cand) <= 3 and cand.replace(".", "").isdigit()):
-                continue
-            if looks_like_essay_fragment(cand):
-                continue
-            # Handle CamelCase concatenated names (e.g. "SamuelAlejo" -> "Samuel Alejo")
-            if len(cand.split()) == 1 and cand.isalpha() and 8 <= len(cand) <= 25:
-                parts = re.sub(r"([a-z])([A-Z])", r"\1 \2", cand).split()
-                if 2 <= len(parts) <= 4 and all(p and p[0].isupper() for p in parts):
-                    cand = " ".join(parts)
-            if not is_plausible_student_name(cand, max_line_length=40):
-                continue
-            if not is_valid_value_candidate(cand, max_length=40):
-                continue
-            words = cand.split()
-            if 2 <= len(words) <= 5 and all(w and w[0].isalpha() for w in words):
-                result["student_name"] = cand
-                break
     if result.get("grade") is None:
         grade_label_idx = -1
         for idx, ln in enumerate(scavenge_window):
@@ -1523,13 +1540,16 @@ def extract_fields_ifi(
 
     out_student = student_name or ifi_result.get("student_name")
     out_school = ifi_result.get("school_name")
-    # Fallback: student name from filename when typed form has empty Student's Name field (e.g. 26-IFI)
-    if not out_student and original_filename and is_ifi_typed_form:
+    # Fallback: student name from filename when typed form has empty or wrong Student's Name (e.g. "Fatherhood Essay")
+    _wrong_student_names = ("fatherhood essay",)  # essay title, not student name
+    if original_filename and is_ifi_typed_form:
         from pipeline.extract import student_name_from_filename
         name_from_file = student_name_from_filename(original_filename)
-        if name_from_file:
+        if name_from_file and (
+            not out_student or (out_student and str(out_student).strip().lower() in _wrong_student_names)
+        ):
             out_student = name_from_file
-            logger.info("Student name from filename (typed form empty): %s", name_from_file)
+            logger.info("Student name from filename (typed form empty/wrong): %s", name_from_file)
     if out_student and _is_label_student_name(out_student):
         out_student = None
     if out_school and _is_label_school_name(out_school):

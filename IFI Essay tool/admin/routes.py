@@ -202,10 +202,17 @@ def _duplicate_filename_hints(rows: list, top_n: int = 12) -> list[dict]:
 
 
 def _distinct_schools_and_grades(rows: list) -> tuple[list[str], list[str]]:
-    schools = sorted(
-        {str(r.get("school_name") or "").strip() for r in rows if str(r.get("school_name") or "").strip()},
-        key=lambda s: s.casefold(),
-    )
+    raw_schools = {str(r.get("school_name") or "").strip() for r in rows if str(r.get("school_name") or "").strip()}
+    # Filter to only valid reference schools (exclude extraction errors: person names, dates, essay fragments)
+    try:
+        from idp_guardrails_core.core import SchoolReferenceValidator
+        validator = SchoolReferenceValidator()
+        schools = sorted(
+            [s for s in raw_schools if validator.validate(s).get("matched")],
+            key=lambda s: s.casefold(),
+        )
+    except Exception:
+        schools = sorted(raw_schools, key=lambda s: s.casefold())
     grades = sorted(
         {str(r.get("grade") or "").strip() for r in rows if str(r.get("grade") or "").strip()},
         key=lambda g: (not str(g).isdigit(), str(g).casefold()),

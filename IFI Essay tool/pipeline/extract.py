@@ -118,6 +118,7 @@ _ESSAY_FRAGMENT_STARTERS = (
     "so ", "but ", "or ", "in ", "on ", "for ", "with ", "is ", "was ", "has ", "have ",
     "it ", "we ", "they ", "this ", "what ", "and if ", "of ", "as ", "by ", "from ",
     "a ", "a father to ", "a father to",  # e.g. "a father to Adrian" from father reaction
+    "fatherhood essay ", "fatherhood essay",  # essay title, not student name
 )
 
 # Sentence starters / essay fragments to reject as student name (reduce false positives)
@@ -171,15 +172,21 @@ def student_name_from_filename(filename: str | None) -> Optional[str]:
     if not filename or not filename.strip():
         return None
     stem = Path(filename).stem
+    # Reject template-only filenames (no student name): "26-IFI-Essay-Form-Eng-and-Spanish (2).pdf"
+    stem_norm = re.sub(r"[\s()]", "", stem).lower()
+    if stem_norm.startswith("26-ifi-essay-form") or stem_norm.startswith("26-if-essay-form"):
+        return None
     parts = re.split(r"[-_\s]+", stem)
     name_parts = []
     for p in parts:
-        if not p or not p.isalpha():
+        # Allow apostrophes in names (e.g. Ta'kerah, O'Brien)
+        p_alpha = re.sub(r"['\u2019\u2018]", "", p)
+        if not p or not p_alpha.isalpha():
             continue
-        if len(p) < 2 or len(p) > 25:
+        if len(p_alpha) < 2 or len(p_alpha) > 25:
             continue
         low = p.lower()
-        if low in ("ifi", "essay", "contest", "fatherhood", "form", "export", "pdf", "the", "and"):
+        if low in ("ifi", "essay", "contest", "fatherhood", "form", "export", "pdf", "the", "and", "eng", "spanish"):
             continue
         name_parts.append(p)
         if len(name_parts) >= 2:
