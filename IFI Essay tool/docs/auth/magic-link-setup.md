@@ -78,6 +78,20 @@ You can customize the magic link email template:
 - Request a new link if the old one expired
 - Make sure you're using the correct redirect URL
 
+### "No access token found" / "No authentication data found" after clicking the email link
+
+These messages usually mean the browser reached `/auth/callback` **without** the tokens Supabase adds to the URL. Common causes:
+
+1. **Microsoft Outlook / "Safe Links"** — Link scanners can strip or rewrite URLs. The **fragment** (`#access_token=...`) used by the implicit-style redirect is often **not sent to the server**, and some scanners break it entirely.  
+   **Workaround:** Copy the **full** magic link from the email, paste it into Chrome or Safari (address bar), and press Enter. Or open the message in **Outlook on the web** and click the link there. Then use **Request a new login link** on the login page if needed.
+
+2. **PKCE (`?code=`) on a different device** — If your project uses the PKCE flow, the `code` must be exchanged with a **code verifier** stored in the **same browser** where you clicked “Send login link”. Opening the email on your phone while you requested the link on a laptop can fail.  
+   **Workaround:** Open the magic link in the **same browser** where you submitted your email, or request a new link on the device you will use to submit.
+
+3. **Redirect URL mismatch** — The link must redirect to exactly the URL allowed in Supabase (**Authentication → URL Configuration → Redirect URLs**), e.g. `https://your-app.onrender.com/auth/callback`. Ensure **`APP_URL`** in production matches that host (no trailing slash on `APP_URL` in `.env`; the app appends `/auth/callback`).
+
+The app’s `/auth/callback` route now supports **query-string** flows when Supabase sends `token_hash` + `type` or `code` (PKCE when the verifier is available), as well as the classic **hash** (`#access_token=...`) flow relayed into the server.
+
 ### Session not persisting
 - Check that cookies are enabled in the browser
 - Verify Flask session is configured (e.g. `FLASK_SECRET_KEY` set)

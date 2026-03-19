@@ -6,6 +6,7 @@ and multi-line form layouts gracefully.
 
 import re
 import unicodedata
+from pathlib import Path
 from typing import Optional, Union
 
 
@@ -159,6 +160,36 @@ def is_plausible_student_name(value: str, max_line_length: int = 40) -> bool:
     if not any(t and t[0].isupper() for t in tokens):
         return False
     return True
+
+
+def student_name_from_filename(filename: str | None) -> Optional[str]:
+    """
+    Try to get a plausible student name from filename when form field is empty.
+    E.g. "Santiago Flores - 26-IFI-Essay-Form-Eng-and-Spanish.pdf" -> "Santiago Flores".
+    Used as fallback for IFI typed forms when Student's Name field is empty.
+    """
+    if not filename or not filename.strip():
+        return None
+    stem = Path(filename).stem
+    parts = re.split(r"[-_\s]+", stem)
+    name_parts = []
+    for p in parts:
+        if not p or not p.isalpha():
+            continue
+        if len(p) < 2 or len(p) > 25:
+            continue
+        low = p.lower()
+        if low in ("ifi", "essay", "contest", "fatherhood", "form", "export", "pdf", "the", "and"):
+            continue
+        name_parts.append(p)
+        if len(name_parts) >= 2:
+            break
+    if len(name_parts) < 2:
+        return None
+    candidate = " ".join(name_parts)
+    if not is_plausible_student_name(candidate, max_line_length=40):
+        return None
+    return candidate
 
 
 def is_valid_value_candidate(text: str, max_length: int = 60, min_alpha_ratio: float = 0.4) -> bool:

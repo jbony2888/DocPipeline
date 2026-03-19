@@ -1523,6 +1523,13 @@ def extract_fields_ifi(
 
     out_student = student_name or ifi_result.get("student_name")
     out_school = ifi_result.get("school_name")
+    # Fallback: student name from filename when typed form has empty Student's Name field (e.g. 26-IFI)
+    if not out_student and original_filename and is_ifi_typed_form:
+        from pipeline.extract import student_name_from_filename
+        name_from_file = student_name_from_filename(original_filename)
+        if name_from_file:
+            out_student = name_from_file
+            logger.info("Student name from filename (typed form empty): %s", name_from_file)
     if out_student and _is_label_student_name(out_student):
         out_student = None
     if out_school and _is_label_school_name(out_school):

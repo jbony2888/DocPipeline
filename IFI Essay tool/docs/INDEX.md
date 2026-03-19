@@ -2,6 +2,9 @@
 
 This index organizes all project documentation by topic. Use the sections below to find what you need fast.
 
+## Public / WordPress (teacher-facing)
+- [**WordPress block: New Essay Submission Process**](wordpress-ifi-essay-submission-process.html) — HTML + CSS for www.4dads.org (email login + magic link + upload steps; copy into Custom HTML block)
+
 ## Getting Started
 - [Start Here](getting-started/start-here.md)
 - [Quickstart](getting-started/quickstart.md)
@@ -33,6 +36,9 @@ This index organizes all project documentation by topic. Use the sections below 
 - [Email Setup](auth/email-setup.md)
 
 ## Operations
+- [**Operations, Risk & Business Dependency Report**](ops/OPERATIONS_RISK_AND_BUSINESS_DEPENDENCY_REPORT.md) (counts, audit data, costs, risks)
+- [**Support Services & Billing (template)**](ops/SUPPORT_SERVICES_AND_BILLING.md) (scope, retainers, SLAs—for paid support agreements)
+- [Cost Estimate: 1,000 Essays](ops/cost-estimate-1000-essays.md)
 - [Background Processing](ops/background-processing.md)
 - [Background Processing Flow](ops/background-processing-flow.md)
 - [Postgres Queue Setup](ops/postgres-queue-setup.md)
@@ -41,6 +47,8 @@ This index organizes all project documentation by topic. Use the sections below 
 - [Redis Setup](ops/redis-setup.md)
 - [Redis Migration](ops/redis-migration.md)
 - [Redis Email Implementation](ops/redis-email-implementation.md)
+- [Review Reason Codes (needs_review)](ops/REVIEW_REASON_CODES.md)
+- CLI: `scripts/analyze_submission_failures.py` — aggregate failure reasons from Supabase
 - [Debug Guide](ops/debug-guide.md)
 - [Debug Flask](ops/debug-flask.md)
 

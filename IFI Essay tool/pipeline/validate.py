@@ -41,7 +41,7 @@ def _is_effectively_missing_student_name(val) -> bool:
     """True if value is missing or is a form label / placeholder (not a real name)."""
     if not val or not str(val).strip():
         return True
-    s = str(val).strip()
+    s = str(val).strip().rstrip(".,;:")  # Allow trailing punctuation (common OCR artifact)
     # Known IFI form labels or page headers mistaken for name
     if len(s) < 2:
         return True
@@ -53,11 +53,13 @@ def _is_effectively_missing_student_name(val) -> bool:
     if s == "JUDGING PROCESS" or lower == "judging process":
         return True
     # Guardrail: avoid treating essay body text as a student's name.
-    # Real names are short and typically do not contain sentence punctuation.
+    # Real names are short and typically do not contain sentence punctuation in the middle.
     token_count = len([t for t in re.split(r"\s+", s) if t])
     if len(s) > 60 or token_count > 5:
         return True
-    if re.search(r"[.!?;:]", s):
+    # Reject if punctuation in middle (essay-like); allow trailing .,;: (common OCR)
+    s_check = s.rstrip(".,;:")
+    if re.search(r"[.!?;:]", s_check):
         return True
     return False
 

@@ -1,0 +1,216 @@
+<!--
+  IFI / 4Dads — "New Essay Submission Process" block for WordPress (Custom HTML block).
+
+  Paste everything below this comment into WordPress: Custom HTML, or theme snippet.
+
+  Last updated: 2026-03-19 — Adds email + magic-link steps (fixes "no submission box" confusion).
+-->
+<style>
+/* ===== IFI Essay Submission Process ===== */
+
+.ifi-submission-process {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 20px 10px;
+}
+
+.ifi-submission-process h2 {
+  font-size: 28px;
+  margin-bottom: 10px;
+}
+
+.ifi-intro {
+  font-size: 16px;
+  line-height: 1.6;
+  margin-bottom: 20px;
+  color: #444;
+}
+
+.ifi-callout {
+  border-left: 4px solid #0b1f3a;
+  background: #f4f7fb;
+  padding: 16px 18px;
+  margin: 0 0 28px 0;
+  border-radius: 0 6px 6px 0;
+  font-size: 15px;
+  line-height: 1.55;
+  color: #333;
+}
+
+.ifi-callout strong {
+  color: #0b1f3a;
+}
+
+.ifi-callout ol {
+  margin: 12px 0 0 0;
+  padding-left: 1.25rem;
+}
+
+.ifi-callout li {
+  margin-bottom: 8px;
+}
+
+.ifi-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.ifi-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 18px;
+  border: 1px solid #e2e2e2;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.ifi-step-number {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: #0b1f3a; /* navy */
+  color: #ffffff;
+  font-weight: 700;
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+.ifi-step-content h3 {
+  margin: 0 0 6px 0;
+  font-size: 18px;
+}
+
+.ifi-step-content p {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.5;
+  color: #555;
+}
+
+/* CTA Button */
+
+.ifi-cta {
+  margin-top: 35px;
+  text-align: center;
+}
+
+.ifi-cta-button {
+  display: inline-block;
+  padding: 14px 28px;
+  background-color: #0b1f3a; /* navy */
+  color: #ffffff;
+  font-size: 16px;
+  font-weight: 600;
+  text-decoration: none;
+  border-radius: 4px;
+  transition: background-color 0.2s ease, transform 0.1s ease;
+}
+
+.ifi-cta-button:hover {
+  background-color: #08162a;
+  transform: translateY(-1px);
+}
+
+.ifi-footnote {
+  margin-top: 18px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #666;
+  text-align: center;
+  max-width: 640px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* Mobile */
+
+@media (max-width: 600px) {
+  .ifi-submission-process h2 {
+    font-size: 24px;
+  }
+}
+</style>
+
+<div class="ifi-submission-process">
+  <h2>New Essay Submission Process</h2>
+  <p class="ifi-intro">
+    We’ve simplified how essay entries are submitted and organized so teachers can spend less time on data entry and more time supporting students.
+  </p>
+
+  <div class="ifi-callout" role="region" aria-label="How to sign in and see the upload area">
+    <strong>Important: sign in with your email first.</strong>
+    The submission tool does <strong>not</strong> show a file upload box until you are logged in. After you open the tool, you will see a page asking for your <strong>email address</strong>—that is the correct first step.
+    <ol>
+      <li>Click <strong>Open Essay Submission Tool</strong> below.</li>
+      <li>Enter the <strong>email address</strong> you want to use (often your CPS or school email). Click to send yourself a secure login link.</li>
+      <li>Check your <strong>inbox and spam/junk folder</strong> for an email with a login link. <strong>Click the link within about one hour</strong> (links expire).</li>
+      <li>After the link opens, you should land in the tool with the <strong>upload / drag-and-drop</strong> area visible. Then you can add PDFs or images.</li>
+    </ol>
+    <strong>If the login link shows an error:</strong> copy the <em>entire</em> link from the email, paste it into <strong>Chrome or Safari</strong>, and press Enter. Microsoft Outlook sometimes alters links—try opening the message in <strong>Outlook on the web</strong> or request a <strong>new link</strong> from the login page. Use the <strong>same browser</strong> to open the email link that you used to request the link when possible.
+  </div>
+
+  <div class="ifi-steps">
+    <div class="ifi-step">
+      <span class="ifi-step-number">1</span>
+      <div class="ifi-step-content">
+        <h3>Submit Essays in One Batch</h3>
+        <p>
+          After you are logged in, upload one or multiple essay forms at the same time using PDF or image files.
+        </p>
+      </div>
+    </div>
+
+    <div class="ifi-step">
+      <span class="ifi-step-number">2</span>
+      <div class="ifi-step-content">
+        <h3>Information Is Extracted Automatically</h3>
+        <p>
+          The system reads each form and pulls key details like student name, school, and grade.
+          Any missing information is clearly flagged for review.
+        </p>
+      </div>
+    </div>
+
+    <div class="ifi-step">
+      <span class="ifi-step-number">3</span>
+      <div class="ifi-step-content">
+        <h3>Fix and Approve in Bulk</h3>
+        <p>
+          Teachers can quickly apply the same school or grade to multiple entries at once,
+          then approve completed records with a single click.
+        </p>
+      </div>
+    </div>
+
+    <div class="ifi-step">
+      <span class="ifi-step-number">4</span>
+      <div class="ifi-step-content">
+        <h3>Automatically Organized for Review</h3>
+        <p>
+          Approved entries are organized by school and grade, making them easy to review and export.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <div class="ifi-cta">
+    <a
+      href="https://docpipeline.onrender.com"
+      target="_blank"
+      rel="noopener noreferrer"
+      class="ifi-cta-button"
+    >
+      Open Essay Submission Tool
+    </a>
+  </div>
+
+  <p class="ifi-footnote">
+    Need help? Email <a href="mailto:jerry@techluminateacademy.com">jerry@techluminateacademy.com</a>.
+    If you cannot use the tool before the deadline, ask your coordinator whether to send files by email as a backup—use only the address they provide.
+  </p>
+</div>
