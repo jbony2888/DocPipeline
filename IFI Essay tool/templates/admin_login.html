@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Login – IFI Essay Gateway</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
+    <style>
+        body { background: #0f172a; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+        .admin-card { max-width: 400px; }
+        .admin-card .card { border: 1px solid #334155; background: #1e293b; color: #e2e8f0; }
+        .admin-card .form-control { background: #0f172a; border-color: #475569; color: #e2e8f0; }
+        .admin-card .form-control:focus { background: #0f172a; border-color: #3b82f6; color: #e2e8f0; box-shadow: 0 0 0 0.2rem rgba(59,130,246,0.25); }
+        .admin-card .btn-primary { background: #2563eb; border-color: #2563eb; }
+        .admin-card .text-muted { color: #94a3b8 !important; }
+        .admin-card .alert-danger { background: #7f1d1d; border-color: #991b1b; color: #fecaca; }
+    </style>
+</head>
+<body>
+    <div class="admin-card w-100 mx-3">
+        <div class="card">
+            <div class="card-body p-4">
+                <div class="text-center mb-4">
+                    <h1 class="h4 text-white mb-2"><i class="bi bi-shield-lock"></i> Admin</h1>
+                    <p class="text-muted small">Enter admin token to continue</p>
+                </div>
+                {% if error %}
+                <div class="alert alert-danger py-2">{{ error }}</div>
+                {% endif %}
+                <form method="POST" action="{{ url_for('admin.admin_login') }}">
+                    <div class="mb-3">
+                        <label for="token" class="form-label small">Token</label>
+                        <input type="password" class="form-control" id="token" name="token"
+                               placeholder="Admin token" required autofocus autocomplete="off">
+                    </div>
+                    <button type="submit" class="btn btn-primary w-100">Sign in</button>
+                </form>
+            </div>
+        </div>
+        <p class="text-center mt-3">
+            <a href="{{ url_for('index') }}" class="text-muted small text-decoration-none">← Back to app</a>
+        </p>
+    </div>
+</body>
+</html>

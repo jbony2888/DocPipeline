@@ -42,6 +42,7 @@ from pipeline.validate import ALLOWED_REASON_CODES, can_approve_record
 from pipeline.guardrails.validation import is_grade_missing
 from pipeline.batch_defaults import get_batch_with_submissions, apply_batch_defaults
 from auth.supabase_client import get_supabase_client, get_user_id, normalize_supabase_url
+from auth.app_admin import is_app_admin_email
 from jobs.queue import enqueue_submission, get_job_status, get_queue_status
 from jobs.process_submission import process_submission_job
 from jobs.redis_queue import get_redis_client
@@ -63,6 +64,19 @@ Path("outputs").mkdir(exist_ok=True)
 
 # Initialize Supabase database
 init_database()
+
+# Admin blueprint (view all submissions, secure downloads)
+from admin.routes import admin_bp
+
+app.register_blueprint(admin_bp)
+
+
+@app.before_request
+def _sync_app_admin_session():
+    """Grant admin dashboard access while a listed app-admin email is logged in."""
+    if session.get("user_id") and is_app_admin_email(session.get("user_email")):
+        session["admin_authenticated"] = True
+
 
 DB_STATS_TTL_SECONDS = 60
 _db_stats_cache: Dict[str, Dict[str, Any]] = {}
@@ -327,6 +341,8 @@ def login():
         flash("Your session has expired. Please log in again.", "warning")
     # Check if already logged in
     if require_auth():
+        if is_app_admin_email(session.get("user_email")):
+            return redirect(url_for("admin.admin_dashboard"))
         return redirect(url_for("index"))
     
     supabase = get_supabase_client()
@@ -441,7 +457,12 @@ def auth_callback():
             session["supabase_access_token"] = access_token
             if refresh_token:
                 session["supabase_refresh_token"] = refresh_token
-            
+
+            if is_app_admin_email(user_response.user.email):
+                session["admin_authenticated"] = True
+                flash("✅ Login successful! Opening admin submissions view.", "success")
+                return redirect(url_for("admin.admin_dashboard"))
+
             flash("✅ Login successful!", "success")
             return redirect(url_for("index"))
         else:

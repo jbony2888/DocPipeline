@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Submissions Dashboard – Admin</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
+    <style>
+        body { background: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+        .admin-header { background: #1e293b; color: #e2e8f0; padding: 1rem 0; margin-bottom: 1.5rem; }
+        .admin-header a { color: #93c5fd; text-decoration: none; }
+        .admin-header a:hover { color: #bfdbfe; }
+        .card { border: none; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+        .table { font-size: 0.9rem; }
+        .badge-needs-review { background: #f59e0b; }
+        .badge-approved { background: #10b981; }
+        .submission-id { font-family: ui-monospace, monospace; font-size: 0.8rem; }
+    </style>
+</head>
+<body>
+    <header class="admin-header">
+        <div class="container">
+            <div class="d-flex justify-content-between align-items-center">
+                <h1 class="h5 mb-0"><i class="bi bi-collection"></i> Submissions Dashboard</h1>
+                <div>
+                    <a href="{{ url_for('admin.admin_dashboard') }}" class="me-3"><i class="bi bi-arrow-clockwise"></i> Refresh</a>
+                    {% if session.get('user_id') %}
+                    <a href="{{ url_for('index') }}" class="me-3"><i class="bi bi-house"></i> Back to app</a>
+                    <a href="{{ url_for('logout') }}"><i class="bi bi-box-arrow-right"></i> Log out</a>
+                    {% else %}
+                    <a href="{{ url_for('admin.admin_logout') }}"><i class="bi bi-box-arrow-right"></i> Logout</a>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="container">
+        <div class="card mb-3">
+            <div class="card-body py-2">
+                <span class="text-muted">{{ total }} submission{{ 's' if total != 1 else '' }} (last 100)</span>
+            </div>
+        </div>
+
+        <div class="card overflow-hidden">
+            <div class="table-responsive">
+                <table class="table table-hover mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>ID</th>
+                            <th>Student</th>
+                            <th>School</th>
+                            <th>Grade</th>
+                            <th>File</th>
+                            <th>Status</th>
+                            <th>Why in review</th>
+                            <th>Date</th>
+                            <th>Download</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for s in submissions %}
+                        <tr>
+                            <td><code class="submission-id">{{ s.submission_id }}</code></td>
+                            <td>{{ s.student_name or '—' }}</td>
+                            <td>{{ s.school_name or '—' }}</td>
+                            <td>{{ s.grade or '—' }}</td>
+                            <td>{{ s.filename or '—' }}</td>
+                            <td>
+                                {% if s.needs_review %}
+                                <span class="badge badge-needs-review">Needs review</span>
+                                {% else %}
+                                <span class="badge badge-approved">Approved</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-muted small" style="max-width: 220px;">
+                                {% if s.needs_review and s.review_reason_codes %}
+                                {{ format_review_reasons(s.review_reason_codes) }}
+                                {% else %}
+                                —
+                                {% endif %}
+                            </td>
+                            <td>{{ s.created_at[:19] if s.created_at else '—' }}</td>
+                            <td>
+                                {% if s.artifact_dir %}
+                                <a href="{{ url_for('admin.download_submission', submission_id=s.submission_id) }}" target="_blank" class="btn btn-sm btn-outline-primary">
+                                    <i class="bi bi-download"></i>
+                                </a>
+                                {% else %}
+                                <span class="text-muted">—</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td colspan="9" class="text-center text-muted py-4">No submissions yet.</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </main>
+</body>
+</html>
