@@ -1133,7 +1133,7 @@ def _extract_ifi_typed_form_by_position(raw_text: str, contact_block: str) -> Di
     # Reject label-only, essay text, or invalid entries (e.g. "a dog" is not a school)
     if school_name:
         sn_low = school_name.lower().strip()
-        if sn_low in ("escuela", "/ escuela", "school", "school name", "a dog", "escuela a dog"):
+        if sn_low in ("escuela", "/ escuela", "school", "school name", "a dog", "escuela a dog", "/ escuela a dog"):
             school_name = None
     if school_name and is_valid_value_candidate(school_name, max_length=80) and not looks_like_essay_fragment(school_name):
         result["school_name"] = school_name
@@ -1152,6 +1152,9 @@ def _extract_ifi_typed_form_by_position(raw_text: str, contact_block: str) -> Di
 
     def _is_label_line(ln: str) -> bool:
         low = ln.lower().strip()
+        # Don't treat single-digit grades (1-12) as labels
+        if re.match(r"^([1-9]|1[0-2])$", low):
+            return False
         return any(s in low for s in _SCAVENGE_LABEL_SUBSTRINGS) or len(low) < 2
 
     # 26-IFI form: grade/school in bottom contact block (after essay). Try bottom first.
@@ -1180,7 +1183,7 @@ def _extract_ifi_typed_form_by_position(raw_text: str, contact_block: str) -> Di
             cand_low = cand.lower()
             if "luis" in cand_low and "vega" in cand_low and len(cand.split()) <= 3:
                 continue
-            if cand_low in ("a dog", "escuela a dog"):
+            if cand_low in ("a dog", "escuela a dog", "/ escuela a dog"):
                 continue
             words = cand.split()
             # Allow single-word schools (e.g. "carson" for Rachel Carson) or multi-word with caps
@@ -1251,7 +1254,7 @@ def _extract_ifi_typed_form_by_position(raw_text: str, contact_block: str) -> Di
             del result["student_name"]
     if result.get("school_name"):
         low = result["school_name"].lower().strip()
-        if low in ("escuela", "/ escuela", "school", "school name", "a dog", "escuela a dog"):
+        if low in ("escuela", "/ escuela", "school", "school name", "a dog", "escuela a dog", "/ escuela a dog") or "a dog" in low:
             del result["school_name"]
 
     # 26-IFI form: student/school can be swapped (student in header, school in bottom contact).
@@ -1324,7 +1327,7 @@ def extract_fields_ifi(
         if not v or not str(v).strip():
             return None
         low = str(v).strip().lower()
-        if low in ("escuela", "/ escuela", "school", "school name", "a dog", "escuela a dog"):
+        if low in ("escuela", "/ escuela", "school", "school name", "a dog", "escuela a dog", "/ escuela a dog"):
             return None
         return v.strip()
 
