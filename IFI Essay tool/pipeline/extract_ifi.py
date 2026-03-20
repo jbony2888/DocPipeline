@@ -1186,10 +1186,15 @@ def _extract_ifi_typed_form_by_position(raw_text: str, contact_block: str) -> Di
             if cand_low in ("a dog", "escuela a dog", "/ escuela a dog"):
                 continue
             words = cand.split()
-            # Allow single-word schools (e.g. "carson" for Rachel Carson) or multi-word with caps
-            if 1 <= len(words) <= 8 and (len(words) == 1 or any(w and w[0].isupper() for w in words)):
-                result["school_name"] = cand
-                break
+            # Allow single-word schools, multi-word with caps, or lowercase that matches reference (e.g. "rachel carson")
+            if 1 <= len(words) <= 8:
+                if len(words) == 1 or any(w and w[0].isupper() for w in words):
+                    result["school_name"] = cand
+                    break
+                # All lowercase (e.g. "rachel carson") - use title case for storage
+                if all(w and w.isalpha() for w in words):
+                    result["school_name"] = cand.title()
+                    break
 
     if result.get("grade") is None:
         grade_label_idx = -1

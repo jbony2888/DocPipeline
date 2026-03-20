@@ -158,7 +158,10 @@ def is_plausible_student_name(value: str, max_line_length: int = 40) -> bool:
     if any(t in _STUDENT_NAME_REJECT_WORDS for t in low_tokens):
         return False
     # At least one token should look like a name (starts with uppercase or is title-case)
+    # Allow all-lowercase names from forms (e.g. "yojan carranza") - treat as valid if 2-4 alpha words
     if not any(t and t[0].isupper() for t in tokens):
+        if all(t and t.isalpha() for t in tokens) and 2 <= len(tokens) <= 4:
+            return True  # Form may have name in lowercase
         return False
     return True
 
