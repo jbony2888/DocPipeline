@@ -50,6 +50,7 @@
         .essay-card.is-hidden { display: none; }
         .instruction-box { border: 1px solid #dbe4ee; border-radius: 16px; background: #f8fafc; padding: 16px; color: #334155; margin-bottom: 18px; }
         .instruction-box strong { color: #0f172a; }
+        .rank-help { color: #64748b; font-size: 0.85rem; margin-top: 6px; }
     </style>
 </head>
 <body>
@@ -149,6 +150,7 @@
                                         value="{{ essay.rankPosition }}"
                                         data-rank-input
                                     >
+                                    <div class="rank-help">Use a number from 1 to {{ assignment.essayCount }} for this batch.</div>
                                 </div>
                                 <button type="submit" class="btn btn-sm btn-primary" name="save_submission_id" value="{{ essay.submissionId }}">Save</button>
                                 <button type="submit" class="btn btn-sm btn-outline-danger" name="unrank_submission_id" value="{{ essay.submissionId }}" data-unrank-btn>Unrank</button>
@@ -249,9 +251,28 @@
             cards.forEach((card) => {
                 const input = card.querySelector("[data-rank-input]");
                 if (!input) return;
+                const maxRank = parseInt(input.getAttribute("max") || "", 10);
+
+                function syncValidityMessage() {
+                    const value = parseInt(input.value || "", 10);
+                    if (input.value && Number.isInteger(maxRank) && value > maxRank) {
+                        input.setCustomValidity(`This batch has ${maxRank} essays, so ranks must be between 1 and ${maxRank}.`);
+                    } else if (input.value && value < 1) {
+                        input.setCustomValidity("Ranks must start at 1.");
+                    } else {
+                        input.setCustomValidity("");
+                    }
+                }
+
+                input.addEventListener("input", syncValidityMessage);
+                input.addEventListener("change", syncValidityMessage);
+                input.addEventListener("invalid", syncValidityMessage);
+                syncValidityMessage();
+
                 const unrankBtn = card.querySelector("[data-unrank-btn]");
                 if (unrankBtn) {
                     unrankBtn.addEventListener("click", () => {
+                        input.setCustomValidity("");
                         if (savedRankValue(card) === null) {
                             input.value = "";
                         }
