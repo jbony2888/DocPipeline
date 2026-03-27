@@ -257,7 +257,7 @@ def test_batches_endpoint_groups_by_school_and_grade(client):
     by_school = {row["school"]: row for row in data["schools"]}
     assert "De La Salle Institute" in by_school
     assert "Rachel Carson Elementary School" in by_school
-    assert "Munderein HS" in by_school
+    assert "Mundelein HS" in by_school
     assert len(by_school["De La Salle Institute"]["grades"]) == 2
     grade2 = next(row for row in by_school["De La Salle Institute"]["grades"] if row["grade"] == "2")
     assert grade2["teacherEmails"] == ["teacher1@example.com"]
@@ -268,8 +268,8 @@ def test_batches_endpoint_accepts_already_standardized_school_labels(client):
     _set_admin_session(client)
     sb = _FakeSupabase(
         submissions=[
-            {"school_name": "Munderein HS", "grade": 10, "student_name": "A", "needs_review": False, "review_reason_codes": "[]", "owner_user_id": "u-1"},
-            {"school_name": "Munderein HS", "grade": 10, "student_name": "B", "needs_review": False, "review_reason_codes": "[]", "owner_user_id": "u-2"},
+            {"school_name": "Mundelein HS", "grade": 10, "student_name": "A", "needs_review": False, "review_reason_codes": "[]", "owner_user_id": "u-1"},
+            {"school_name": "Mundelein HS", "grade": 10, "student_name": "B", "needs_review": False, "review_reason_codes": "[]", "owner_user_id": "u-2"},
         ],
         auth_users=[
             {"id": "u-1", "email": "teacher1@example.com"},
@@ -281,7 +281,7 @@ def test_batches_endpoint_accepts_already_standardized_school_labels(client):
     assert res.status_code == 200
     data = res.get_json()
     by_school = {row["school"]: row for row in data["schools"]}
-    munderein = by_school["Munderein HS"]["grades"]
+    munderein = by_school["Mundelein HS"]["grades"]
     assert len(munderein) == 1
     assert munderein[0]["grade"] == "10"
     assert munderein[0]["approvedCount"] == 2
@@ -330,6 +330,36 @@ def test_summary_endpoint_returns_approved_count_for_school_grade(client):
     assert data["batchCount"] == 1
     assert len(data["batches"]) == 1
     assert data["batches"][0]["batchNumber"] == 1
+
+
+def test_calculate_assignment_batch_count_uses_expected_thresholds():
+    from admin.assignments_service import calculate_assignment_batch_count
+
+    assert calculate_assignment_batch_count(0) == 0
+    assert calculate_assignment_batch_count(1) == 1
+    assert calculate_assignment_batch_count(30) == 1
+    assert calculate_assignment_batch_count(31) == 2
+    assert calculate_assignment_batch_count(60) == 2
+    assert calculate_assignment_batch_count(61) == 3
+    assert calculate_assignment_batch_count(90) == 3
+    assert calculate_assignment_batch_count(91) == 4
+    assert calculate_assignment_batch_count(120) == 4
+
+
+def test_get_batch_bounds_evenly_distributes_by_batch_count():
+    from admin.assignments_service import get_batch_bounds
+
+    assert get_batch_bounds(1, 37) == (0, 19)
+    assert get_batch_bounds(2, 37) == (19, 37)
+
+    assert get_batch_bounds(1, 61) == (0, 21)
+    assert get_batch_bounds(2, 61) == (21, 41)
+    assert get_batch_bounds(3, 61) == (41, 61)
+
+    assert get_batch_bounds(1, 91) == (0, 23)
+    assert get_batch_bounds(2, 91) == (23, 46)
+    assert get_batch_bounds(3, 91) == (46, 69)
+    assert get_batch_bounds(4, 91) == (69, 91)
 
 
 def test_assign_and_send_creates_missing_reader_and_assignment(client):
@@ -809,8 +839,9 @@ def test_reader_assignment_review_lists_only_essays_in_assigned_batch(client, ap
         res = client.get(f"/admin/reader-assignments/55/review?token={token}")
 
     assert res.status_code == 200
+    assert b"Student 17" in res.data
     assert b"Student 31" in res.data
-    assert b"Student 1" not in res.data
+    assert b"Student 16" not in res.data
 
 
 def test_reader_assignment_review_resubmission_overwrites_previous_rankings(client, app):

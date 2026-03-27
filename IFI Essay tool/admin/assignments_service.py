@@ -127,22 +127,26 @@ def _standardized_school_label(canonical_school: str) -> str | None:
     """
     Restrict assignment dropdown to standardized school buckets.
     """
-    value = str(canonical_school or "").strip().casefold()
-    if not value:
+    raw_value = str(canonical_school or "").strip()
+    if not raw_value:
         return None
+    value = _normalize_school_text(raw_value)
     if "carson" in value:
         return "Rachel Carson Elementary School"
     if "la salle" in value or "lasalle" in value:
         return "De La Salle Institute"
     if "mundelein" in value or "munderein" in value:
-        return "Munderein HS"
+        return "Mundelein HS"
+    if "st mary" in value or "saint mary" in value or "st many" in value:
+        return "St Mary Pontiac"
     return None
 
 
 STANDARD_SCHOOL_OPTIONS = (
     "De La Salle Institute",
     "Rachel Carson Elementary School",
-    "Munderein HS",
+    "Mundelein HS",
+    "St Mary Pontiac",
 )
 
 
@@ -172,22 +176,47 @@ def normalize_school_to_standard(raw_school: str | None) -> str | None:
 
 def calculate_assignment_batch_count(essay_count: int) -> int:
     """
-    Split assignments into batches of up to 30 approved essays.
+    Split assignments into contest batch bands:
+    - 1..30 essays: 1 batch
+    - 31..60 essays: 2 batches
+    - 61..90 essays: 3 batches
+    - 91..120 essays: 4 batches
+    For counts above 120, continue allocating in 30-essay steps.
     """
     count = max(0, int(essay_count or 0))
     if count <= 0:
         return 0
+    if count <= 30:
+        return 1
+    if count <= 60:
+        return 2
+    if count <= 90:
+        return 3
+    if count <= 120:
+        return 4
     return ((count - 1) // ESSAYS_PER_ASSIGNMENT_BATCH) + 1
 
 
 def get_batch_bounds(batch_number: int, total_items: int) -> tuple[int, int]:
     """
     Return zero-based [start, end) indexes for a 1-based batch number.
+    Batches are distributed as evenly as possible across the configured batch count.
     """
     total = max(0, int(total_items or 0))
+    if total <= 0:
+        return 0, 0
+
     batch = max(1, int(batch_number or 1))
-    start = (batch - 1) * ESSAYS_PER_ASSIGNMENT_BATCH
-    end = min(start + ESSAYS_PER_ASSIGNMENT_BATCH, total)
+    total_batches = calculate_assignment_batch_count(total)
+    if batch > total_batches:
+        return total, total
+
+    base_size = total // total_batches
+    remainder = total % total_batches
+    # Earlier batches receive one extra essay until remainder is exhausted.
+    start = (batch - 1) * base_size + min(batch - 1, remainder)
+    batch_size = base_size + (1 if batch <= remainder else 0)
+    end = min(start + batch_size, total)
     return start, end
 
 
