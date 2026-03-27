@@ -1,0 +1,756 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Assignments – Admin</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
+    <style>
+        body { background: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+        .admin-header {
+            background: #1e293b;
+            color: #e2e8f0;
+            padding: 1rem 0;
+            margin-bottom: 1.5rem;
+            position: sticky;
+            top: 0;
+            z-index: 1030;
+        }
+        .admin-header a { color: #93c5fd; text-decoration: none; }
+        .admin-header a:hover { color: #bfdbfe; }
+        .card { border: none; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+        .help-text { font-size: 0.9rem; color: #64748b; }
+        .summary-row { min-height: 1.25rem; }
+        .rule-text { font-size: 0.9rem; color: #475569; }
+        .teacher-email-box {
+            min-height: 2.5rem;
+            padding: 0.85rem 1rem;
+            border-radius: 12px;
+            background: #eef2ff;
+            border: 1px solid #c7d2fe;
+            color: #312e81;
+            font-size: 0.95rem;
+            line-height: 1.55;
+        }
+        .teacher-email-box.is-empty {
+            background: #f8fafc;
+            border-color: #e2e8f0;
+            color: #64748b;
+        }
+        .teacher-email-list {
+            margin-top: 0.35rem;
+            word-break: break-word;
+        }
+        .modal-backdrop-custom {
+            position: fixed;
+            inset: 0;
+            background: rgba(15, 23, 42, 0.58);
+            backdrop-filter: blur(8px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 1.5rem;
+            z-index: 2000;
+        }
+        .modal-backdrop-custom.d-none { display: none; }
+        .modal-panel-custom {
+            width: min(100%, 460px);
+            border-radius: 24px;
+            background:
+                linear-gradient(180deg, rgba(255,255,255,0.96), rgba(248,250,252,0.94));
+            box-shadow:
+                0 28px 80px rgba(15, 23, 42, 0.28),
+                inset 0 1px 0 rgba(255,255,255,0.7);
+            border: 1px solid rgba(148, 163, 184, 0.22);
+            overflow: hidden;
+        }
+        .modal-panel-custom .modal-head {
+            padding: 1.4rem 1.5rem 0.75rem;
+        }
+        .modal-panel-custom .modal-eyebrow {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.45rem;
+            padding: 0.35rem 0.7rem;
+            border-radius: 999px;
+            font-size: 0.74rem;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            color: #9f1239;
+            background: rgba(244, 63, 94, 0.12);
+        }
+        .modal-panel-custom h3 {
+            margin: 0.95rem 0 0.35rem;
+            font-size: 1.35rem;
+            font-weight: 700;
+            color: #0f172a;
+        }
+        .modal-panel-custom p {
+            margin: 0;
+            color: #475569;
+            line-height: 1.6;
+        }
+        .modal-panel-custom .modal-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 0.75rem;
+            padding: 1.25rem 1.5rem 1.5rem;
+        }
+        .btn-modal-cancel,
+        .btn-modal-confirm {
+            border: 0;
+            border-radius: 999px;
+            padding: 0.8rem 1.15rem;
+            font-weight: 600;
+            min-width: 110px;
+            transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+        }
+        .btn-modal-cancel {
+            color: #0f172a;
+            background: rgba(226, 232, 240, 0.9);
+        }
+        .btn-modal-confirm {
+            color: #fff;
+            background: linear-gradient(135deg, #dc2626, #be123c);
+            box-shadow: 0 14px 34px rgba(190, 24, 93, 0.28);
+        }
+        .btn-modal-cancel:hover,
+        .btn-modal-confirm:hover {
+            transform: translateY(-1px);
+        }
+        .success-toast {
+            position: fixed;
+            right: 1.5rem;
+            bottom: 1.5rem;
+            width: min(100vw - 2rem, 420px);
+            padding: 1rem 1.1rem;
+            border-radius: 22px;
+            background: linear-gradient(135deg, rgba(15, 23, 42, 0.96), rgba(30, 41, 59, 0.94));
+            color: #e2e8f0;
+            box-shadow: 0 22px 60px rgba(15, 23, 42, 0.28);
+            border: 1px solid rgba(148, 163, 184, 0.18);
+            z-index: 2100;
+            transform: translateY(18px);
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.22s ease, transform 0.22s ease;
+        }
+        .success-toast.show {
+            opacity: 1;
+            transform: translateY(0);
+        }
+        .success-toast .toast-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.45rem;
+            padding: 0.3rem 0.68rem;
+            border-radius: 999px;
+            background: rgba(34, 197, 94, 0.16);
+            color: #86efac;
+            font-size: 0.74rem;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+        .success-toast .toast-title {
+            margin: 0.85rem 0 0.2rem;
+            font-size: 1.1rem;
+            font-weight: 700;
+            color: #f8fafc;
+        }
+        .success-toast .toast-copy {
+            margin: 0;
+            color: #cbd5e1;
+            line-height: 1.55;
+        }
+    </style>
+</head>
+<body>
+    <header class="admin-header">
+        <div class="container">
+            <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <h1 class="h5 mb-0"><i class="bi bi-person-check"></i> Assignments</h1>
+                <div>
+                    <a href="{{ url_for('admin.admin_dashboard') }}" class="me-3"><i class="bi bi-table"></i> Submissions</a>
+                    {% if session.get('user_id') %}
+                    <a href="{{ url_for('index') }}" class="me-3"><i class="bi bi-house"></i> Back to app</a>
+                    <a href="{{ url_for('logout') }}"><i class="bi bi-box-arrow-right"></i> Log out</a>
+                    {% else %}
+                    <a href="{{ url_for('admin.admin_logout') }}"><i class="bi bi-box-arrow-right"></i> Logout</a>
+                    {% endif %}
+                </div>
+            </div>
+            <ul class="nav nav-pills mt-3">
+                <li class="nav-item">
+                    <a class="nav-link text-white" href="{{ url_for('admin.admin_dashboard') }}">
+                        <i class="bi bi-table"></i> Submissions
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link active" aria-current="page" href="{{ url_for('admin.admin_assignments') }}">
+                        <i class="bi bi-person-check"></i> Assignments
+                    </a>
+                </li>
+            </ul>
+        </div>
+    </header>
+
+    <main class="container">
+        <div class="card mb-3">
+            <div class="card-body">
+                <h2 class="h5 mb-3">Assign School Grade Batch</h2>
+
+                <div class="row g-3">
+                    <div class="col-md-5">
+                        <label for="schoolSelect" class="form-label">School</label>
+                        <select id="schoolSelect" class="form-select">
+                            <option value="">Select school</option>
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <label for="gradeSelect" class="form-label">Grade Batch</label>
+                        <select id="gradeSelect" class="form-select" disabled>
+                            <option value="">Select grade batch</option>
+                        </select>
+                    </div>
+                    <div class="col-md-3 d-flex align-items-end">
+                        <button id="refreshBatchesBtn" class="btn btn-outline-secondary w-100">
+                            <i class="bi bi-arrow-clockwise"></i> Refresh Batches
+                        </button>
+                    </div>
+                    <div class="col-12">
+                        <div class="summary-row text-muted" id="approvedSummary"></div>
+                        <div class="rule-text mt-1" id="batchRuleText"></div>
+                    </div>
+                    <div class="col-12">
+                        <div id="teacherEmailBox" class="teacher-email-box is-empty">
+                            Teacher emails used for this school and grade will appear here.
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <label for="batchSelect" class="form-label">Batch</label>
+                        <select id="batchSelect" class="form-select" disabled>
+                            <option value="">Select batch</option>
+                        </select>
+                    </div>
+                    <div class="col-md-8">
+                        <label for="readerEmail" class="form-label">Reader Email</label>
+                        <input
+                            id="readerEmail"
+                            type="email"
+                            class="form-control"
+                            placeholder="reader@example.com"
+                        />
+                        <div class="help-text mt-2">
+                            Pick one batch, enter one reader email, then send a secure reader access link by email.
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mt-3 d-flex align-items-center gap-2">
+                    <button id="assignBtn" class="btn btn-primary">
+                        <span id="assignBtnText">Assign &amp; Send</span>
+                        <span id="assignSpinner" class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
+                    </button>
+                    <div id="submissionStatus"></div>
+                </div>
+            </div>
+        </div>
+
+        <div id="resultCard" class="card mb-3 d-none">
+            <div class="card-body">
+                <div id="resultMessage" class="mb-0"></div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <h3 class="h6 mb-0">Assignment Records</h3>
+                    <button id="refreshRecordsBtn" class="btn btn-sm btn-outline-secondary">
+                        <i class="bi bi-arrow-clockwise"></i> Refresh
+                    </button>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Reader</th>
+                                <th>School</th>
+                                <th>Grade</th>
+                                <th>Batch</th>
+                                <th>Assigned At</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody id="assignmentRecordsBody">
+                            <tr>
+                                <td colspan="6" class="text-muted">Loading assignment records...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <div id="confirmModal" class="modal-backdrop-custom d-none" aria-hidden="true">
+        <div class="modal-panel-custom" role="dialog" aria-modal="true" aria-labelledby="confirmModalTitle">
+            <div class="modal-head">
+                <div class="modal-eyebrow"><i class="bi bi-exclamation-triangle-fill"></i> Confirm Action</div>
+                <h3 id="confirmModalTitle">Remove Assignment?</h3>
+                <p id="confirmModalMessage">Unassign this reader from the selected school grade batch?</p>
+            </div>
+            <div class="modal-actions">
+                <button id="confirmModalCancel" type="button" class="btn-modal-cancel">Keep Assignment</button>
+                <button id="confirmModalOk" type="button" class="btn-modal-confirm">Unassign Reader</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="successToast" class="success-toast" aria-live="polite" aria-hidden="true">
+        <div class="toast-badge"><i class="bi bi-check2-circle"></i> Assignment Updated</div>
+        <div class="toast-title">Reader Unassigned</div>
+        <p id="successToastMessage" class="toast-copy">The reader has been removed from this batch.</p>
+    </div>
+
+    <script>
+        (function() {
+            const schoolSelect = document.getElementById("schoolSelect");
+            const gradeSelect = document.getElementById("gradeSelect");
+            const refreshBatchesBtn = document.getElementById("refreshBatchesBtn");
+            const approvedSummary = document.getElementById("approvedSummary");
+            const batchRuleText = document.getElementById("batchRuleText");
+            const teacherEmailBox = document.getElementById("teacherEmailBox");
+            const batchSelect = document.getElementById("batchSelect");
+            const readerEmail = document.getElementById("readerEmail");
+            const assignBtn = document.getElementById("assignBtn");
+            const assignBtnText = document.getElementById("assignBtnText");
+            const assignSpinner = document.getElementById("assignSpinner");
+            const submissionStatus = document.getElementById("submissionStatus");
+            const resultCard = document.getElementById("resultCard");
+            const resultMessage = document.getElementById("resultMessage");
+            const recordsBody = document.getElementById("assignmentRecordsBody");
+            const refreshRecordsBtn = document.getElementById("refreshRecordsBtn");
+            const confirmModal = document.getElementById("confirmModal");
+            const confirmModalMessage = document.getElementById("confirmModalMessage");
+            const confirmModalOk = document.getElementById("confirmModalOk");
+            const confirmModalCancel = document.getElementById("confirmModalCancel");
+            const successToast = document.getElementById("successToast");
+            const successToastMessage = document.getElementById("successToastMessage");
+
+            let schoolBatches = [];
+            let approvedCount = 0;
+            let batchCount = 0;
+            let summaryBatches = [];
+            let loadingSummary = false;
+            let loadingAssign = false;
+            let loadingBatches = false;
+            let confirmResolve = null;
+            let successToastTimer = null;
+
+            function setSummaryText(text, type) {
+                let cls = "text-muted";
+                if (type === "error") cls = "text-danger";
+                if (type === "success") cls = "text-success";
+                approvedSummary.className = `summary-row ${cls}`;
+                approvedSummary.textContent = text;
+            }
+
+            function setSubmitStatus(text, type) {
+                let cls = "text-muted";
+                if (type === "error") cls = "text-danger";
+                if (type === "success") cls = "text-success";
+                submissionStatus.className = cls;
+                submissionStatus.textContent = text || "";
+            }
+
+            function setBatchRuleText(text) {
+                batchRuleText.textContent = text || "";
+            }
+
+            function setTeacherEmailBox(emails, school, grade) {
+                const cleaned = Array.isArray(emails) ? emails.filter(Boolean) : [];
+                teacherEmailBox.classList.toggle("is-empty", cleaned.length === 0);
+                if (!school || !grade) {
+                    teacherEmailBox.textContent = "Teacher emails used for this school and grade will appear here.";
+                    return;
+                }
+                if (!cleaned.length) {
+                    teacherEmailBox.textContent = `No teacher email addresses were found yet for ${school}, Grade ${grade}.`;
+                    return;
+                }
+                const label = cleaned.length === 1 ? "Teacher email used" : "Teacher emails used";
+                teacherEmailBox.innerHTML = `
+                    <strong>${label} for ${school}, Grade ${grade}:</strong>
+                    <div class="teacher-email-list">${cleaned.join(", ")}</div>
+                `;
+            }
+
+            function showSuccessToast(message) {
+                successToastMessage.textContent = message || "The reader has been removed from this batch.";
+                successToast.setAttribute("aria-hidden", "false");
+                successToast.classList.add("show");
+                if (successToastTimer) {
+                    window.clearTimeout(successToastTimer);
+                }
+                successToastTimer = window.setTimeout(() => {
+                    successToast.classList.remove("show");
+                    successToast.setAttribute("aria-hidden", "true");
+                }, 3200);
+            }
+
+            function closeConfirmModal(result) {
+                confirmModal.classList.add("d-none");
+                confirmModal.setAttribute("aria-hidden", "true");
+                const resolver = confirmResolve;
+                confirmResolve = null;
+                if (typeof resolver === "function") {
+                    resolver(Boolean(result));
+                }
+            }
+
+            function showConfirmModal(message) {
+                confirmModalMessage.textContent = message || "Are you sure?";
+                confirmModal.classList.remove("d-none");
+                confirmModal.setAttribute("aria-hidden", "false");
+                requestAnimationFrame(() => confirmModalOk.focus());
+                return new Promise((resolve) => {
+                    confirmResolve = resolve;
+                });
+            }
+
+            function setAssignLoading(isLoading) {
+                loadingAssign = isLoading;
+                assignBtn.disabled = isLoading || loadingSummary || !schoolSelect.value || !gradeSelect.value || !batchSelect.value;
+                assignSpinner.classList.toggle("d-none", !isLoading);
+                assignBtnText.textContent = isLoading ? "Assigning..." : "Assign & Send";
+            }
+
+            function renderSchools() {
+                const selected = schoolSelect.value;
+                schoolSelect.innerHTML = '<option value="">Select school</option>';
+                for (const school of schoolBatches) {
+                    const option = document.createElement("option");
+                    option.value = school.school;
+                    option.textContent = school.school;
+                    schoolSelect.appendChild(option);
+                }
+                if (selected && schoolBatches.some(s => s.school === selected)) {
+                    schoolSelect.value = selected;
+                }
+            }
+
+            function renderGradeBatches() {
+                const selectedSchool = schoolSelect.value;
+                gradeSelect.innerHTML = '<option value="">Select grade batch</option>';
+                batchSelect.innerHTML = '<option value="">Select batch</option>';
+                approvedCount = 0;
+                batchCount = 0;
+                summaryBatches = [];
+                readerEmail.value = "";
+                if (!selectedSchool) {
+                    gradeSelect.disabled = true;
+                    batchSelect.disabled = true;
+                    setSummaryText("");
+                    setBatchRuleText("");
+                    setTeacherEmailBox([], "", "");
+                    assignBtn.disabled = true;
+                    return;
+                }
+                const school = schoolBatches.find(s => s.school === selectedSchool);
+                const grades = (school && school.grades) || [];
+                for (const item of grades) {
+                    const option = document.createElement("option");
+                    option.value = item.grade;
+                    const teacherCount = Number(item.teacherEmailCount || (Array.isArray(item.teacherEmails) ? item.teacherEmails.length : 0));
+                    const teacherSuffix = teacherCount > 0
+                        ? `, ${teacherCount} teacher email${teacherCount === 1 ? "" : "s"}`
+                        : "";
+                    option.textContent = `Grade ${item.grade} (${item.approvedCount}${teacherSuffix})`;
+                    option.dataset.count = String(item.approvedCount);
+                    gradeSelect.appendChild(option);
+                }
+                gradeSelect.disabled = grades.length === 0;
+                if (grades.length === 0) {
+                    setSummaryText(`No approved grade batches found for ${selectedSchool}.`, "error");
+                    setBatchRuleText("");
+                    setTeacherEmailBox([], selectedSchool, "");
+                } else {
+                    setSummaryText("Select a grade batch to see approved count.");
+                    setBatchRuleText("Batch rule: 1-30 essays = 1 batch, 31-60 = 2, 61-90 = 3, 91-120 = 4.");
+                    setTeacherEmailBox([], selectedSchool, "");
+                }
+                assignBtn.disabled = loadingAssign || loadingSummary || !gradeSelect.value || !batchSelect.value;
+            }
+
+            function renderBatchOptions() {
+                const selected = batchSelect.value;
+                batchSelect.innerHTML = '<option value="">Select batch</option>';
+                if (!summaryBatches.length) {
+                    batchSelect.disabled = true;
+                    assignBtn.disabled = true;
+                    return;
+                }
+                for (const item of summaryBatches) {
+                    const option = document.createElement("option");
+                    option.value = String(item.batchNumber);
+                    const emails = Array.isArray(item.readerEmails) ? item.readerEmails.filter(Boolean) : [];
+                    const existing = emails.length
+                        ? ` assigned to ${emails.join(", ")}`
+                        : " unassigned";
+                    option.textContent = `Batch ${item.batchNumber} (${item.essayCount} essays, ${item.startEssay}-${item.endEssay})${existing}`;
+                    batchSelect.appendChild(option);
+                }
+                batchSelect.disabled = false;
+                if (selected && summaryBatches.some(b => String(b.batchNumber) === selected)) {
+                    batchSelect.value = selected;
+                }
+                assignBtn.disabled = loadingAssign || loadingSummary || !schoolSelect.value || !gradeSelect.value || !batchSelect.value;
+            }
+
+            async function fetchBatches() {
+                loadingBatches = true;
+                refreshBatchesBtn.disabled = true;
+                setSummaryText("Loading school grade batches...");
+                try {
+                    const res = await fetch("/admin/essays/batches", {
+                        headers: { "Accept": "application/json" },
+                        credentials: "same-origin",
+                    });
+                    const data = await res.json();
+                    if (!res.ok) {
+                        throw new Error(data.error || "Failed to load batches.");
+                    }
+                    schoolBatches = data.schools || [];
+                    renderSchools();
+                    renderGradeBatches();
+                } catch (err) {
+                    setSummaryText(err.message || "Failed to load school batches.", "error");
+                } finally {
+                    loadingBatches = false;
+                    refreshBatchesBtn.disabled = false;
+                }
+            }
+
+            async function fetchSummary() {
+                const school = (schoolSelect.value || "").trim();
+                const grade = (gradeSelect.value || "").trim();
+                approvedCount = 0;
+                batchCount = 0;
+                summaryBatches = [];
+                readerEmail.value = "";
+                batchSelect.innerHTML = '<option value="">Select batch</option>';
+                batchSelect.disabled = true;
+                if (!school || !grade) {
+                    setSummaryText("Select school and grade batch.");
+                    setBatchRuleText("");
+                    setTeacherEmailBox([], school, grade);
+                    assignBtn.disabled = true;
+                    return;
+                }
+                loadingSummary = true;
+                assignBtn.disabled = true;
+                setSummaryText("Loading approved essay count...");
+                try {
+                    const res = await fetch(
+                        `/admin/essays/summary?school=${encodeURIComponent(school)}&grade=${encodeURIComponent(grade)}`,
+                        { headers: { "Accept": "application/json" }, credentials: "same-origin" }
+                    );
+                    const data = await res.json();
+                    if (!res.ok) throw new Error(data.error || "Failed to load summary.");
+                    approvedCount = Number(data.approvedCount || 0);
+                    batchCount = Number(data.batchCount || 0);
+                    summaryBatches = Array.isArray(data.batches) ? data.batches : [];
+                    const schoolInfo = schoolBatches.find(item => item.school === school);
+                    const gradeInfo = ((schoolInfo && schoolInfo.grades) || []).find(item => String(item.grade) === String(grade));
+                    setTeacherEmailBox((gradeInfo && gradeInfo.teacherEmails) || [], school, grade);
+                    setSummaryText(
+                        `${approvedCount} approved essays found for ${school}, Grade ${grade}`,
+                        approvedCount > 0 ? "success" : ""
+                    );
+                    if (approvedCount > 0 && batchCount > 0) {
+                        setBatchRuleText(`This selection requires ${batchCount} batch${batchCount === 1 ? "" : "es"} and ${batchCount} reader${batchCount === 1 ? "" : "s"}.`);
+                    } else {
+                        setBatchRuleText("Batch rule: 1-30 essays = 1 batch, 31-60 = 2, 61-90 = 3, 91-120 = 4.");
+                    }
+                    renderBatchOptions();
+                } catch (err) {
+                    setSummaryText(err.message || "Failed to load summary.", "error");
+                    setBatchRuleText("");
+                    setTeacherEmailBox([], school, grade);
+                } finally {
+                    loadingSummary = false;
+                    assignBtn.disabled = loadingAssign || !schoolSelect.value || !gradeSelect.value || !batchSelect.value;
+                }
+            }
+
+            function renderAssignmentRecords(records) {
+                if (!Array.isArray(records) || !records.length) {
+                    recordsBody.innerHTML = '<tr><td colspan="6" class="text-muted">No assignments yet.</td></tr>';
+                    return;
+                }
+                recordsBody.innerHTML = "";
+                for (const record of records) {
+                    const tr = document.createElement("tr");
+                    const readerLabel = record.readerName
+                        ? `${record.readerName} (${record.readerEmail || "no email"})`
+                        : (record.readerEmail || "Unknown reader");
+                    tr.innerHTML = `
+                        <td>${readerLabel}</td>
+                        <td>${record.school || "—"}</td>
+                        <td>${record.grade || "—"}</td>
+                        <td>${record.batchNumber ? `Batch ${record.batchNumber}${record.totalBatches ? ` of ${record.totalBatches}` : ""}` : "—"}</td>
+                        <td>${record.formattedCreatedAt || "—"}</td>
+                        <td class="text-end">
+                            <button class="btn btn-sm btn-outline-danger unassign-btn" data-assignment-id="${record.id}">
+                                Unassign
+                            </button>
+                        </td>
+                    `;
+                    recordsBody.appendChild(tr);
+                }
+            }
+
+            async function fetchAssignmentRecords() {
+                refreshRecordsBtn.disabled = true;
+                try {
+                    const res = await fetch("/admin/assignment-records", {
+                        headers: { "Accept": "application/json" },
+                        credentials: "same-origin",
+                    });
+                    const data = await res.json();
+                    if (!res.ok) throw new Error(data.error || "Failed to load assignment records.");
+                    renderAssignmentRecords(data.records || []);
+                } catch (err) {
+                    recordsBody.innerHTML = `<tr><td colspan="6" class="text-danger">${err.message || "Failed to load records."}</td></tr>`;
+                } finally {
+                    refreshRecordsBtn.disabled = false;
+                }
+            }
+
+            async function handleUnassign(assignmentId) {
+                if (!assignmentId) return;
+                const ok = await showConfirmModal("Unassign this reader from the selected school grade batch?");
+                if (!ok) return;
+                try {
+                    const res = await fetch("/admin/unassign", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json", "Accept": "application/json" },
+                        credentials: "same-origin",
+                        body: JSON.stringify({ assignmentId: Number(assignmentId) }),
+                    });
+                    const data = await res.json();
+                    if (!res.ok) throw new Error(data.error || "Failed to unassign.");
+                    setSubmitStatus("Assignment removed.", "success");
+                    await fetchAssignmentRecords();
+                    showSuccessToast("The reader has been unassigned from the selected batch.");
+                } catch (err) {
+                    setSubmitStatus(err.message || "Failed to unassign.", "error");
+                }
+            }
+
+            async function submitAssignments() {
+                resultCard.classList.add("d-none");
+                setSubmitStatus("");
+
+                const school = (schoolSelect.value || "").trim();
+                const grade = (gradeSelect.value || "").trim();
+                if (!school) {
+                    setSubmitStatus("Select a school first.", "error");
+                    return;
+                }
+                if (!grade) {
+                    setSubmitStatus("Select a grade batch first.", "error");
+                    return;
+                }
+
+                const batchNumber = Number(batchSelect.value || 0);
+                if (!batchNumber) {
+                    setSubmitStatus("Select a batch first.", "error");
+                    return;
+                }
+
+                const email = (readerEmail.value || "").trim();
+                if (!email) {
+                    setSubmitStatus("Enter a reader email.", "error");
+                    return;
+                }
+                if (approvedCount <= 0) {
+                    setSubmitStatus(`No approved essays found for ${school}, Grade ${grade}.`, "error");
+                    return;
+                }
+
+                setAssignLoading(true);
+                try {
+                    const res = await fetch("/admin/assign-and-send", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json", "Accept": "application/json" },
+                        credentials: "same-origin",
+                        body: JSON.stringify({ school: school, grade: grade, batchNumber: batchNumber, readerEmail: email }),
+                    });
+                    const data = await res.json();
+                    if (!res.ok) {
+                        let err = data.error || "Assignment failed.";
+                        if (Array.isArray(data.invalidEmails) && data.invalidEmails.length) {
+                            err += ` Invalid: ${data.invalidEmails.join(", ")}`;
+                        }
+                        throw new Error(err);
+                    }
+                    resultMessage.className = "text-success mb-0";
+                    resultMessage.textContent =
+                        `Sent a reader access link for Batch ${data.batchNumber} of ${data.batchCount} for ${data.school}, Grade ${data.grade} to ${data.readerEmail}.`;
+                    resultCard.classList.remove("d-none");
+                    setSubmitStatus("Assignments saved.", "success");
+                    await fetchSummary();
+                    await fetchAssignmentRecords();
+                } catch (err) {
+                    setSubmitStatus(err.message || "Assignment failed.", "error");
+                } finally {
+                    setAssignLoading(false);
+                }
+            }
+
+            schoolSelect.addEventListener("change", function() {
+                renderGradeBatches();
+            });
+
+            gradeSelect.addEventListener("change", fetchSummary);
+            batchSelect.addEventListener("change", function() {
+                readerEmail.value = "";
+                assignBtn.disabled = loadingAssign || loadingSummary || !schoolSelect.value || !gradeSelect.value || !batchSelect.value;
+            });
+            assignBtn.addEventListener("click", submitAssignments);
+            refreshBatchesBtn.addEventListener("click", fetchBatches);
+            refreshRecordsBtn.addEventListener("click", fetchAssignmentRecords);
+            confirmModalOk.addEventListener("click", function() {
+                closeConfirmModal(true);
+            });
+            confirmModalCancel.addEventListener("click", function() {
+                closeConfirmModal(false);
+            });
+            confirmModal.addEventListener("click", function(evt) {
+                if (evt.target === confirmModal) {
+                    closeConfirmModal(false);
+                }
+            });
+            document.addEventListener("keydown", function(evt) {
+                if (evt.key === "Escape" && confirmResolve) {
+                    closeConfirmModal(false);
+                }
+            });
+            recordsBody.addEventListener("click", function(evt) {
+                const btn = evt.target.closest(".unassign-btn");
+                if (!btn) return;
+                handleUnassign(btn.dataset.assignmentId);
+            });
+
+            assignBtn.disabled = true;
+            fetchBatches();
+            fetchAssignmentRecords();
+        })();
+    </script>
+</body>
+</html>
