@@ -29,6 +29,7 @@ from admin.assignments_service import (
     calculate_assignment_batch_count,
     compute_ranking_results,
     count_approved_essays_for_batch,
+    delete_single_assignment_ranking,
     get_batch_bounds,
     get_assignment_with_reader,
     list_approved_batches_by_school,
@@ -43,6 +44,7 @@ from admin.assignments_service import (
     add_batch_assignment,
     remove_assignment,
     resolve_or_create_readers,
+    save_single_assignment_ranking,
     get_reader_by_email,
     replace_assignment_rankings,
     upsert_reader_name,
@@ -623,6 +625,93 @@ def admin_assignments():
     return render_template("admin_assignments.html")
 
 
+def _list_ranking_filter_options(sb) -> tuple[list[str], list[str]]:
+    """Return distinct school and grade values that currently have saved rankings."""
+    rows = (
+        sb.table("essay_rankings")
+        .select("school_name, grade")
+        .limit(10000)
+        .execute()
+        .data
+        or []
+    )
+    schools = sorted(
+        {
+            str(row.get("school_name") or "").strip()
+            for row in rows
+            if str(row.get("school_name") or "").strip()
+        },
+        key=str.casefold,
+    )
+    grades = sorted(
+        {
+            str(row.get("grade") or "").strip()
+            for row in rows
+            if str(row.get("grade") or "").strip()
+        },
+        key=lambda g: (not str(g).isdigit(), str(g).casefold()),
+    )
+    return schools, grades
+
+
+@admin_bp.route("/rankings", methods=["GET"])
+def admin_rankings():
+    """Admin rankings page with winners and all reader score breakdowns."""
+    _require_admin()
+
+    sb = _get_service_role_client()
+    if not sb:
+        return render_template(
+            "admin_rankings.html",
+            selected_grade="",
+            selected_school="",
+            grade_options=[],
+            school_options=[],
+            sections=[],
+            schema_error="Database not configured.",
+        )
+
+    selected_grade = str(request.args.get("grade") or "").strip()
+    selected_school = str(request.args.get("school") or "").strip()
+
+    try:
+        school_options, grade_options = _list_ranking_filter_options(sb)
+        grades_to_render = [selected_grade] if selected_grade else grade_options
+        sections = []
+        for grade in grades_to_render:
+            results = compute_ranking_results(sb, grade=grade, school=selected_school or None)
+            if not results:
+                continue
+            sections.append(
+                {
+                    "grade": grade,
+                    "winner": results[0] if results else None,
+                    "results": results,
+                }
+            )
+        return render_template(
+            "admin_rankings.html",
+            selected_grade=selected_grade,
+            selected_school=selected_school,
+            grade_options=grade_options,
+            school_options=school_options,
+            sections=sections,
+            schema_error="",
+        )
+    except Exception as exc:
+        if _is_missing_assignment_schema_error(exc):
+            return render_template(
+                "admin_rankings.html",
+                selected_grade=selected_grade,
+                selected_school=selected_school,
+                grade_options=[],
+                school_options=[],
+                sections=[],
+                schema_error="Ranking schema is missing in Supabase. Run migrations 008, 009, 010, and 011.",
+            )
+        raise
+
+
 @admin_bp.route("/essays/summary", methods=["GET"])
 def essays_summary():
     """API: approved essay summary for a selected school+grade batch."""
@@ -890,9 +979,26 @@ def reader_access():
                         grade=str(row.get("grade") or ""),
                     )
                     start, end = get_batch_bounds(int(row.get("batch_number") or 1), total_essays)
+                    assignment_id = int(row.get("id"))
+                    essay_rows = list_assignment_submission_rows(
+                        sb,
+                        school=str(row.get("school_name") or ""),
+                        grade=str(row.get("grade") or ""),
+                        batch_number=int(row.get("batch_number") or 1),
+                    )
+                    saved_rankings = list_rankings_for_assignment(
+                        sb,
+                        assignment_id=assignment_id,
+                        reader_id=reader.get("id"),
+                    )
+                    saved_rank_by_submission = {
+                        str(rank_row.get("submission_id") or "").strip(): int(rank_row.get("rank_position") or 0)
+                        for rank_row in saved_rankings
+                        if str(rank_row.get("submission_id") or "").strip()
+                    }
                     assignments_out.append(
                         {
-                            "id": row.get("id"),
+                            "id": assignment_id,
                             "school": row.get("school_name"),
                             "grade": row.get("grade"),
                             "batchNumber": row.get("batch_number"),
@@ -901,8 +1007,24 @@ def reader_access():
                             "essayRange": f"{start + 1}-{end}" if end > start else "0-0",
                             "createdAt": row.get("created_at"),
                             "formattedCreatedAt": _format_human_datetime(row.get("created_at")),
-                            "downloadUrl": url_for("admin.reader_assignment_download", assignment_id=row.get("id"), token=token),
-                            "reviewUrl": url_for("admin.reader_assignment_review", assignment_id=row.get("id"), token=token),
+                            "downloadUrl": url_for("admin.reader_assignment_download", assignment_id=assignment_id, token=token),
+                            "reviewUrl": url_for("admin.reader_assignment_review", assignment_id=assignment_id, token=token),
+                            "essays": [
+                                {
+                                    "submissionId": str(essay_row.get("submission_id") or "").strip(),
+                                    "studentName": essay_row.get("student_name") or "Unknown student",
+                                    "createdAt": _format_human_datetime(essay_row.get("created_at")),
+                                    "rankPosition": saved_rank_by_submission.get(str(essay_row.get("submission_id") or "").strip()),
+                                    "viewUrl": url_for(
+                                        "admin.reader_assignment_submission_view",
+                                        assignment_id=assignment_id,
+                                        submission_id=str(essay_row.get("submission_id") or "").strip(),
+                                        token=token,
+                                    ),
+                                }
+                                for essay_row in essay_rows
+                                if str(essay_row.get("submission_id") or "").strip()
+                            ],
                         }
                     )
 
@@ -994,6 +1116,7 @@ def reader_assignment_review(assignment_id: int):
         for row in saved_rankings
         if str(row.get("submission_id") or "").strip()
     }
+    total_essays = len(essay_rows)
 
     submitted_name = str(reader.get("name") or "").strip()
     submitted_email = reader_email
@@ -1004,6 +1127,8 @@ def reader_assignment_review(assignment_id: int):
         submitted_name = str(request.form.get("reader_name") or "").strip()
         submitted_email = str(request.form.get("reader_email") or "").strip().lower()
         ranking_map: dict[str, int] = {}
+        save_submission_id = str(request.form.get("save_submission_id") or "").strip()
+        unrank_submission_id = str(request.form.get("unrank_submission_id") or "").strip()
 
         for row in essay_rows:
             submission_id = str(row.get("submission_id") or "").strip()
@@ -1023,12 +1148,73 @@ def reader_assignment_review(assignment_id: int):
         if not error_message and not submitted_name:
             error_message = "Your name is required before rankings can be submitted."
 
-        if not error_message:
+        if not error_message and (save_submission_id or unrank_submission_id):
+            target_submission_id = save_submission_id or unrank_submission_id
+            valid_submission_ids = {
+                str(row.get("submission_id") or "").strip()
+                for row in essay_rows
+                if str(row.get("submission_id") or "").strip()
+            }
+            if target_submission_id not in valid_submission_ids:
+                error_message = "Essay not found in this assignment."
+
+        if not error_message and save_submission_id:
+            raw_value = str(request.form.get(f"rank_{save_submission_id}") or "").strip()
+            if not raw_value:
+                error_message = "Enter a rank before saving this essay."
+            else:
+                try:
+                    rank_position = int(raw_value)
+                except Exception:
+                    error_message = "Each essay rank must be a whole number."
+                else:
+                    if rank_position < 1 or rank_position > total_essays:
+                        error_message = f"Ranks must be between 1 and {total_essays}."
+                    else:
+                        existing_submission = next(
+                            (
+                                submission_id
+                                for submission_id, saved_rank in saved_by_submission.items()
+                                if submission_id != save_submission_id and int(saved_rank or 0) == rank_position
+                            ),
+                            None,
+                        )
+                        if existing_submission:
+                            error_message = f"Rank {rank_position} is already used by another essay. Unrank or change that essay first."
+
+            if not error_message:
+                upsert_reader_name(sb, email=reader_email, name=submitted_name)
+                save_single_assignment_ranking(
+                    sb,
+                    assignment_id=assignment_id,
+                    reader_id=assignment.get("reader_id"),
+                    school=str(assignment.get("school_name") or ""),
+                    grade=str(assignment.get("grade") or ""),
+                    batch_number=int(assignment.get("batch_number") or 1),
+                    submission_id=save_submission_id,
+                    rank_position=rank_position,
+                    reader_name=submitted_name,
+                    reader_email=reader_email,
+                )
+                saved_by_submission[save_submission_id] = rank_position
+                success_message = f"Saved rank {rank_position} for this essay."
+
+        if not error_message and unrank_submission_id:
+            delete_single_assignment_ranking(
+                sb,
+                assignment_id=assignment_id,
+                reader_id=assignment.get("reader_id"),
+                submission_id=unrank_submission_id,
+            )
+            saved_by_submission.pop(unrank_submission_id, None)
+            success_message = "Essay moved back to unranked."
+
+        if not error_message and not save_submission_id and not unrank_submission_id:
             is_valid, validation_message = _validate_forced_rankings(essay_rows, ranking_map)
             if not is_valid:
                 error_message = validation_message or "Ranking submission is invalid."
 
-        if not error_message:
+        if not error_message and not save_submission_id and not unrank_submission_id:
             upsert_reader_name(sb, email=reader_email, name=submitted_name)
             replace_assignment_rankings(
                 sb,
@@ -1048,7 +1234,6 @@ def reader_assignment_review(assignment_id: int):
             success_message = "Rankings saved."
 
     essays_out = []
-    total_essays = len(essay_rows)
     for index, row in enumerate(essay_rows, start=1):
         submission_id = str(row.get("submission_id") or "").strip()
         essays_out.append(

@@ -5,6 +5,7 @@ Supports Supabase SMTP and standard SMTP.
 
 import os
 import smtplib
+from email.mime.application import MIMEApplication
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from typing import Dict, Any, Optional
@@ -229,7 +230,8 @@ def send_smtp_email(
     to_email: str,
     subject: str,
     html_body: str,
-    text_body: str
+    text_body: str,
+    attachments: Optional[list[dict[str, Any]]] = None,
 ) -> bool:
     """
     Send email using Gmail SMTP only. Requires EMAIL (Gmail or G Suite / Google Workspace address) and GMAIL_PASSWORD (app password).
@@ -240,27 +242,41 @@ def send_smtp_email(
     try:
         gmail_password = (os.environ.get("GMAIL_PASSWORD") or "").strip().replace(" ", "")
         smtp_user = (os.environ.get("EMAIL") or "").strip()
+        smtp_timeout = float((os.environ.get("SMTP_TIMEOUT_SECONDS") or "15").strip())
         if not gmail_password or not smtp_user:
             print("⚠️ Email not configured. Set EMAIL (Gmail or G Suite address) and GMAIL_PASSWORD (16-char app password).")
             return False
         smtp_host = "smtp.gmail.com"
         smtp_port = 587
-        print(f"📧 Using Gmail SMTP: smtp.gmail.com port {smtp_port} (STARTTLS), sender={smtp_user}")
+        print(f"📧 Using Gmail SMTP: smtp.gmail.com port {smtp_port} (STARTTLS), sender={smtp_user}, timeout={smtp_timeout}s")
         
-        msg = MIMEMultipart("alternative")
+        msg = MIMEMultipart("mixed")
         msg["Subject"] = subject
         msg["From"] = smtp_user
         msg["To"] = to_email
+        body_part = MIMEMultipart("alternative")
         part1 = MIMEText(text_body, "plain")
         part2 = MIMEText(html_body, "html")
-        msg.attach(part1)
-        msg.attach(part2)
+        body_part.attach(part1)
+        body_part.attach(part2)
+        msg.attach(body_part)
+        for attachment in attachments or []:
+            filename = str(attachment.get("filename") or "attachment.bin")
+            content = attachment.get("content") or b""
+            mime_part = MIMEApplication(content)
+            mime_part.add_header("Content-Disposition", "attachment", filename=filename)
+            msg.attach(mime_part)
         
-        server = smtplib.SMTP(smtp_host, smtp_port)
-        server.starttls()
-        server.login(smtp_user, gmail_password)
-        server.send_message(msg)
-        server.quit()
+        server = smtplib.SMTP(smtp_host, smtp_port, timeout=smtp_timeout)
+        try:
+            server.starttls()
+            server.login(smtp_user, gmail_password)
+            server.send_message(msg)
+        finally:
+            try:
+                server.quit()
+            except Exception:
+                pass
         
         print(f"✅ Email notification sent to {to_email}")
         return True
@@ -270,6 +286,76 @@ def send_smtp_email(
         import traceback
         traceback.print_exc()
         return False
+
+
+def send_assignment_batch_email(
+    *,
+    to_email: str,
+    school: str,
+    grade: str,
+    batch_number: int,
+    total_batches: int,
+    essay_count: int,
+    portal_url: str,
+) -> bool:
+    """
+    Send one assignment email with a portal link for batch access.
+    """
+    subject = f"IFI Essay Batch Assignment: {school} Grade {grade} Batch {batch_number}"
+    html_body = f"""
+    <html>
+    <head>
+        <style>
+            body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
+            .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+            .header {{ background-color: #1d4ed8; color: white; padding: 20px; text-align: center; }}
+            .content {{ background-color: #f8fafc; padding: 20px; }}
+            .info {{ background-color: white; padding: 15px; margin: 10px 0; border-left: 4px solid #1d4ed8; }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header"><h2>Essay Batch Assignment</h2></div>
+            <div class="content">
+                <p>Hello,</p>
+                <p>You have been assigned an IFI essay reading batch.</p>
+                <div class="info">
+                    <strong>School:</strong> {school}<br>
+                    <strong>Grade:</strong> {grade}<br>
+                    <strong>Batch:</strong> {batch_number} of {total_batches}<br>
+                    <strong>Essays in this batch:</strong> {essay_count}
+                </div>
+                <p><a href="{portal_url}">Open your reader access page</a></p>
+                <p>After opening the link, enter your email address to view your assigned essays, open each essay, and save rankings.</p>
+                <div class="info">
+                    <strong>Ranking instructions:</strong><br>
+                    1 = best essay in your batch.<br>
+                    {essay_count} = lowest-ranked essay in your batch.<br>
+                    Save each essay's rank with its own Save button.<br>
+                    Use Unrank if you want to remove a saved rank before finalizing your list.<br>
+                    Only one essay can hold each rank number in your batch.
+                </div>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+    text_body = (
+        "Essay Batch Assignment\n\n"
+        f"School: {school}\n"
+        f"Grade: {grade}\n"
+        f"Batch: {batch_number} of {total_batches}\n"
+        f"Essays in this batch: {essay_count}\n\n"
+        f"Open your reader access page: {portal_url}\n\n"
+        "After opening the link, enter your email address to view your assigned essays, open each essay, and save rankings.\n\n"
+        "Ranking instructions:\n"
+        f"- 1 = best essay in your batch\n"
+        f"- {essay_count} = lowest-ranked essay in your batch\n"
+        "- Save each essay with its own Save button\n"
+        "- Use Unrank to move an essay back to unranked\n"
+        "- Only one essay can use each rank number in the batch"
+    )
+    return send_smtp_email(to_email, subject, html_body, text_body)
 
 
 def get_job_url(job_id: str) -> str:
@@ -316,6 +402,3 @@ def get_user_email_from_token(access_token: str) -> Optional[str]:
     except Exception as e:
         print(f"⚠️ Could not extract email from token: {e}")
         return None
-
-
-

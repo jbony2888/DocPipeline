@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Review and Rank Essays</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+        .shell { max-width: 1040px; margin: 40px auto; padding: 0 16px; }
+        .card { border: none; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+        .rank-input {
+            max-width: 110px;
+            min-width: 110px;
+            color: #0f172a !important;
+            -webkit-text-fill-color: #0f172a;
+            background: #fff;
+            font-size: 1rem;
+            font-weight: 600;
+            line-height: 1.4;
+        }
+        .rank-input::placeholder { color: #94a3b8; }
+        .meta-label { color: #64748b; font-size: 0.9rem; }
+        .list-shell { background: #fff; border: 1px solid #dbe4ee; border-radius: 18px; padding: 20px; }
+        .list-shell h2 { font-size: 1.05rem; margin-bottom: 6px; }
+        .list-shell p { color: #64748b; font-size: 0.95rem; margin-bottom: 18px; }
+        .essay-list { display: grid; gap: 14px; }
+        .essay-card { border: 1px solid #dbe4ee; border-radius: 16px; padding: 16px; background: #fff; transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease; }
+        .essay-card.is-ranked { border-color: #93c5fd; box-shadow: 0 10px 24px rgba(37, 99, 235, 0.08); }
+        .essay-card.is-winner { border-color: #d97706; background: linear-gradient(135deg, #fff7ed 0%, #fffbeb 100%); box-shadow: 0 12px 28px rgba(217, 119, 6, 0.18); transform: translateY(-1px); }
+        .essay-header { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; margin-bottom: 12px; }
+        .essay-title { font-size: 1rem; margin: 0; }
+        .essay-meta { color: #64748b; font-size: 0.92rem; margin: 0; }
+        .essay-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+        .rank-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; }
+        .rank-field { display: flex; flex-direction: column; }
+        .rank-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 42px; height: 42px; padding: 0 12px; border-radius: 999px; background: #e2e8f0; color: #0f172a; font-weight: 700; font-size: 0.95rem; }
+        .essay-card.is-ranked .rank-badge { background: #dbeafe; color: #1d4ed8; }
+        .essay-card.is-winner .rank-badge { background: #f59e0b; color: #fff; }
+        .essay-card.is-unranked { opacity: 0.96; }
+        .winner-note { display: none; margin-top: 10px; color: #9a3412; font-weight: 600; font-size: 0.92rem; }
+        .essay-card.is-winner .winner-note { display: block; }
+        .section-label { display: inline-flex; align-items: center; gap: 8px; margin-bottom: 14px; color: #475569; font-size: 0.88rem; font-weight: 700; letter-spacing: 0.02em; text-transform: uppercase; }
+        .summary-bar { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 18px; }
+        .summary-pill { display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 999px; background: #f8fafc; border: 1px solid #dbe4ee; color: #334155; font-size: 0.92rem; }
+        .toolbar-row { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; margin-bottom: 18px; align-items: center; }
+        .filter-group { display: inline-flex; flex-wrap: wrap; gap: 8px; }
+        .filter-btn { border-radius: 999px; }
+        .filter-btn.active { background: #2563eb; border-color: #2563eb; color: #fff; }
+        .essay-card.is-hidden { display: none; }
+        .instruction-box { border: 1px solid #dbe4ee; border-radius: 16px; background: #f8fafc; padding: 16px; color: #334155; margin-bottom: 18px; }
+        .instruction-box strong { color: #0f172a; }
+    </style>
+</head>
+<body>
+    <main class="shell">
+        <div class="card mb-4">
+            <div class="card-body p-4">
+                <div class="d-flex flex-column flex-lg-row justify-content-between gap-3">
+                    <div>
+                        <h1 class="h3 mb-2">Review and Rank Essays</h1>
+                        <div class="meta-label">School</div>
+                        <div class="mb-2">{{ assignment.school }}</div>
+                        <div class="meta-label">Grade</div>
+                        <div class="mb-2">{{ assignment.grade }}</div>
+                        <div class="meta-label">Batch</div>
+                        <div>Batch {{ assignment.batchNumber }} of {{ assignment.totalBatches }} · {{ assignment.essayCount }} essays</div>
+                    </div>
+                    <div class="text-lg-end">
+                        <a class="btn btn-outline-secondary" href="{{ url_for('admin.reader_access', token=token) }}">Back to Reader Portal</a>
+                    </div>
+                </div>
+                <hr>
+                <p class="text-muted mb-0">Rank every assigned essay once. Use <strong>1</strong> for the best essay and <strong>{{ assignment.essayCount }}</strong> for the lowest-ranked essay in this batch.</p>
+            </div>
+        </div>
+
+        {% if error_message %}
+        <div class="alert alert-danger">{{ error_message }}</div>
+        {% endif %}
+        {% if success_message %}
+        <div class="alert alert-success">{{ success_message }}</div>
+        {% endif %}
+
+        <form method="post" class="card">
+            <div class="card-body p-4">
+                <input type="hidden" name="token" value="{{ token }}">
+                <div class="row g-3 mb-4">
+                    <div class="col-md-6">
+                        <label for="reader_name" class="form-label">Your Name</label>
+                        <input id="reader_name" name="reader_name" type="text" class="form-control" value="{{ reader_name or '' }}" required>
+                    </div>
+                    <div class="col-md-6">
+                        <label for="reader_email" class="form-label">Your Email</label>
+                        <input id="reader_email" name="reader_email" type="email" class="form-control" value="{{ reader_email }}" readonly required>
+                    </div>
+                </div>
+
+                <section class="list-shell">
+                    <h2>Essay Ranking List</h2>
+                    <p>Enter a rank for each essay and save it. The list reorders only after a saved rank is returned by the server.</p>
+                    <div class="instruction-box">
+                        <strong>How ranking works</strong><br>
+                        Open each essay, decide where it belongs in the batch, then save that essay's rank. Use <strong>1</strong> for the best essay and <strong>{{ assignment.essayCount }}</strong> for the lowest-ranked essay in this batch. Each rank number can be used only once. If you need to remove a saved rank, use <strong>Unrank</strong>.
+                    </div>
+                    <div class="summary-bar">
+                        <div class="summary-pill"><strong id="ranked-count">0</strong> ranked</div>
+                        <div class="summary-pill"><strong id="unranked-count">{{ assignment.essayCount }}</strong> unranked</div>
+                        <div class="summary-pill">1 = best essay · {{ assignment.essayCount }} = lowest-ranked essay</div>
+                    </div>
+                    <div class="toolbar-row">
+                        <div class="filter-group" aria-label="Essay list filters">
+                            <button type="button" class="btn btn-outline-secondary btn-sm filter-btn active" data-filter="all">All Essays</button>
+                            <button type="button" class="btn btn-outline-secondary btn-sm filter-btn" data-filter="ranked">Ranked</button>
+                            <button type="button" class="btn btn-outline-secondary btn-sm filter-btn" data-filter="unranked">Unranked</button>
+                        </div>
+                        <div class="text-muted small">Use the save button on each essay card to save one ranking at a time.</div>
+                    </div>
+                    <div class="section-label">Live Order</div>
+                    <div id="essay-list" class="essay-list">
+                        {% for essay in essays %}
+                        <article
+                            class="essay-card"
+                            data-essay-card
+                            data-submission-id="{{ essay.submissionId }}"
+                            data-student-name="{{ essay.studentName }}"
+                            data-original-index="{{ essay.index }}"
+                            data-saved-rank="{{ essay.rankPosition if essay.rankPosition is not none else '' }}"
+                        >
+                            <div class="essay-header">
+                                <div>
+                                    <p class="essay-meta mb-1">Essay <span data-display-index>{{ essay.index }}</span></p>
+                                    <h3 class="essay-title">{{ essay.studentName }}</h3>
+                                    <p class="essay-meta">{{ essay.schoolName }} · Submitted {{ essay.createdAt }}</p>
+                                </div>
+                                <span class="rank-badge" data-rank-badge>Unranked</span>
+                            </div>
+
+                            <div class="rank-row">
+                                <div class="rank-field">
+                                    <label class="form-label" for="rank_{{ essay.submissionId }}">Rank Position</label>
+                                    <input
+                                        id="rank_{{ essay.submissionId }}"
+                                        class="form-control rank-input"
+                                        type="number"
+                                        min="1"
+                                        max="{{ assignment.essayCount }}"
+                                        name="rank_{{ essay.submissionId }}"
+                                        value="{{ essay.rankPosition }}"
+                                        data-rank-input
+                                    >
+                                </div>
+                                <button type="submit" class="btn btn-sm btn-primary" name="save_submission_id" value="{{ essay.submissionId }}">Save</button>
+                                <button type="submit" class="btn btn-sm btn-outline-danger" name="unrank_submission_id" value="{{ essay.submissionId }}" data-unrank-btn>Unrank</button>
+                            </div>
+
+                            <div class="essay-actions">
+                                <a class="btn btn-sm btn-outline-primary" href="{{ essay.viewUrl }}" target="_blank" rel="noopener">Open Essay</a>
+                                <a class="btn btn-sm btn-outline-secondary" href="{{ essay.downloadUrl }}">Download</a>
+                            </div>
+
+                            <div class="winner-note">Current winner for this batch: rank 1.</div>
+                        </article>
+                        {% endfor %}
+                    </div>
+                </section>
+
+            </div>
+        </form>
+    </main>
+    <script>
+        (() => {
+            const essayList = document.getElementById("essay-list");
+            const rankedCount = document.getElementById("ranked-count");
+            const unrankedCount = document.getElementById("unranked-count");
+            const cards = Array.from(document.querySelectorAll("[data-essay-card]"));
+            const filterButtons = Array.from(document.querySelectorAll("[data-filter]"));
+            let activeFilter = "all";
+
+            function savedRankValue(card) {
+                const value = parseInt(card.dataset.savedRank || "", 10);
+                return Number.isInteger(value) && value > 0 ? value : null;
+            }
+
+            function updateCard(card) {
+                const rank = savedRankValue(card);
+                const badge = card.querySelector("[data-rank-badge]");
+                card.classList.toggle("is-ranked", rank !== null);
+                card.classList.toggle("is-winner", rank === 1);
+                card.classList.toggle("is-unranked", rank === null);
+                if (badge) {
+                    badge.textContent = rank === null ? "Unranked" : `Rank ${rank}`;
+                }
+            }
+
+            function matchesFilter(card) {
+                const rank = savedRankValue(card);
+                if (activeFilter === "ranked") {
+                    return rank !== null;
+                }
+                if (activeFilter === "unranked") {
+                    return rank === null;
+                }
+                return true;
+            }
+
+            function sortCards(a, b) {
+                const rankA = savedRankValue(a);
+                const rankB = savedRankValue(b);
+                if (rankA === null && rankB !== null) {
+                    return 1;
+                }
+                if (rankA !== null && rankB === null) {
+                    return -1;
+                }
+                if (rankA !== rankB) {
+                    return rankA - rankB;
+                }
+                const originalA = parseInt(a.dataset.originalIndex || "0", 10);
+                const originalB = parseInt(b.dataset.originalIndex || "0", 10);
+                if (originalA !== originalB) {
+                    return originalA - originalB;
+                }
+                const nameA = (a.dataset.studentName || "").toLowerCase();
+                const nameB = (b.dataset.studentName || "").toLowerCase();
+                return nameA.localeCompare(nameB);
+            }
+
+            function syncList() {
+                cards.forEach((card) => {
+                    updateCard(card);
+                });
+
+                cards.sort(sortCards);
+                cards.forEach((card, index) => {
+                    essayList.appendChild(card);
+                    const displayIndex = card.querySelector("[data-display-index]");
+                    if (displayIndex) {
+                        displayIndex.textContent = String(index + 1);
+                    }
+                    card.classList.toggle("is-hidden", !matchesFilter(card));
+                });
+
+                const ranked = cards.filter((card) => savedRankValue(card) !== null).length;
+                rankedCount.textContent = String(ranked);
+                unrankedCount.textContent = String(cards.length - ranked);
+            }
+
+            cards.forEach((card) => {
+                const input = card.querySelector("[data-rank-input]");
+                if (!input) return;
+                const unrankBtn = card.querySelector("[data-unrank-btn]");
+                if (unrankBtn) {
+                    unrankBtn.addEventListener("click", () => {
+                        if (savedRankValue(card) === null) {
+                            input.value = "";
+                        }
+                    });
+                }
+            });
+
+            filterButtons.forEach((button) => {
+                button.addEventListener("click", () => {
+                    activeFilter = button.dataset.filter || "all";
+                    filterButtons.forEach((item) => {
+                        item.classList.toggle("active", item === button);
+                    });
+                    syncList();
+                });
+            });
+
+            syncList();
+        })();
+    </script>
+</body>
+</html>

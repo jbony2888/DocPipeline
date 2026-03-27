@@ -8,7 +8,15 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
     <style>
         body { background: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
-        .admin-header { background: #1e293b; color: #e2e8f0; padding: 1rem 0; margin-bottom: 1.5rem; }
+        .admin-header {
+            background: #1e293b;
+            color: #e2e8f0;
+            padding: 1rem 0;
+            margin-bottom: 1.5rem;
+            position: sticky;
+            top: 0;
+            z-index: 1030;
+        }
         .admin-header a { color: #93c5fd; text-decoration: none; }
         .admin-header a:hover { color: #bfdbfe; }
         .card { border: none; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
@@ -16,11 +24,20 @@
         .badge-needs-review { background: #f59e0b; }
         .badge-approved { background: #10b981; }
         .filter-bar .form-select, .filter-bar .btn { font-size: 0.875rem; }
+        .metadata-input { min-width: 150px; }
+        .metadata-input.grade-input { min-width: 72px; max-width: 82px; }
+        .viewer-frame { width: 100%; height: 78vh; border: 1px solid #cbd5e1; border-radius: 0.5rem; background: white; }
+        .sticky-viewer { position: sticky; top: 96px; }
+        tr.active-row { background: #eff6ff !important; }
+        @media (max-width: 991px) {
+            .viewer-frame { height: 60vh; }
+            .sticky-viewer { position: static; }
+        }
     </style>
 </head>
 <body>
     <header class="admin-header">
-        <div class="container">
+        <div class="container-fluid px-3 px-lg-4">
             <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
                 <h1 class="h5 mb-0"><i class="bi bi-collection"></i> Submissions Dashboard</h1>
                 <div>
@@ -33,128 +50,188 @@
                     {% endif %}
                 </div>
             </div>
+            <ul class="nav nav-pills mt-3">
+                <li class="nav-item">
+                    <a class="nav-link active" aria-current="page" href="{{ url_for('admin.admin_dashboard') }}">
+                        <i class="bi bi-table"></i> Submissions
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link text-white" href="{{ url_for('admin.admin_assignments') }}">
+                        <i class="bi bi-person-check"></i> Assignments
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link text-white" href="{{ url_for('admin.admin_rankings') }}">
+                        <i class="bi bi-trophy"></i> Rankings
+                    </a>
+                </li>
+            </ul>
         </div>
     </header>
 
-    <main class="container">
-        <div class="card mb-3">
-            <div class="card-body py-3">
-                <p class="text-muted small mb-2">
-                    Showing <strong>{{ total }}</strong> submission{{ 's' if total != 1 else '' }}
-                    {% if total != total_loaded %}
-                    (filtered from <strong>{{ total_loaded }}</strong> loaded)
-                    {% endif %}
-                    · up to <strong>{{ fetch_limit }}</strong> most recent by date
-                </p>
-                <form method="get" action="{{ url_for('admin.admin_dashboard') }}" class="row g-2 align-items-end filter-bar" id="filterForm">
-                    <div class="col-md-4 col-lg-3">
-                        <label class="form-label small text-muted mb-0">School</label>
-                        <select name="school" class="form-select" onchange="this.form.submit()">
-                            <option value="">All schools</option>
-                            {% for s in school_options %}
-                            <option value="{{ s }}" {% if s == selected_school %}selected{% endif %}>{{ s }}</option>
-                            {% endfor %}
-                        </select>
+    <main class="container-fluid px-3 px-lg-4">
+        <div class="row g-3 align-items-start">
+            <div class="col-12 col-lg-7 col-xl-8">
+                <div class="card mb-3">
+                    <div class="card-body py-3">
+                        <p class="text-muted small mb-2">
+                            Showing <strong>{{ total }}</strong> submission{{ 's' if total != 1 else '' }}
+                            {% if total != total_loaded %}
+                            (filtered from <strong>{{ total_loaded }}</strong> loaded)
+                            {% endif %}
+                            · up to <strong>{{ fetch_limit }}</strong> most recent by date
+                        </p>
+                        <form method="get" action="{{ url_for('admin.admin_dashboard') }}" class="row g-2 align-items-end filter-bar" id="filterForm">
+                            <div class="col-md-4 col-lg-3">
+                                <label class="form-label small text-muted mb-0">School</label>
+                                <select name="school" class="form-select" onchange="this.form.submit()">
+                                    <option value="">All schools</option>
+                                    {% for s in school_options %}
+                                    <option value="{{ s }}" {% if s == selected_school %}selected{% endif %}>{{ s }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="col-md-3 col-lg-2">
+                                <label class="form-label small text-muted mb-0">Grade</label>
+                                <select name="grade" class="form-select" onchange="this.form.submit()">
+                                    <option value="">All grades</option>
+                                    {% for g in grade_options %}
+                                    <option value="{{ g }}" {% if g == selected_grade %}selected{% endif %}>{{ g }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="col-md-3 col-lg-2">
+                                <label class="form-label small text-muted mb-0">Status</label>
+                                <select name="status" class="form-select" onchange="this.form.submit()">
+                                    <option value="" {% if not selected_status %}selected{% endif %}>All</option>
+                                    <option value="approved" {% if selected_status == "approved" %}selected{% endif %}>Approved only</option>
+                                    <option value="needs_review" {% if selected_status == "needs_review" %}selected{% endif %}>Needs review only</option>
+                                </select>
+                            </div>
+                            <div class="col-md-auto">
+                                <button type="submit" class="btn btn-outline-secondary btn-sm">Apply</button>
+                            </div>
+                        </form>
                     </div>
-                    <div class="col-md-3 col-lg-2">
-                        <label class="form-label small text-muted mb-0">Grade</label>
-                        <select name="grade" class="form-select" onchange="this.form.submit()">
-                            <option value="">All grades</option>
-                            {% for g in grade_options %}
-                            <option value="{{ g }}" {% if g == selected_grade %}selected{% endif %}>{{ g }}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
-                    <div class="col-md-auto">
-                        <button type="submit" class="btn btn-outline-secondary btn-sm">Apply</button>
-                    </div>
-                </form>
-            </div>
-        </div>
+                </div>
 
-        <div class="card mb-2">
-            <div class="card-body py-2 d-flex flex-wrap align-items-center gap-2">
-                <button type="button" class="btn btn-sm btn-outline-secondary" id="btnSelectAll"><i class="bi bi-check2-square"></i> Select all on page</button>
-                <button type="button" class="btn btn-sm btn-outline-secondary" id="btnSelectNone"><i class="bi bi-square"></i> Clear selection</button>
-                <button type="button" class="btn btn-sm btn-primary" id="btnZipSelected"><i class="bi bi-file-zip"></i> Download selected as ZIP</button>
-                <span class="text-muted small" id="selCount">0 selected</span>
-                <span class="text-muted small ms-auto">Max 50 files per ZIP · skips missing storage</span>
-            </div>
-        </div>
+                <div class="card mb-2">
+                    <div class="card-body py-2 d-flex flex-wrap align-items-center gap-2">
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="btnSelectAll"><i class="bi bi-check2-square"></i> Select all on page</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="btnSelectNone"><i class="bi bi-square"></i> Clear selection</button>
+                        <button type="button" class="btn btn-sm btn-primary" id="btnZipSelected"><i class="bi bi-file-zip"></i> Download selected as ZIP</button>
+                        <span class="text-muted small" id="selCount">0 selected</span>
+                        <span class="text-muted small ms-auto">Max 50 files per ZIP · row edits save directly to DB</span>
+                    </div>
+                </div>
 
-        <div class="card overflow-hidden">
-            <div class="table-responsive">
-                <table class="table table-hover mb-0">
-                    <thead class="table-light">
-                        <tr>
-                            <th style="width:2.5rem;">
-                                <input type="checkbox" class="form-check-input" id="checkMaster" title="Toggle all">
-                            </th>
-                            <th>Student</th>
-                            <th>School</th>
-                            <th>Grade</th>
-                            <th>File</th>
-                            <th>Status</th>
-                            <th>Why in review</th>
-                            <th>Date</th>
-                            <th>1-file</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for s in submissions %}
-                        <tr>
-                            <td>
-                                {% if s.artifact_dir %}
-                                <input type="checkbox" class="form-check-input row-check" value="{{ s.submission_id }}">
-                                {% endif %}
-                            </td>
-                            <td>{{ s.student_name or '—' }}</td>
-                            <td>{{ s.school_name or '—' }}</td>
-                            <td>{{ s.grade or '—' }}</td>
-                            <td>{{ s.filename or '—' }}</td>
-                            <td>
+                <div class="card overflow-hidden">
+                    <div class="table-responsive">
+                        <table class="table table-hover mb-0" id="submissionsTable">
+                            <thead class="table-light">
+                                <tr>
+                                    <th style="width:2.5rem;">
+                                        <input type="checkbox" class="form-check-input" id="checkMaster" title="Toggle all">
+                                    </th>
+                                    <th>Student</th>
+                                    <th>School</th>
+                                    <th>Grade</th>
+                                    <th>File</th>
+                                    <th>Status</th>
+                                    <th>Why in review</th>
+                                    <th>Date</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for s in submissions %}
                                 {% set has_all_data = s.student_name and s.school_name and s.grade %}
                                 {% set has_reason = (s.review_reason_codes or '')|trim %}
-                                {% if has_all_data and not has_reason %}
-                                <span class="badge badge-approved">Approved</span>
-                                {% elif s.needs_review %}
-                                <span class="badge badge-needs-review">Needs review</span>
+                                <tr data-submission-id="{{ s.submission_id }}">
+                                    <td>
+                                        {% if s.artifact_dir %}
+                                        <input type="checkbox" class="form-check-input row-check" value="{{ s.submission_id }}">
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <input type="text" class="form-control form-control-sm metadata-input" data-field="student_name" value="{{ s.student_name or '' }}" placeholder="Student name">
+                                    </td>
+                                    <td>
+                                        <input type="text" class="form-control form-control-sm metadata-input" data-field="school_name" value="{{ s.school_name or '' }}" placeholder="School name">
+                                    </td>
+                                    <td>
+                                        <input type="text" class="form-control form-control-sm metadata-input grade-input" data-field="grade" value="{{ s.grade or '' }}" placeholder="Grade">
+                                    </td>
+                                    <td class="small text-break">{{ s.filename or '—' }}</td>
+                                    <td data-role="status">
+                                        {% if has_all_data and not has_reason %}
+                                        <span class="badge badge-approved">Approved</span>
+                                        {% elif s.needs_review %}
+                                        <span class="badge badge-needs-review">Needs review</span>
+                                        {% else %}
+                                        <span class="badge badge-approved">Approved</span>
+                                        {% endif %}
+                                    </td>
+                                    <td class="text-muted small" style="max-width: 260px;" data-role="reasons">
+                                        {% if has_reason %}
+                                        {{ format_review_reasons(s.review_reason_codes) }}
+                                        {% else %}
+                                        —
+                                        {% endif %}
+                                    </td>
+                                    <td>{{ s.created_at[:19] if s.created_at else '—' }}</td>
+                                    <td>
+                                        <div class="d-flex flex-wrap gap-1">
+                                            {% if s.artifact_dir %}
+                                            <button type="button" class="btn btn-sm btn-outline-secondary btn-view" data-view-url="{{ url_for('admin.view_submission_file', submission_id=s.submission_id) }}" data-file-name="{{ s.filename or 'file' }}">
+                                                <i class="bi bi-eye"></i>
+                                            </button>
+                                            <a href="{{ url_for('admin.view_submission_file', submission_id=s.submission_id) }}" target="_blank" class="btn btn-sm btn-outline-secondary" title="Open in new tab">
+                                                <i class="bi bi-box-arrow-up-right"></i>
+                                            </a>
+                                            <a href="{{ url_for('admin.download_submission', submission_id=s.submission_id) }}" class="btn btn-sm btn-outline-primary" title="Download this file">
+                                                <i class="bi bi-download"></i>
+                                            </a>
+                                            {% endif %}
+                                            <button type="button" class="btn btn-sm btn-success btn-save" data-update-url="{{ url_for('admin.update_submission_metadata', submission_id=s.submission_id) }}">
+                                                <i class="bi bi-check2"></i>
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
                                 {% else %}
-                                <span class="badge badge-approved">Approved</span>
-                                {% endif %}
-                            </td>
-                            <td class="text-muted small" style="max-width: 220px;">
-                                {% if has_reason %}
-                                {{ format_review_reasons(s.review_reason_codes) }}
-                                {% else %}
-                                —
-                                {% endif %}
-                            </td>
-                            <td>{{ s.created_at[:19] if s.created_at else '—' }}</td>
-                            <td>
-                                {% if s.artifact_dir %}
-                                <a href="{{ url_for('admin.download_submission', submission_id=s.submission_id) }}" class="btn btn-sm btn-outline-primary" title="Download this file">
-                                    <i class="bi bi-download"></i>
-                                </a>
-                                {% else %}
-                                <span class="text-muted">—</span>
-                                {% endif %}
-                            </td>
-                        </tr>
-                        {% else %}
-                        <tr>
-                            <td colspan="9" class="text-center text-muted py-4">No submissions match these filters.</td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
+                                <tr>
+                                    <td colspan="9" class="text-center text-muted py-4">No submissions match these filters.</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-12 col-lg-5 col-xl-4">
+                <div class="card sticky-viewer">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <h2 class="h6 mb-0">PDF Viewer</h2>
+                            <small class="text-muted" id="viewerMeta">Select a row and click view.</small>
+                        </div>
+                        <iframe id="viewerFrame" class="viewer-frame" title="Submission file preview"></iframe>
+                    </div>
+                </div>
             </div>
         </div>
     </main>
 
     <script>
         (function() {
+            const table = document.getElementById('submissionsTable');
+            const frame = document.getElementById('viewerFrame');
+            const viewerMeta = document.getElementById('viewerMeta');
             const master = document.getElementById('checkMaster');
+
             const rows = () => Array.from(document.querySelectorAll('input.row-check'));
             function updateCount() {
                 const n = rows().filter(c => c.checked).length;
@@ -166,6 +243,59 @@
                     master.indeterminate = r.some(c => c.checked) && !master.checked;
                 }
             }
+
+            function clearActiveRow() {
+                table?.querySelectorAll('tbody tr').forEach(tr => tr.classList.remove('active-row'));
+            }
+
+            function setRowStatus(tr, status) {
+                const statusCell = tr.querySelector('[data-role="status"]');
+                if (!statusCell) return;
+                const approved = status === 'approved';
+                statusCell.innerHTML = approved
+                    ? '<span class="badge badge-approved">Approved</span>'
+                    : '<span class="badge badge-needs-review">Needs review</span>';
+            }
+
+            async function saveRow(tr, button) {
+                const payload = {
+                    student_name: tr.querySelector('[data-field="student_name"]')?.value || '',
+                    school_name: tr.querySelector('[data-field="school_name"]')?.value || '',
+                    grade: tr.querySelector('[data-field="grade"]')?.value || ''
+                };
+
+                button.disabled = true;
+                const originalHtml = button.innerHTML;
+                button.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+
+                try {
+                    const r = await fetch(button.dataset.updateUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        credentials: 'same-origin',
+                        body: JSON.stringify(payload)
+                    });
+                    const data = await r.json().catch(() => ({}));
+                    if (!r.ok || !data.success) {
+                        alert('Save failed: ' + (data.error || r.status));
+                        return;
+                    }
+
+                    tr.querySelector('[data-field="student_name"]').value = data.student_name || '';
+                    tr.querySelector('[data-field="school_name"]').value = data.school_name || '';
+                    tr.querySelector('[data-field="grade"]').value = data.grade || '';
+
+                    const reasonsCell = tr.querySelector('[data-role="reasons"]');
+                    if (reasonsCell) reasonsCell.textContent = data.review_reasons || '—';
+                    setRowStatus(tr, data.status);
+                } catch (err) {
+                    alert('Save failed: ' + err);
+                } finally {
+                    button.disabled = false;
+                    button.innerHTML = originalHtml;
+                }
+            }
+
             document.getElementById('btnSelectAll')?.addEventListener('click', function() {
                 rows().forEach(c => { c.checked = true; });
                 updateCount();
@@ -179,9 +309,30 @@
                 rows().forEach(c => { c.checked = master.checked; });
                 updateCount();
             });
-            document.querySelector('table')?.addEventListener('change', function(e) {
+
+            table?.addEventListener('change', function(e) {
                 if (e.target.classList.contains('row-check')) updateCount();
             });
+
+            table?.addEventListener('click', async function(e) {
+                const saveBtn = e.target.closest('.btn-save');
+                if (saveBtn) {
+                    const tr = saveBtn.closest('tr');
+                    if (!tr) return;
+                    await saveRow(tr, saveBtn);
+                    return;
+                }
+
+                const viewBtn = e.target.closest('.btn-view');
+                if (viewBtn) {
+                    const tr = viewBtn.closest('tr');
+                    clearActiveRow();
+                    tr?.classList.add('active-row');
+                    frame.src = viewBtn.dataset.viewUrl;
+                    viewerMeta.textContent = viewBtn.dataset.fileName || 'Selected submission';
+                }
+            });
+
             document.getElementById('btnZipSelected')?.addEventListener('click', async function() {
                 const ids = rows().filter(c => c.checked).map(c => c.value);
                 if (!ids.length) {
@@ -228,6 +379,7 @@
                     btn.disabled = false;
                 }
             });
+
             updateCount();
         })();
     </script>

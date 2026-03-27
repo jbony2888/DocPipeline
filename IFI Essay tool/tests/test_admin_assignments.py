@@ -603,6 +603,128 @@ def test_reader_assignment_review_saves_forced_rankings_and_updates_reader_name(
     ]
 
 
+def test_reader_assignment_review_saves_single_essay_ranking(client, app):
+    from admin.routes import _generate_reader_portal_token
+
+    sb = _FakeSupabase(
+        submissions=[
+            {
+                "submission_id": "sub-1",
+                "school_name": "De La Salle Institute",
+                "grade": 2,
+                "student_name": "Alice",
+                "needs_review": False,
+                "review_reason_codes": "",
+                "artifact_dir": "artifacts/sub-1",
+                "filename": "essay-a.pdf",
+                "created_at": "2026-03-20T10:00:00Z",
+            },
+            {
+                "submission_id": "sub-2",
+                "school_name": "De La Salle Institute",
+                "grade": 2,
+                "student_name": "Bob",
+                "needs_review": False,
+                "review_reason_codes": "",
+                "artifact_dir": "artifacts/sub-2",
+                "filename": "essay-b.pdf",
+                "created_at": "2026-03-20T10:05:00Z",
+            },
+        ],
+        readers=[{"id": 7, "email": "reader@example.com", "name": None}],
+        assignments=[{"id": 55, "reader_id": 7, "school_name": "De La Salle Institute", "grade": "2", "batch_number": 1, "total_batches": 1, "created_at": "2026-03-22T10:00:00Z"}],
+    )
+    with app.app_context():
+        token = _generate_reader_portal_token("reader@example.com")
+    _set_reader_portal_session(client, "reader@example.com")
+
+    with patch("admin.routes._get_service_role_client", return_value=sb):
+        res = client.post(
+            f"/admin/reader-assignments/55/review?token={token}",
+            data={
+                "token": token,
+                "reader_name": "Jane Reader",
+                "reader_email": "reader@example.com",
+                "rank_sub-1": "1",
+                "save_submission_id": "sub-1",
+            },
+        )
+
+    assert res.status_code == 200
+    assert b"Saved rank 1 for this essay" in res.data
+    assert sb.db["readers"][0]["name"] == "Jane Reader"
+    assert sorted((row["submission_id"], row["rank_position"]) for row in sb.db["essay_rankings"]) == [
+        ("sub-1", 1),
+    ]
+
+
+def test_reader_assignment_review_unranks_single_essay(client, app):
+    from admin.routes import _generate_reader_portal_token
+
+    sb = _FakeSupabase(
+        submissions=[
+            {
+                "submission_id": "sub-1",
+                "school_name": "De La Salle Institute",
+                "grade": 2,
+                "student_name": "Alice",
+                "needs_review": False,
+                "review_reason_codes": "",
+                "artifact_dir": "artifacts/sub-1",
+                "filename": "essay-a.pdf",
+                "created_at": "2026-03-20T10:00:00Z",
+            },
+            {
+                "submission_id": "sub-2",
+                "school_name": "De La Salle Institute",
+                "grade": 2,
+                "student_name": "Bob",
+                "needs_review": False,
+                "review_reason_codes": "",
+                "artifact_dir": "artifacts/sub-2",
+                "filename": "essay-b.pdf",
+                "created_at": "2026-03-20T10:05:00Z",
+            },
+        ],
+        readers=[{"id": 7, "email": "reader@example.com", "name": "Jane Reader"}],
+        assignments=[{"id": 55, "reader_id": 7, "school_name": "De La Salle Institute", "grade": "2", "batch_number": 1, "total_batches": 1, "created_at": "2026-03-22T10:00:00Z"}],
+        essay_rankings=[
+            {
+                "id": 1,
+                "assignment_id": 55,
+                "reader_id": 7,
+                "submission_id": "sub-1",
+                "school_name": "De La Salle Institute",
+                "grade": "2",
+                "batch_number": 1,
+                "rank_position": 1,
+                "reader_name": "Jane Reader",
+                "reader_email": "reader@example.com",
+                "created_at": "2026-03-22T10:00:00Z",
+                "updated_at": "2026-03-22T10:00:00Z",
+            },
+        ],
+    )
+    with app.app_context():
+        token = _generate_reader_portal_token("reader@example.com")
+    _set_reader_portal_session(client, "reader@example.com")
+
+    with patch("admin.routes._get_service_role_client", return_value=sb):
+        res = client.post(
+            f"/admin/reader-assignments/55/review?token={token}",
+            data={
+                "token": token,
+                "reader_name": "Jane Reader",
+                "reader_email": "reader@example.com",
+                "unrank_submission_id": "sub-1",
+            },
+        )
+
+    assert res.status_code == 200
+    assert b"Essay moved back to unranked" in res.data
+    assert sb.db["essay_rankings"] == []
+
+
 def test_reader_assignment_review_rejects_duplicate_ranks(client, app):
     from admin.routes import _generate_reader_portal_token
 
@@ -910,8 +1032,257 @@ def test_ranking_results_aggregates_same_essay_across_multiple_readers(client):
     first = data["results"][0]
     second = data["results"][1]
     assert first["submissionId"] == "sub-1"
+    assert first["finalPosition"] == 1
     assert first["numRanks"] == 2
     assert first["averageRank"] == 1.5
+    assert first["firstPlaceVotes"] == 1
     assert len(first["readerBreakdown"]) == 2
     assert second["submissionId"] == "sub-2"
+    assert second["finalPosition"] == 2
     assert second["averageRank"] == 1.5
+    assert second["firstPlaceVotes"] == 1
+
+
+def test_admin_rankings_page_shows_winner_and_reader_breakdown(client):
+    _set_admin_session(client)
+    sb = _FakeSupabase(
+        submissions=[
+            {
+                "submission_id": "sub-1",
+                "school_name": "De La Salle Institute",
+                "grade": 2,
+                "student_name": "Alice",
+                "needs_review": False,
+                "review_reason_codes": "",
+            },
+            {
+                "submission_id": "sub-2",
+                "school_name": "De La Salle Institute",
+                "grade": 2,
+                "student_name": "Bob",
+                "needs_review": False,
+                "review_reason_codes": "",
+            },
+        ],
+        readers=[
+            {"id": 7, "email": "reader1@example.com", "name": "Reader One"},
+            {"id": 8, "email": "reader2@example.com", "name": "Reader Two"},
+        ],
+        assignments=[
+            {"id": 55, "reader_id": 7, "school_name": "De La Salle Institute", "grade": "2", "batch_number": 1, "total_batches": 1, "created_at": "2026-03-22T10:00:00Z"},
+            {"id": 56, "reader_id": 8, "school_name": "De La Salle Institute", "grade": "2", "batch_number": 1, "total_batches": 1, "created_at": "2026-03-22T10:10:00Z"},
+        ],
+        essay_rankings=[
+            {
+                "id": 1,
+                "assignment_id": 55,
+                "reader_id": 7,
+                "submission_id": "sub-1",
+                "school_name": "De La Salle Institute",
+                "grade": "2",
+                "batch_number": 1,
+                "rank_position": 1,
+                "reader_name": "Reader One",
+                "reader_email": "reader1@example.com",
+                "created_at": "2026-03-22T10:00:00Z",
+                "updated_at": "2026-03-22T10:00:00Z",
+            },
+            {
+                "id": 2,
+                "assignment_id": 56,
+                "reader_id": 8,
+                "submission_id": "sub-1",
+                "school_name": "De La Salle Institute",
+                "grade": "2",
+                "batch_number": 1,
+                "rank_position": 2,
+                "reader_name": "Reader Two",
+                "reader_email": "reader2@example.com",
+                "created_at": "2026-03-22T10:10:00Z",
+                "updated_at": "2026-03-22T10:10:00Z",
+            },
+            {
+                "id": 3,
+                "assignment_id": 55,
+                "reader_id": 7,
+                "submission_id": "sub-2",
+                "school_name": "De La Salle Institute",
+                "grade": "2",
+                "batch_number": 1,
+                "rank_position": 2,
+                "reader_name": "Reader One",
+                "reader_email": "reader1@example.com",
+                "created_at": "2026-03-22T10:00:00Z",
+                "updated_at": "2026-03-22T10:00:00Z",
+            },
+            {
+                "id": 4,
+                "assignment_id": 56,
+                "reader_id": 8,
+                "submission_id": "sub-2",
+                "school_name": "De La Salle Institute",
+                "grade": "2",
+                "batch_number": 1,
+                "rank_position": 3,
+                "reader_name": "Reader Two",
+                "reader_email": "reader2@example.com",
+                "created_at": "2026-03-22T10:10:00Z",
+                "updated_at": "2026-03-22T10:10:00Z",
+            },
+        ],
+    )
+
+    with patch("admin.routes._get_service_role_client", return_value=sb):
+        res = client.get("/admin/rankings?grade=2&school=De%20La%20Salle%20Institute")
+
+    assert res.status_code == 200
+    page = res.get_data(as_text=True)
+    assert "Rankings" in page
+    assert "Grade 2 Winner" in page
+    assert "Alice" in page
+    assert "Grade 2 Second Place" in page
+    assert "Bob" in page
+    assert "Reader One: rank 1" in page
+    assert "Reader Two: rank 2" in page
+    assert "Winner" in page
+
+
+def test_admin_rankings_page_shows_provisional_leader_when_only_one_ranked_essay(client):
+    _set_admin_session(client)
+    sb = _FakeSupabase(
+        submissions=[
+            {
+                "submission_id": "sub-1",
+                "school_name": "De La Salle Institute",
+                "grade": 10,
+                "student_name": "Abby Castaneda",
+                "needs_review": False,
+                "review_reason_codes": "",
+            },
+        ],
+        readers=[
+            {"id": 7, "email": "reader1@example.com", "name": "Reader One"},
+        ],
+        assignments=[
+            {"id": 55, "reader_id": 7, "school_name": "De La Salle Institute", "grade": "10", "batch_number": 1, "total_batches": 1, "created_at": "2026-03-22T10:00:00Z"},
+        ],
+        essay_rankings=[
+            {
+                "id": 1,
+                "assignment_id": 55,
+                "reader_id": 7,
+                "submission_id": "sub-1",
+                "school_name": "De La Salle Institute",
+                "grade": "10",
+                "batch_number": 1,
+                "rank_position": 8,
+                "reader_name": "Reader One",
+                "reader_email": "reader1@example.com",
+                "created_at": "2026-03-22T10:00:00Z",
+                "updated_at": "2026-03-22T10:00:00Z",
+            },
+        ],
+    )
+
+    with patch("admin.routes._get_service_role_client", return_value=sb):
+        res = client.get("/admin/rankings?grade=10&school=De%20La%20Salle%20Institute")
+
+    assert res.status_code == 200
+    page = res.get_data(as_text=True)
+    assert "Grade 10 Provisional Leader" in page
+    assert "A final winner is not declared until at least two essays have ranking data" in page
+    assert "Leader" in page
+    assert "Winner" not in page
+
+
+def test_reader_access_page_shows_assignment_and_ranking_instructions(client, app):
+    from admin import routes as admin_routes
+
+    sb = _FakeSupabase(
+        submissions=[
+            {
+                "submission_id": "sub-1",
+                "student_name": "Abby Castaneda",
+                "school_name": "De La Salle Institute",
+                "grade": "10",
+                "created_at": "2026-03-18T04:19:00Z",
+                "needs_review": False,
+                "status": "approved",
+            }
+        ],
+        readers=[{"id": 7, "email": "reader@example.com", "name": "Reader One"}],
+        assignments=[
+            {
+                "id": 55,
+                "reader_id": 7,
+                "school_name": "De La Salle Institute",
+                "grade": "10",
+                "batch_number": 1,
+                "total_batches": 1,
+                "created_at": "2026-03-22T10:00:00Z",
+            }
+        ],
+        essay_rankings=[
+            {
+                "id": 1,
+                "assignment_id": 55,
+                "reader_id": 7,
+                "submission_id": "sub-1",
+                "school_name": "De La Salle Institute",
+                "grade": "10",
+                "batch_number": 1,
+                "rank_position": 1,
+                "reader_name": "Reader One",
+                "reader_email": "reader@example.com",
+                "created_at": "2026-03-22T10:00:00Z",
+                "updated_at": "2026-03-22T10:00:00Z",
+            }
+        ],
+    )
+    token = admin_routes._generate_reader_portal_token("reader@example.com")
+    _set_reader_portal_session(client, "reader@example.com")
+
+    with patch("admin.routes._get_service_role_client", return_value=sb):
+        res = client.get(f"/admin/reader-access?token={token}")
+
+    assert res.status_code == 200
+    page = res.get_data(as_text=True)
+    assert "Assigned Batches" in page
+    assert "Review &amp; Rank" in page
+    assert "Open a batch with <strong>Review &amp; Rank</strong>" in page
+    assert "Use <strong>1</strong> for the best essay in the batch" in page
+    assert "save that essay" in page
+    assert "Unrank</strong> moves an essay back to unranked" in page
+    assert "De La Salle Institute" in page
+    assert "Grade 10" in page
+
+
+def test_assignment_email_includes_ranking_instructions():
+    from utils import email_notification
+
+    with patch("utils.email_notification.send_smtp_email", return_value=True) as send_mock:
+        ok = email_notification.send_assignment_batch_email(
+            to_email="reader@example.com",
+            school="De La Salle Institute",
+            grade="10",
+            batch_number=1,
+            total_batches=2,
+            essay_count=30,
+            portal_url="https://example.com/admin/reader-access?token=abc",
+        )
+
+    assert ok is True
+    send_mock.assert_called_once()
+    to_email, subject, html_body, text_body = send_mock.call_args.args
+    assert to_email == "reader@example.com"
+    assert "IFI Essay Batch Assignment" in subject
+    assert "Open your reader access page" in html_body
+    assert "Ranking instructions" in html_body
+    assert "1 = best essay in your batch" in html_body
+    assert "30 = lowest-ranked essay in your batch" in html_body
+    assert "Save each essay's rank with its own Save button" in html_body
+    assert "Use Unrank" in html_body
+    assert "Only one essay can hold each rank number" in html_body
+    assert "Open your reader access page" in text_body
+    assert "- Save each essay with its own Save button" in text_body
+    assert "- Use Unrank to move an essay back to unranked" in text_body

@@ -182,6 +182,79 @@ GRANT SELECT ON public.processing_metrics TO authenticated;
 COMMENT ON TABLE public.processing_metrics IS 'Per-submission processing metrics for performance and QA review';
 
 -- ============================================================================
+-- STEP 10: Reader assignment tables (admin workflow)
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS public.readers (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    email TEXT NOT NULL UNIQUE,
+    name TEXT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.assignments (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    reader_id BIGINT NOT NULL REFERENCES public.readers(id) ON DELETE CASCADE,
+    school_name TEXT NOT NULL,
+    grade TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_assignments_reader_school_grade UNIQUE (reader_id, school_name, grade)
+);
+
+CREATE INDEX IF NOT EXISTS idx_assignments_grade ON public.assignments(grade);
+CREATE INDEX IF NOT EXISTS idx_assignments_school_name ON public.assignments(school_name);
+CREATE INDEX IF NOT EXISTS idx_assignments_reader_id ON public.assignments(reader_id);
+
+ALTER TABLE public.assignments
+ADD COLUMN IF NOT EXISTS batch_number INTEGER NOT NULL DEFAULT 1;
+
+ALTER TABLE public.assignments
+ADD COLUMN IF NOT EXISTS total_batches INTEGER NOT NULL DEFAULT 1;
+
+ALTER TABLE public.assignments
+DROP CONSTRAINT IF EXISTS uq_assignments_reader_school_grade;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'uq_assignments_reader_school_grade_batch'
+          AND conrelid = 'public.assignments'::regclass
+    ) THEN
+        ALTER TABLE public.assignments
+            ADD CONSTRAINT uq_assignments_reader_school_grade_batch
+            UNIQUE (reader_id, school_name, grade, batch_number);
+    END IF;
+END $$;
+
+-- ============================================================================
+-- STEP 11: Essay ranking table (reader workflow)
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS public.essay_rankings (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    assignment_id BIGINT NOT NULL REFERENCES public.assignments(id) ON DELETE CASCADE,
+    reader_id BIGINT NOT NULL REFERENCES public.readers(id) ON DELETE CASCADE,
+    submission_id TEXT NOT NULL REFERENCES public.submissions(submission_id) ON DELETE CASCADE,
+    school_name TEXT NOT NULL,
+    grade TEXT NOT NULL,
+    batch_number INTEGER NOT NULL,
+    rank_position INTEGER NOT NULL CHECK (rank_position >= 1),
+    reader_name TEXT NOT NULL,
+    reader_email TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_essay_rankings_assignment_reader_submission UNIQUE (assignment_id, reader_id, submission_id),
+    CONSTRAINT uq_essay_rankings_assignment_reader_rank UNIQUE (assignment_id, reader_id, rank_position)
+);
+
+CREATE INDEX IF NOT EXISTS idx_essay_rankings_assignment_id ON public.essay_rankings(assignment_id);
+CREATE INDEX IF NOT EXISTS idx_essay_rankings_grade ON public.essay_rankings(grade);
+CREATE INDEX IF NOT EXISTS idx_essay_rankings_school_grade ON public.essay_rankings(school_name, grade);
+CREATE INDEX IF NOT EXISTS idx_essay_rankings_submission_id ON public.essay_rankings(submission_id);
+
+-- ============================================================================
 -- Verification queries (optional - run these to verify setup)
 -- ============================================================================
 
@@ -197,8 +270,5 @@ COMMENT ON TABLE public.processing_metrics IS 'Per-submission processing metrics
 
 -- Check indexes
 -- SELECT indexname, indexdef FROM pg_indexes WHERE tablename = 'submissions';
-
-
-
 
 

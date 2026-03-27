@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reader Access</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+        .shell { max-width: 1180px; margin: 48px auto; padding: 0 16px; }
+        .card { border: none; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+        .essay-list { display: grid; gap: 10px; margin-top: 16px; }
+        .essay-item { display: flex; justify-content: space-between; gap: 16px; align-items: center; padding: 12px 14px; border: 1px solid #e2e8f0; border-radius: 12px; background: #fff; }
+        .essay-meta { color: #64748b; font-size: 0.9rem; }
+        .rank-pill { display: inline-flex; align-items: center; justify-content: center; min-width: 72px; padding: 6px 12px; border-radius: 999px; font-size: 0.84rem; font-weight: 700; }
+        .rank-pill.ranked { background: #dbeafe; color: #1d4ed8; }
+        .rank-pill.unranked { background: #e2e8f0; color: #475569; }
+        .instruction-box { border: 1px solid #dbe4ee; border-radius: 16px; background: #f8fafc; padding: 16px; color: #334155; }
+        .instruction-box strong { color: #0f172a; }
+    </style>
+</head>
+<body>
+    <main class="shell">
+        <div class="card mb-4">
+            <div class="card-body p-4">
+                <h1 class="h3 mb-3">Reader Access</h1>
+                {% if invalid_link %}
+                <div class="alert alert-danger mb-0">This reader access link is invalid or expired.</div>
+                {% elif not email_verified %}
+                <p class="text-muted">Enter your email address to access your assigned batches.</p>
+                <form method="post" class="row g-3">
+                    <input type="hidden" name="token" value="{{ token }}">
+                    <div class="col-md-8">
+                        <label for="email" class="form-label">Email</label>
+                        <input id="email" name="email" type="email" class="form-control" value="{{ submitted_email or '' }}" placeholder="reader@example.com" required>
+                    </div>
+                    <div class="col-md-4 d-flex align-items-end">
+                        <button type="submit" class="btn btn-primary w-100">Access My Batches</button>
+                    </div>
+                </form>
+                {% if submitted_email and submitted_email != reader_email %}
+                <div class="alert alert-danger mt-3 mb-0">That email does not match the assignment link.</div>
+                {% endif %}
+                {% else %}
+                <p class="text-muted mb-0">Signed in as <strong>{{ reader_email }}</strong>.</p>
+                {% endif %}
+            </div>
+        </div>
+
+        {% if email_verified %}
+        <div class="card">
+            <div class="card-body p-4">
+                <h2 class="h5 mb-3">Assigned Batches</h2>
+                <div class="instruction-box mb-4">
+                    <strong>Ranking instructions</strong><br>
+                    Open a batch with <strong>Review &amp; Rank</strong>. For each essay, open the file, choose a rank, and save that essay. Use <strong>1</strong> for the best essay in the batch and use the largest number in that batch for the lowest-ranked essay. Each rank number can be used only once in the batch, and <strong>Unrank</strong> moves an essay back to unranked.
+                </div>
+                {% if assignments %}
+                {% for item in assignments %}
+                <div class="border rounded-4 p-3 p-lg-4 mb-3">
+                    <div class="d-flex flex-column flex-lg-row justify-content-between gap-3">
+                        <div>
+                            <h3 class="h5 mb-2">{{ item.school }}</h3>
+                            <div class="text-muted">
+                                Grade {{ item.grade }} · Batch {{ item.batchNumber }} of {{ item.totalBatches }} · {{ item.essayCount }} essays ({{ item.essayRange }})
+                            </div>
+                            <div class="text-muted small mt-1">Assigned {{ item.formattedCreatedAt }}</div>
+                        </div>
+                        <div class="d-flex flex-wrap gap-2 align-items-start">
+                            <a class="btn btn-sm btn-outline-primary" href="{{ item.reviewUrl }}">Review &amp; Rank</a>
+                            <a class="btn btn-sm btn-primary" href="{{ item.downloadUrl }}">Download ZIP</a>
+                        </div>
+                    </div>
+
+                    {% if item.essays %}
+                    <div class="essay-list">
+                        {% for essay in item.essays %}
+                        <div class="essay-item">
+                            <div>
+                                <div class="fw-semibold">{{ essay.studentName }}</div>
+                                <div class="essay-meta">{{ essay.createdAt }}</div>
+                            </div>
+                            <div class="d-flex flex-wrap gap-2 align-items-center">
+                                {% if essay.rankPosition %}
+                                <span class="rank-pill ranked">Rank {{ essay.rankPosition }}</span>
+                                {% else %}
+                                <span class="rank-pill unranked">Unranked</span>
+                                {% endif %}
+                                <a class="btn btn-sm btn-outline-secondary" href="{{ essay.viewUrl }}" target="_blank" rel="noopener">View Essay</a>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+                </div>
+                {% endfor %}
+                {% else %}
+                <p class="text-muted mb-0">No assignments are currently available for this email.</p>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+    </main>
+</body>
+</html>

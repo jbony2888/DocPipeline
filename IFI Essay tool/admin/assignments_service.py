@@ -617,6 +617,61 @@ def replace_assignment_rankings(
     return result.data or []
 
 
+def save_single_assignment_ranking(
+    sb: Any,
+    *,
+    assignment_id: int,
+    reader_id: Any,
+    school: str,
+    grade: str,
+    batch_number: int,
+    submission_id: str,
+    rank_position: int,
+    reader_name: str,
+    reader_email: str,
+) -> list[dict[str, Any]]:
+    """
+    Save or replace one ranking row inside an assignment.
+    """
+    normalized_submission_id = str(submission_id or "").strip()
+    sb.table("essay_rankings").delete().eq("assignment_id", int(assignment_id)).eq("reader_id", reader_id).eq(
+        "submission_id", normalized_submission_id
+    ).execute()
+    result = sb.table("essay_rankings").upsert(
+        [
+            {
+                "assignment_id": int(assignment_id),
+                "reader_id": reader_id,
+                "submission_id": normalized_submission_id,
+                "school_name": str(school or "").strip(),
+                "grade": str(grade or "").strip(),
+                "batch_number": int(batch_number),
+                "rank_position": int(rank_position),
+                "reader_name": str(reader_name or "").strip(),
+                "reader_email": str(reader_email or "").strip().lower(),
+            }
+        ],
+        on_conflict="assignment_id,reader_id,submission_id",
+        ignore_duplicates=False,
+    ).execute()
+    return result.data or []
+
+
+def delete_single_assignment_ranking(sb: Any, *, assignment_id: int, reader_id: Any, submission_id: str) -> bool:
+    """
+    Delete one saved ranking row for a single essay in an assignment.
+    """
+    result = (
+        sb.table("essay_rankings")
+        .delete()
+        .eq("assignment_id", int(assignment_id))
+        .eq("reader_id", reader_id)
+        .eq("submission_id", str(submission_id or "").strip())
+        .execute()
+    )
+    return bool(result.data)
+
+
 def compute_ranking_results(sb: Any, *, grade: str, school: str | None = None) -> list[dict[str, Any]]:
     """
     Compute final ranking results for a grade, optionally filtered to one school.
@@ -645,7 +700,9 @@ def compute_ranking_results(sb: Any, *, grade: str, school: str | None = None) -
     )
     submissions = {str(row.get("submission_id") or ""): row for row in (submissions_result.data or [])}
 
-    grouped: dict[str, dict[str, Any]] = defaultdict(lambda: {"total_rank": 0, "num_ranks": 0, "breakdown": []})
+    grouped: dict[str, dict[str, Any]] = defaultdict(
+        lambda: {"total_rank": 0, "num_ranks": 0, "breakdown": [], "rank_counts": defaultdict(int)}
+    )
     for row in rankings:
         submission_id = str(row.get("submission_id") or "").strip()
         if not submission_id:
@@ -653,6 +710,7 @@ def compute_ranking_results(sb: Any, *, grade: str, school: str | None = None) -
         rank_value = int(row.get("rank_position") or 0)
         grouped[submission_id]["total_rank"] += rank_value
         grouped[submission_id]["num_ranks"] += 1
+        grouped[submission_id]["rank_counts"][rank_value] += 1
         grouped[submission_id]["breakdown"].append(
             {
                 "readerId": row.get("reader_id"),
@@ -667,6 +725,8 @@ def compute_ranking_results(sb: Any, *, grade: str, school: str | None = None) -
         submission = submissions.get(submission_id) or {}
         num_ranks = int(aggregate["num_ranks"])
         average_rank = float(aggregate["total_rank"]) / num_ranks if num_ranks else 0.0
+        first_place_votes = int(aggregate["rank_counts"].get(1, 0))
+        second_place_votes = int(aggregate["rank_counts"].get(2, 0))
         results.append(
             {
                 "submissionId": submission_id,
@@ -675,11 +735,21 @@ def compute_ranking_results(sb: Any, *, grade: str, school: str | None = None) -
                 "grade": submission.get("grade"),
                 "numRanks": num_ranks,
                 "averageRank": average_rank,
+                "firstPlaceVotes": first_place_votes,
+                "secondPlaceVotes": second_place_votes,
                 "readerBreakdown": sorted(aggregate["breakdown"], key=lambda item: (item["rankPosition"], str(item["readerEmail"] or ""))),
             }
         )
 
-    results.sort(key=lambda item: (item["averageRank"], -item["numRanks"], str(item["submissionId"])))
+    results.sort(
+        key=lambda item: (
+            item["averageRank"],
+            -item["firstPlaceVotes"],
+            -item["secondPlaceVotes"],
+            -item["numRanks"],
+            str(item["submissionId"]),
+        )
+    )
     for index, item in enumerate(results, start=1):
         item["finalPosition"] = index
     return results
