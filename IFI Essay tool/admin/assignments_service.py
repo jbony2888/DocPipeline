@@ -151,13 +151,13 @@ def _standardized_school_label(canonical_school: str) -> str | None:
     if not raw_value:
         return None
     value = _normalize_school_text(raw_value)
-    if "carson" in value:
+    if "carson" in value or "cavan" in value:
         return "Rachel Carson Elementary School"
-    if "la salle" in value or "lasalle" in value:
+    if "la salle" in value or "lasalle" in value or "delasalle" in value:
         return "De La Salle Institute"
     if "mundelein" in value or "munderein" in value:
         return "Mundelein HS"
-    if "st mary" in value or "saint mary" in value or "st many" in value:
+    if "st mary" in value or "saint mary" in value or "st many" in value or "smarys" in value or "stmarys" in value or "marys pontiac" in value or "st marils" in value:
         return "St Mary Pontiac"
     return None
 

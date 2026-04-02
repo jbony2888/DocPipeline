@@ -108,6 +108,19 @@ SCHOOL_MAP = {
     "saint mary school": "ST_MARY_PONTIAC",
     "saint marys school": "ST_MARY_PONTIAC",
     "saint mary pontiac": "ST_MARY_PONTIAC",
+    "smarys": "ST_MARY_PONTIAC",
+    "stmarys": "ST_MARY_PONTIAC",
+    "stmarys pontiac": "ST_MARY_PONTIAC",
+    "stmarys pontia": "ST_MARY_PONTIAC",
+    "st marils": "ST_MARY_PONTIAC",
+    "mundelein hs": "MUNDELEIN_HS",
+    "mundelein": "MUNDELEIN_HS",
+    "mundelein high school": "MUNDELEIN_HS",
+    "delasalle": "DE_LA_SALLE_INSTITUTE",
+    "delasalle institute": "DE_LA_SALLE_INSTITUTE",
+    "rachel cavan": "RACHEL_CARSON",
+    "reachel carson": "RACHEL_CARSON",
+    "reachel carson elementary": "RACHEL_CARSON",
 }
 
 # Known OCR typos / variants → canonical key for lookup (lowercase, no punctuation)
@@ -130,6 +143,16 @@ SCHOOL_TYPOS = {
     "st many school": "st mary school",
     "st marys school": "st mary school",
     "st marys pontiac": "st mary pontiac",
+    "smarys": "st marys",
+    "stmarys": "st marys",
+    "stmarys pontiac": "st marys pontiac",
+    "stmarys pontia": "st marys pontiac",
+    "st marils": "st marys",
+    "delasalle": "de la salle",
+    "delasalle institute": "de la salle institute",
+    "rachel cavan": "rachel carson",
+    "reachel carson": "rachel carson",
+    "reachel carson elementary": "rachel carson elementary",
 }
 
 SCHOOL_DISPLAY_BY_KEY = {
@@ -138,6 +161,7 @@ SCHOOL_DISPLAY_BY_KEY = {
     "EDWARDS": "Edwards",
     "PS_667_B": "PS 667 B",
     "ST_MARY_PONTIAC": "St Mary Pontiac",
+    "MUNDELEIN_HS": "Mundelein HS",
 }
 
 
