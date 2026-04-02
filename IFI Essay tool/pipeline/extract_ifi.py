@@ -920,6 +920,22 @@ def _extract_ifi_typed_form_by_position(raw_text: str, contact_block: str) -> Di
         FATHER_FIGURE_ALIASES,
     )
     from pipeline.normalize import sanitize_grade
+    month_words = (
+        "january", "february", "march", "april", "may", "june",
+        "july", "august", "september", "october", "november", "december",
+    )
+
+    def _is_date_like_school_value(v: str | None) -> bool:
+        if not v or not str(v).strip():
+            return False
+        low = str(v).strip().lower()
+        if low.startswith("deadline"):
+            return True
+        if re.search(r"\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b", low):
+            return True
+        has_month = any(m in low for m in month_words)
+        has_day_num = bool(re.search(r"\b\d{1,2}\b", low))
+        return has_month and has_day_num
 
     text = (contact_block or "") + "\n" + (raw_text or "")
     if not detect_ifi_official_typed_form(text):
@@ -1133,8 +1149,31 @@ def _extract_ifi_typed_form_by_position(raw_text: str, contact_block: str) -> Di
     # Reject label-only, essay text, or invalid entries (e.g. "a dog" is not a school)
     if school_name:
         sn_low = school_name.lower().strip()
-        if sn_low in ("escuela", "/ escuela", "school", "school name", "a dog", "escuela a dog", "/ escuela a dog"):
+        if sn_low in ("escuela", "/ escuela", "school", "school name", "a dog", "escuela a dog", "/ escuela a dog") or "a dog" in sn_low:
             school_name = None
+        elif _is_date_like_school_value(school_name):
+            school_name = None
+    if school_name is None:
+        # OCR variant: "School / Escuela De La Salle Institute" often appears on a single line.
+        # extract_value_near_label can miss this when slash/spacing is irregular.
+        for idx, ln in enumerate(top_lines):
+            low = ln.lower()
+            if "school" not in low and "escuela" not in low:
+                continue
+            m = re.search(r"(?:school\s*/?\s*escuela|escuela\s*/?\s*school)\s*[:\-]?\s*(.+)$", ln, re.IGNORECASE)
+            cand = (m.group(1).strip() if m else "")
+            if not cand and idx + 1 < len(top_lines):
+                nxt = top_lines[idx + 1].strip()
+                if nxt and not _is_date_like_school_value(nxt):
+                    cand = nxt
+            if not cand:
+                continue
+            if _is_date_like_school_value(cand):
+                continue
+            if looks_like_essay_fragment(cand) or not is_valid_value_candidate(cand, max_length=80):
+                continue
+            school_name = cand
+            break
     if school_name and is_valid_value_candidate(school_name, max_length=80) and not looks_like_essay_fragment(school_name):
         result["school_name"] = school_name
 
@@ -1183,7 +1222,9 @@ def _extract_ifi_typed_form_by_position(raw_text: str, contact_block: str) -> Di
             cand_low = cand.lower()
             if "luis" in cand_low and "vega" in cand_low and len(cand.split()) <= 3:
                 continue
-            if cand_low in ("a dog", "escuela a dog", "/ escuela a dog"):
+            if cand_low in ("a dog", "escuela a dog", "/ escuela a dog") or "a dog" in cand_low:
+                continue
+            if _is_date_like_school_value(cand):
                 continue
             words = cand.split()
             # Allow single-word schools, multi-word with caps, or lowercase that matches reference (e.g. "rachel carson")
@@ -1226,6 +1267,8 @@ def _extract_ifi_typed_form_by_position(raw_text: str, contact_block: str) -> Di
                 continue
             if looks_like_essay_fragment(cand) or not is_valid_value_candidate(cand, max_length=80):
                 continue
+            if _is_date_like_school_value(cand):
+                continue
             # Skip if same as student name (e.g. "Nathan Vega" appears before "Rachecl carson" on 26-IFI form)
             if result.get("student_name") and cand.strip().lower() == result["student_name"].strip().lower():
                 continue
@@ -1260,6 +1303,8 @@ def _extract_ifi_typed_form_by_position(raw_text: str, contact_block: str) -> Di
     if result.get("school_name"):
         low = result["school_name"].lower().strip()
         if low in ("escuela", "/ escuela", "school", "school name", "a dog", "escuela a dog", "/ escuela a dog") or "a dog" in low:
+            del result["school_name"]
+        elif _is_date_like_school_value(result["school_name"]):
             del result["school_name"]
 
     # 26-IFI form: student/school can be swapped (student in header, school in bottom contact).
@@ -1334,6 +1379,8 @@ def extract_fields_ifi(
         low = str(v).strip().lower()
         if low in ("escuela", "/ escuela", "school", "school name", "a dog", "escuela a dog", "/ escuela a dog"):
             return None
+        if "a dog" in low:
+            return None
         return v.strip()
 
     form_student_name = None
@@ -1391,14 +1438,19 @@ def extract_fields_ifi(
             normalized = _normalize_freeform_metadata_via_groq(header_text, heuristic_result)
             # Use Groq-normalized result if available, else heuristics only
             name_school_grade = normalized if normalized else heuristic_result
+            if name_school_grade:
+                from pipeline.extract import looks_like_essay_fragment
+                sn = name_school_grade.get("student_name")
+                if sn and looks_like_essay_fragment(sn):
+                    name_school_grade = {**name_school_grade, "student_name": None}
             ifi_result = {
                 "doc_type": "ESSAY_WITH_HEADER_METADATA",
                 "is_blank_template": False,
                 "extraction_method": "llm_ifi_freeform_heuristics_then_groq_normalize" if normalized else "freeform_heuristics_only",
                 "notes": ["Typed freeform: heuristics extract → Groq normalize"] if normalized else ["Typed freeform: heuristics only (Groq unavailable)"],
-                "student_name": name_school_grade.get("student_name"),
-                "school_name": name_school_grade.get("school_name"),
-                "grade": name_school_grade.get("grade"),
+                "student_name": name_school_grade.get("student_name") if name_school_grade else None,
+                "school_name": name_school_grade.get("school_name") if name_school_grade else None,
+                "grade": name_school_grade.get("grade") if name_school_grade else None,
                 "essay_text": (raw_text or "").strip() or None,
                 "father_figure_name": None,
                 "father_figure_type": None,
@@ -1419,8 +1471,11 @@ def extract_fields_ifi(
 
         typed_form_fields = _extract_ifi_typed_form_by_position(raw_text, contact_block)
         if typed_form_fields:
+            from pipeline.extract import looks_like_essay_fragment
             for k, v in typed_form_fields.items():
                 if v is not None and (ifi_result.get(k) is None or k in ("grade", "school_name", "student_name")):
+                    if k == "student_name" and looks_like_essay_fragment(v):
+                        continue  # e.g. "What my" from essay title
                     ifi_result[k] = v
                     logger.info(f"IFI typed form extraction: {k}={v!r}")
 
@@ -1451,7 +1506,7 @@ def extract_fields_ifi(
     # Fallback: If LLM didn't extract student_name, try rule-based extraction from contact_block
     # Skip for typed forms (already did position-aware extraction; fallback can return labels)
     if not student_name and contact_block and not is_ifi_typed_form:
-        from pipeline.extract import extract_value_near_label, STUDENT_NAME_ALIASES
+        from pipeline.extract import extract_value_near_label, STUDENT_NAME_ALIASES, looks_like_essay_fragment
         lines = [line.strip() for line in contact_block.split('\n') if line.strip()]
         student_name = extract_value_near_label(
             lines, STUDENT_NAME_ALIASES, max_length=40, value_after_label_only=True
@@ -1459,7 +1514,7 @@ def extract_fields_ifi(
         if student_name:
             low = student_name.lower()
             if low not in ("student's name", "student name", "student's", "nombre del estudiante"):
-                if is_plausible_student_name(student_name, max_line_length=40):
+                if not looks_like_essay_fragment(student_name) and is_plausible_student_name(student_name, max_line_length=40):
                     logger.info(f"Fallback extraction found student_name: {student_name}")
                     ifi_result['student_name'] = student_name
                     if 'notes' not in ifi_result:
@@ -1480,8 +1535,11 @@ def extract_fields_ifi(
         if missing:
             freeform = _extract_freeform_name_school_grade(text)
             if freeform:
+                from pipeline.extract import looks_like_essay_fragment
                 for k in ("student_name", "school_name", "grade"):
                     if freeform.get(k) is not None and ifi_result.get(k) is None:
+                        if k == "student_name" and looks_like_essay_fragment(freeform[k]):
+                            continue
                         ifi_result[k] = freeform[k]
                         logger.info(f"Freeform pattern: {k}={freeform[k]!r}")
                 if freeform.get("student_name"):
@@ -1506,8 +1564,11 @@ def extract_fields_ifi(
         if still_missing:
             unlabeled = _extract_unlabeled_header_metadata(text)
             if unlabeled:
+                from pipeline.extract import looks_like_essay_fragment
                 for k in ("student_name", "school_name", "grade"):
                     if unlabeled.get(k) is not None and ifi_result.get(k) is None:
+                        if k == "student_name" and looks_like_essay_fragment(unlabeled[k]):
+                            continue
                         ifi_result[k] = unlabeled[k]
                         logger.info(f"Unlabeled header extraction: {k}={unlabeled[k]!r}")
                 if unlabeled.get("student_name"):
@@ -1523,6 +1584,18 @@ def extract_fields_ifi(
         ifi_result["school_name"] = form_school
     if form_father_figure_name:
         ifi_result["father_figure_name"] = form_father_figure_name
+
+    # Filename hint (very conservative): some client-provided batch PDFs are named by grade bucket.
+    # Example: "carsonk.pdf" is a kindergarten-only batch; OCR can misread "K" as "3" or miss it.
+    try:
+        fn_low = (original_filename or "").strip().lower()
+    except Exception:
+        fn_low = ""
+    if fn_low in ("carsonk.pdf", "carsonk"):
+        g = ifi_result.get("grade")
+        # Override only when grade is missing or clearly inconsistent for this known K batch.
+        if g is None or str(g).strip() in ("3", "4", "5", "6", "7", "8", "9", "10", "11", "12"):
+            ifi_result["grade"] = "K"
 
     # Map to pipeline format (form "Dad's Name" overrides text extraction so we don't get "or" from the label)
     father_figure_name = form_father_figure_name or ifi_result.get("father_figure_name")
@@ -1541,12 +1614,31 @@ def extract_fields_ifi(
         if not v or not str(v).strip():
             return True
         low = str(v).strip().lower().replace("\u2019", "'")
-        return any(x in low for x in ("father/father-figure name", "nombre del padre", "nombre deo padre", "figura paterna", "judging process"))
+        if any(x in low for x in ("father/father-figure name", "nombre del padre", "nombre deo padre", "figura paterna", "judging process")):
+            return True
+        # Common boilerplate / non-name strings that can leak into the name slot on scanned forms.
+        # E.g. "Due by ..." from contest instructions, or other administrative headers.
+        if re.search(r"\bdue\s+by\b", low):
+            return True
+        if "contest details" in low or "criteria for essay judging" in low or "judging process" in low:
+            return True
+        # Never accept values that look like other header fields or administrative prompts.
+        if any(tok in low for tok in ("father", "father-figure", "padre", "figura paterna", "reaction to this essay")):
+            return True
+        if any(tok in low for tok in ("phone", "teléfono", "telefono", "email", "correo")):
+            return True
+        if any(tok in low for tok in ("deadline", "character maximum", "maximo de caracteres", "máximo de caracteres")):
+            return True
+        return False
     def _is_label_school_name(v):
         if not v or not str(v).strip():
             return True
         low = str(v).strip().lower()
-        return low in ("escuela", "/ escuela", "school", "school name")
+        if low in ("escuela", "/ escuela", "school", "school name"):
+            return True
+        if "a dog" in low or low == "escuela a dog":
+            return True  # essay placeholder, not a real school
+        return False
 
     out_student = student_name or ifi_result.get("student_name")
     out_school = ifi_result.get("school_name")
@@ -1562,8 +1654,14 @@ def extract_fields_ifi(
             logger.info("Student name from filename (typed form empty/wrong): %s", name_from_file)
     if out_student and _is_label_student_name(out_student):
         out_student = None
-    if out_school and _is_label_school_name(out_school):
-        out_school = None
+    if out_student:
+        from pipeline.extract import looks_like_essay_fragment
+        if looks_like_essay_fragment(out_student):
+            out_student = None  # e.g. "What my" from essay title
+    if out_school:
+        from pipeline.extract import looks_like_essay_fragment
+        if looks_like_essay_fragment(out_school) or _is_label_school_name(out_school):
+            out_school = None  # e.g. "Friend Hes My Dad Patient" from essay body
 
     pipeline_fields = {
         'student_name': out_student,

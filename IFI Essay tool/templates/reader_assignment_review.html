@@ -65,7 +65,10 @@
                         <div class="meta-label">Grade</div>
                         <div class="mb-2">{{ assignment.grade }}</div>
                         <div class="meta-label">Batch</div>
-                        <div>Batch {{ assignment.batchNumber }} of {{ assignment.totalBatches }} · {{ assignment.essayCount }} essays</div>
+                        <div>
+                            {% if assignment.isFinalistRound %}Round 2 Finalists · {% else %}Round 1 Initial Ranking · {% endif %}
+                            Batch {{ assignment.batchNumber }} of {{ assignment.totalBatches }} · {{ assignment.essayCount }} essays
+                        </div>
                     </div>
                     <div class="text-lg-end">
                         <a class="btn btn-outline-secondary" href="{{ url_for('admin.reader_access', token=token) }}">Back to Reader Portal</a>
@@ -82,6 +85,11 @@
         {% if success_message %}
         <div class="alert alert-success">{{ success_message }}</div>
         {% endif %}
+        {% if ranking_finalized %}
+        <div class="alert alert-info">
+            Ranking finalized{% if ranking_finalized_at %} on {{ ranking_finalized_at }}{% endif %}. This batch is now read-only.
+        </div>
+        {% endif %}
 
         <form method="post" class="card">
             <div class="card-body p-4">
@@ -89,7 +97,7 @@
                 <div class="row g-3 mb-4">
                     <div class="col-md-6">
                         <label for="reader_name" class="form-label">Your Name</label>
-                        <input id="reader_name" name="reader_name" type="text" class="form-control" value="{{ reader_name or '' }}" required>
+                        <input id="reader_name" name="reader_name" type="text" class="form-control" value="{{ reader_name or '' }}" {% if ranking_finalized %}readonly{% else %}required{% endif %}>
                     </div>
                     <div class="col-md-6">
                         <label for="reader_email" class="form-label">Your Email</label>
@@ -115,7 +123,13 @@
                             <button type="button" class="btn btn-outline-secondary btn-sm filter-btn" data-filter="ranked">Ranked</button>
                             <button type="button" class="btn btn-outline-secondary btn-sm filter-btn" data-filter="unranked">Unranked</button>
                         </div>
-                        <div class="text-muted small">Use the save button on each essay card to save one ranking at a time.</div>
+                        <div class="text-muted small">
+                            {% if ranking_finalized %}
+                            This ranking is finalized and locked.
+                            {% else %}
+                            Use Save for single essays, then click Complete Ranking to submit the final full batch.
+                            {% endif %}
+                        </div>
                     </div>
                     <div class="section-label">Live Order</div>
                     <div id="essay-list" class="essay-list">
@@ -149,11 +163,12 @@
                                         name="rank_{{ essay.submissionId }}"
                                         value="{{ essay.rankPosition }}"
                                         data-rank-input
+                                        {% if ranking_finalized %}disabled{% endif %}
                                     >
                                     <div class="rank-help">Use a number from 1 to {{ assignment.essayCount }} for this batch.</div>
                                 </div>
-                                <button type="submit" class="btn btn-sm btn-primary" name="save_submission_id" value="{{ essay.submissionId }}">Save</button>
-                                <button type="submit" class="btn btn-sm btn-outline-danger" name="unrank_submission_id" value="{{ essay.submissionId }}" data-unrank-btn>Unrank</button>
+                                <button type="submit" class="btn btn-sm btn-primary" name="save_submission_id" value="{{ essay.submissionId }}" {% if ranking_finalized %}disabled{% endif %}>Save</button>
+                                <button type="submit" class="btn btn-sm btn-outline-danger" name="unrank_submission_id" value="{{ essay.submissionId }}" data-unrank-btn {% if ranking_finalized %}disabled{% endif %}>Unrank</button>
                             </div>
 
                             <div class="essay-actions">
@@ -164,6 +179,13 @@
                             <div class="winner-note">Current winner for this batch: rank 1.</div>
                         </article>
                         {% endfor %}
+                    </div>
+                    <div class="d-flex justify-content-end mt-3">
+                        {% if ranking_finalized %}
+                        <button type="button" class="btn btn-outline-secondary" disabled>Ranking Finalized</button>
+                        {% else %}
+                        <button type="submit" class="btn btn-success">Complete Ranking</button>
+                        {% endif %}
                     </div>
                 </section>
 

@@ -17,6 +17,7 @@ class DocClass(str, Enum):
     SINGLE_SCANNED = "SINGLE_SCANNED"      # Scanned/image, single page, one submission
     MULTI_PAGE_SINGLE = "MULTI_PAGE_SINGLE"  # One submission spanning multiple pages
     BULK_SCANNED_BATCH = "BULK_SCANNED_BATCH"  # Multiple submissions in one scanned file
+    MULTI_ENTRY_PARENT = "MULTI_ENTRY_PARENT"  # Container row pointing to original multi-entry upload
 
 
 class OcrResult(BaseModel):

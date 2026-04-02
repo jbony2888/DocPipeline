@@ -83,9 +83,31 @@ SCHOOL_MAP = {
     "rachel carson": "RACHEL_CARSON",
     "rachel carson school": "RACHEL_CARSON",
     "rachel carson elementary": "RACHEL_CARSON",
+    "rachel carson elementary school": "RACHEL_CARSON",
+    "carson": "RACHEL_CARSON",
+    "carson elementary school": "RACHEL_CARSON",
+    "carsonelementaryschool": "RACHEL_CARSON",
     "edwards": "EDWARDS",
     "edwards school": "EDWARDS",
     "escuela edwards": "EDWARDS",
+    "ps 667 b": "PS_667_B",
+    "667 b": "PS_667_B",
+    "p s 667 b": "PS_667_B",
+    "de la salle institute": "DE_LA_SALLE_INSTITUTE",
+    "de la salle": "DE_LA_SALLE_INSTITUTE",
+    "de la salle insitute": "DE_LA_SALLE_INSTITUTE",
+    "de la salle instetute": "DE_LA_SALLE_INSTITUTE",
+    "de la salle institue": "DE_LA_SALLE_INSTITUTE",
+    "de la salle instutute": "DE_LA_SALLE_INSTITUTE",
+    "st mary pontiac": "ST_MARY_PONTIAC",
+    "st marys pontiac": "ST_MARY_PONTIAC",
+    "st mary school": "ST_MARY_PONTIAC",
+    "st marys school": "ST_MARY_PONTIAC",
+    "st mary": "ST_MARY_PONTIAC",
+    "st marys": "ST_MARY_PONTIAC",
+    "saint mary school": "ST_MARY_PONTIAC",
+    "saint marys school": "ST_MARY_PONTIAC",
+    "saint mary pontiac": "ST_MARY_PONTIAC",
 }
 
 # Known OCR typos / variants → canonical key for lookup (lowercase, no punctuation)
@@ -93,12 +115,51 @@ SCHOOL_TYPOS = {
     "dware": "edwards",
     "edward": "edwards",
     "edwards school": "edwards",
+    "667 b": "ps 667 b",
+    "667b": "ps 667 b",
+    "ps667b": "ps 667 b",
+    "p s 667 b": "ps 667 b",
+    "de la salle insitute": "de la salle institute",
+    "de la salle instetute": "de la salle institute",
+    "de la salle institue": "de la salle institute",
+    "de la salle instutute": "de la salle institute",
+    "rachal carson": "rachel carson",
+    "rachecl carson": "rachel carson",
+    "carsonelementaryschool": "carson elementary school",
+    "st manys school": "st marys school",
+    "st many school": "st mary school",
+    "st marys school": "st mary school",
+    "st marys pontiac": "st mary pontiac",
+}
+
+SCHOOL_DISPLAY_BY_KEY = {
+    "RACHEL_CARSON": "Rachel Carson Elementary School",
+    "DE_LA_SALLE_INSTITUTE": "De La Salle Institute",
+    "EDWARDS": "Edwards",
+    "PS_667_B": "PS 667 B",
+    "ST_MARY_PONTIAC": "St Mary Pontiac",
 }
 
 
 def _strip_leading_trailing_punctuation(text: str) -> str:
     """Remove punctuation only from start and end of string."""
     return text.strip(string.punctuation + " \t\n\r")
+
+
+def _format_school_display(text: str) -> str:
+    """Title-case words while preserving short all-alpha acronyms like PS."""
+    acronym_words = {"PS", "MS", "HS", "K", "PK"}
+    lowercase_particles = {"de", "la", "del", "el", "y"}
+    out = []
+    for word in text.split():
+        wl = word.lower()
+        if wl in lowercase_particles:
+            out.append(wl.capitalize())
+        elif word.upper() in acronym_words:
+            out.append(word.upper())
+        else:
+            out.append(word.capitalize())
+    return " ".join(out)
 
 
 def sanitize_school_name(school_raw: Optional[str]) -> Optional[str]:
@@ -121,7 +182,7 @@ def sanitize_school_name(school_raw: Optional[str]) -> Optional[str]:
     s = " ".join(s.split())
     if len(s) < MIN_SCHOOL_NAME_LENGTH:
         return None
-    return " ".join(word.capitalize() for word in s.split())
+    return _format_school_display(s)
 
 
 def _clean_school(text: str) -> str:
@@ -148,5 +209,5 @@ def normalize_school_name(school_raw: Optional[str]) -> Tuple[Optional[str], Opt
     if key_lower in SCHOOL_TYPOS:
         key_lower = SCHOOL_TYPOS[key_lower]
     canonical = SCHOOL_MAP.get(key_lower)
-    school_norm = " ".join(word.capitalize() for word in key_lower.split())
+    school_norm = SCHOOL_DISPLAY_BY_KEY.get(canonical, _format_school_display(key_lower))
     return school_norm, canonical

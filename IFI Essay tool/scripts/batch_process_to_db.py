@@ -24,6 +24,8 @@ from dotenv import load_dotenv
 from supabase import create_client
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from jobs.process_submission import process_submission_job
 
@@ -78,6 +80,8 @@ def main() -> int:
     parser.add_argument("--ocr-provider", default="google", help="OCR provider name.")
     parser.add_argument("--out", default=None, help="Output JSONL path.")
     parser.add_argument("--max-files", type=int, default=None, help="Optional limit for file count.")
+    parser.add_argument("--offset", type=int, default=0, help="Skip first N files (for batch processing).")
+    parser.add_argument("--limit", type=int, default=None, help="Process at most N files (after offset).")
     args = parser.parse_args()
 
     project_root = PROJECT_ROOT
@@ -94,8 +98,11 @@ def main() -> int:
         return 2
 
     files = sorted([p for p in input_dir.glob(args.pattern) if p.is_file()])
-    if args.max_files:
-        files = files[: args.max_files]
+    if args.offset:
+        files = files[args.offset:]
+    cap = args.limit if args.limit is not None else args.max_files
+    if cap is not None:
+        files = files[:cap]
 
     if not files:
         print(f"ERROR: no files matched {args.pattern} in {input_dir}")

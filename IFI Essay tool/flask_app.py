@@ -206,6 +206,7 @@ def format_review_reasons(reason_codes: str) -> str:
         "INVALID_GRADE_RANGE": "Invalid grade (not K–12 / recognized)",
         "UNKNOWN_SCHOOL": "School not in reference list",
         "POSSIBLE_FIELD_SWAP": "Possible student/school mix-up",
+        "CONTENT_MISMATCH": "Content mismatch (wrong/partial page attached)",
     }
     
     codes = [

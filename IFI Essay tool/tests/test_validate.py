@@ -37,6 +37,18 @@ def test_typed_form_missing_field_flags_enum():
     assert "MISSING_STUDENT_NAME" in report["review_reason_codes"]
 
 
+def test_date_like_student_name_is_treated_as_missing_and_not_saved():
+    record, report = validate_record(_base_partial(student_name="Tuesday, March 17, 2026"))
+    assert record.student_name is None
+    assert "MISSING_STUDENT_NAME" in report["review_reason_codes"]
+
+
+def test_header_like_school_name_is_treated_as_missing_and_not_saved():
+    record, report = validate_record(_base_partial(school_name="English Page 2"))
+    assert record.school_name is None
+    assert "MISSING_SCHOOL_NAME" in report["review_reason_codes"]
+
+
 def test_official_scanned_missing_grade_and_school_are_flagged():
     record, report = validate_record(
         _base_partial(
@@ -149,3 +161,16 @@ def test_bulk_child_chunk_runs_document_validation():
     assert report["doc_role"] == "document"
     assert record.needs_review is True
     assert "MISSING_STUDENT_NAME" in report["review_reason_codes"]
+
+
+def test_unknown_short_missing_fields_is_flagged_content_mismatch():
+    record, report = validate_record(
+        _base_partial(
+            doc_type="unknown",
+            school_name=None,
+            grade=None,
+            word_count=4,
+        )
+    )
+    assert record.needs_review is True
+    assert "CONTENT_MISMATCH" in report["review_reason_codes"]

@@ -138,6 +138,7 @@
 
         {% for section in sections %}
         <section class="mb-4">
+            {% if section.winner %}
             <div class="winner-card card mb-3">
                 <div class="card-body">
                     <div class="d-flex flex-column flex-lg-row justify-content-between gap-3">
@@ -152,36 +153,172 @@
                             <div class="text-muted">{{ section.winner.schoolName or 'Unknown school' }}</div>
                             {% endif %}
                         </div>
-                        {% if section.winner %}
                         <div class="d-flex flex-wrap gap-2 align-content-start">
                             <div class="metric-pill"><strong>#1</strong> final position</div>
                             <div class="metric-pill"><strong>{{ '%.2f'|format(section.winner.averageRank) }}</strong> average rank</div>
                             <div class="metric-pill"><strong>{{ section.winner.firstPlaceVotes }}</strong> first-place vote{{ '' if section.winner.firstPlaceVotes == 1 else 's' }}</div>
                             <div class="metric-pill"><strong>{{ section.winner.numRanks }}</strong> reader{{ '' if section.winner.numRanks == 1 else 's' }}</div>
+                            <div class="metric-pill"><strong>{{ section.batchProgress.completedBatches }}</strong>/{{ section.batchProgress.assignedBatches }} grade batch{{ '' if section.batchProgress.assignedBatches == 1 else 'es' }} finalized</div>
                         </div>
-                        {% endif %}
                     </div>
                     {% if section.results|length <= 1 %}
                     <p class="text-muted small mt-3 mb-0">A final winner is not declared until at least two essays have ranking data in this grade view.</p>
                     {% endif %}
+                    {% if section.topTen %}
+                    <form class="row g-2 mt-3" onsubmit="return assignRound2(event, '{{ section.grade }}', '{{ selected_school }}')">
+                        <div class="col-md-6 col-lg-5">
+                            <select class="form-select form-select-sm" data-round2-reader-select>
+                                <option value="">Select previous assignee (optional)</option>
+                                {% for choice in section.round1ReaderChoices %}
+                                <option value="{{ choice.email }}">{{ choice.label }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-md-6 col-lg-5">
+                            <input
+                                type="email"
+                                class="form-control form-control-sm"
+                                placeholder="or assign new reader email"
+                                data-round2-reader-custom
+                            >
+                        </div>
+                        <div class="col-auto">
+                            <button type="submit" class="btn btn-sm btn-outline-primary">Assign Round 2 Top 10</button>
+                        </div>
+                    </form>
+                    {% endif %}
                 </div>
             </div>
+            {% endif %}
 
-            {% if section.results|length > 1 %}
+            {% if section.topTen %}
             <div class="card mb-3">
                 <div class="card-body">
-                    <div class="winner-label"><i class="bi bi-award-fill"></i> Grade {{ section.grade }} Second Place</div>
-                    <h3 class="h5 mt-3 mb-1">{{ section.results[1].studentName or 'Unknown student' }}</h3>
-                    <div class="text-muted mb-2">{{ section.results[1].schoolName or 'Unknown school' }}</div>
-                    <div class="d-flex flex-wrap gap-2">
-                        <div class="metric-pill"><strong>#2</strong> final position</div>
-                        <div class="metric-pill"><strong>{{ '%.2f'|format(section.results[1].averageRank) }}</strong> average rank</div>
-                        <div class="metric-pill"><strong>{{ section.results[1].firstPlaceVotes }}</strong> first-place vote{{ '' if section.results[1].firstPlaceVotes == 1 else 's' }}</div>
+                    <div class="winner-label"><i class="bi bi-list-ol"></i> Grade {{ section.grade }} Top {{ section.topTen|length }} Finalists</div>
+                    <div class="table-responsive mt-3">
+                        <table class="table table-sm mb-0">
+                            <thead>
+                                <tr>
+                                    <th>Position</th>
+                                    <th>Student</th>
+                                    <th>School</th>
+                                    <th>Average Rank</th>
+                                    <th>#1 Votes</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for finalist in section.topTen %}
+                                <tr>
+                                    <td>
+                                        {% if finalist.finalPosition == 1 and section.topTen|length > 1 %}
+                                        <span class="badge text-bg-warning">Winner</span>
+                                        {% elif finalist.finalPosition == 1 %}
+                                        <span class="badge text-bg-info">Leader</span>
+                                        {% else %}
+                                        <span class="badge text-bg-secondary">#{{ finalist.finalPosition }}</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>{{ finalist.studentName or 'Unknown student' }}</td>
+                                    <td>{{ finalist.schoolName or 'Unknown school' }}</td>
+                                    <td>{{ '%.2f'|format(finalist.averageRank) }}</td>
+                                    <td>{{ finalist.firstPlaceVotes }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
                     </div>
                 </div>
             </div>
             {% endif %}
 
+            {% if section.round2Winner %}
+            <div class="winner-card card mb-3">
+                <div class="card-body">
+                    <div class="d-flex flex-column flex-lg-row justify-content-between gap-3">
+                        <div>
+                            {% if section.round2Results|length > 1 %}
+                            <div class="winner-label"><i class="bi bi-stars"></i> Grade {{ section.grade }} Round 2 Winner</div>
+                            {% else %}
+                            <div class="winner-label"><i class="bi bi-hourglass-split"></i> Grade {{ section.grade }} Round 2 Provisional Leader</div>
+                            {% endif %}
+                            <h2 class="h4 mt-3 mb-1">{{ section.round2Winner.studentName or 'Unknown student' }}</h2>
+                            <div class="text-muted">{{ section.round2Winner.schoolName or 'Unknown school' }}</div>
+                        </div>
+                        <div class="d-flex flex-wrap gap-2 align-content-start">
+                            <div class="metric-pill"><strong>#1</strong> final position</div>
+                            <div class="metric-pill"><strong>{{ '%.2f'|format(section.round2Winner.averageRank) }}</strong> average rank</div>
+                            <div class="metric-pill"><strong>{{ section.round2Winner.firstPlaceVotes }}</strong> first-place vote{{ '' if section.round2Winner.firstPlaceVotes == 1 else 's' }}</div>
+                            <div class="metric-pill"><strong>{{ section.round2Winner.numRanks }}</strong> reader{{ '' if section.round2Winner.numRanks == 1 else 's' }}</div>
+                        </div>
+                    </div>
+                    {% if section.round2Results|length <= 1 %}
+                    <p class="text-muted small mt-3 mb-0">A final Round 2 winner is not declared until at least two finalist essays have ranking data.</p>
+                    {% endif %}
+                </div>
+            </div>
+            {% endif %}
+
+            {% if section.round2Results %}
+            <div class="card overflow-hidden mb-3">
+                <div class="card-body border-bottom">
+                    <h3 class="h6 mb-0">Round 2 Finalist Rankings{% if selected_school %} · {{ selected_school }}{% endif %} · Grade {{ section.grade }}</h3>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Final</th>
+                                <th>Student</th>
+                                <th>School</th>
+                                <th>Average Rank</th>
+                                <th>#1 Votes</th>
+                                <th>Reader Count</th>
+                                <th>All Reader Rankings</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for item in section.round2Results %}
+                            <tr>
+                                <td>
+                                    {% if item.finalPosition == 1 and section.round2Results|length > 1 %}
+                                    <span class="badge text-bg-warning">Winner</span>
+                                    {% elif item.finalPosition == 1 %}
+                                    <span class="badge text-bg-info">Leader</span>
+                                    {% else %}
+                                    <span class="badge text-bg-secondary">#{{ item.finalPosition }}</span>
+                                    {% endif %}
+                                </td>
+                                <td>{{ item.studentName or 'Unknown student' }}</td>
+                                <td>{{ item.schoolName or 'Unknown school' }}</td>
+                                <td>{{ '%.2f'|format(item.averageRank) }}</td>
+                                <td>{{ item.firstPlaceVotes }}</td>
+                                <td>{{ item.numRanks }}</td>
+                                <td>
+                                    {% for reader in item.readerBreakdown %}
+                                    <span class="reader-chip">
+                                        {{ reader.readerName or reader.readerEmail or 'Reader' }}: rank {{ reader.rankPosition }}
+                                    </span>
+                                    {% endfor %}
+                                </td>
+                                <td>
+                                    <a
+                                        class="btn btn-sm btn-outline-primary"
+                                        href="{{ url_for('admin.admin_dashboard', submission_id=item.submissionId) }}"
+                                        title="Open this essay record in Submissions for editing"
+                                    >
+                                        <i class="bi bi-pencil-square"></i> Edit record
+                                    </a>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            {% endif %}
+
+            {% if section.results %}
             <div class="card overflow-hidden">
                 <div class="card-body border-bottom">
                     <h3 class="h6 mb-0">All Essay Rankings{% if selected_school %} · {{ selected_school }}{% endif %} · Grade {{ section.grade }}</h3>
@@ -197,6 +334,7 @@
                                 <th>#1 Votes</th>
                                 <th>Reader Count</th>
                                 <th>All Reader Rankings</th>
+                                <th>Actions</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -223,14 +361,58 @@
                                     </span>
                                     {% endfor %}
                                 </td>
+                                <td>
+                                    <a
+                                        class="btn btn-sm btn-outline-primary"
+                                        href="{{ url_for('admin.admin_dashboard', submission_id=item.submissionId) }}"
+                                        title="Open this essay record in Submissions for editing"
+                                    >
+                                        <i class="bi bi-pencil-square"></i> Edit record
+                                    </a>
+                                </td>
                             </tr>
                             {% endfor %}
                         </tbody>
                     </table>
                 </div>
             </div>
+            {% endif %}
         </section>
         {% endfor %}
     </main>
+    <script>
+        async function assignRound2(event, grade, school) {
+            event.preventDefault();
+            const form = event.currentTarget;
+            const select = form.querySelector('[data-round2-reader-select]');
+            const customInput = form.querySelector('[data-round2-reader-custom]');
+            const selectedEmail = (select && select.value || '').trim();
+            const customEmail = (customInput && customInput.value || '').trim();
+            const readerEmail = customEmail || selectedEmail;
+            if (!readerEmail) {
+                alert('Select a previous assignee or enter a new reader email.');
+                return false;
+            }
+            try {
+                const res = await fetch('{{ url_for("admin.assign_round2_and_send") }}', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ grade, school, readerEmail }),
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    alert(data.error || 'Failed to assign Round 2 reader.');
+                    return false;
+                }
+                alert(`Round 2 assignment sent to ${data.readerEmail} for Grade ${data.grade}.`);
+                if (customInput) customInput.value = '';
+                if (select) select.value = '';
+                return false;
+            } catch (err) {
+                alert('Failed to assign Round 2 reader.');
+                return false;
+            }
+        }
+    </script>
 </body>
 </html>

@@ -205,19 +205,35 @@
     <main class="container">
         <div class="card mb-3">
             <div class="card-body">
-                <h2 class="h5 mb-3">Assign School Grade Batch</h2>
+                <h2 class="h5 mb-2">Assign reader batches</h2>
+                <p class="help-text mb-3">
+                    Default: <strong>grade-level (all schools)</strong> — each batch mixes approved essays from every school for that grade so readers compare fairly.
+                    Use single-school mode only when you need a school-specific pool.
+                </p>
+
+                <div class="mb-3">
+                    <span class="form-label d-block mb-2">Assignment scope</span>
+                    <div class="btn-group" role="group" aria-label="Assignment scope">
+                        <button type="button" class="btn btn-outline-primary active" id="scopeGradeBtn" data-scope="grade">
+                            Grade-level (all schools)
+                        </button>
+                        <button type="button" class="btn btn-outline-primary" id="scopeSchoolBtn" data-scope="school">
+                            Single school
+                        </button>
+                    </div>
+                </div>
 
                 <div class="row g-3">
-                    <div class="col-md-5">
+                    <div class="col-md-5 d-none" id="schoolSelectCol">
                         <label for="schoolSelect" class="form-label">School</label>
                         <select id="schoolSelect" class="form-select">
                             <option value="">Select school</option>
                         </select>
                     </div>
                     <div class="col-md-4">
-                        <label for="gradeSelect" class="form-label">Grade Batch</label>
+                        <label for="gradeSelect" class="form-label">Grade</label>
                         <select id="gradeSelect" class="form-select" disabled>
-                            <option value="">Select grade batch</option>
+                            <option value="">Select grade</option>
                         </select>
                     </div>
                     <div class="col-md-3 d-flex align-items-end">
@@ -231,7 +247,7 @@
                     </div>
                     <div class="col-12">
                         <div id="teacherEmailBox" class="teacher-email-box is-empty">
-                            Teacher emails used for this school and grade will appear here.
+                            Teacher emails for the selected scope will appear here.
                         </div>
                     </div>
                     <div class="col-md-4">
@@ -345,8 +361,13 @@
             const confirmModalCancel = document.getElementById("confirmModalCancel");
             const successToast = document.getElementById("successToast");
             const successToastMessage = document.getElementById("successToastMessage");
+            const scopeGradeBtn = document.getElementById("scopeGradeBtn");
+            const scopeSchoolBtn = document.getElementById("scopeSchoolBtn");
+            const schoolSelectCol = document.getElementById("schoolSelectCol");
 
             let schoolBatches = [];
+            let gradeLevelSummaries = [];
+            let assignmentScope = "grade";
             let approvedCount = 0;
             let batchCount = 0;
             let summaryBatches = [];
@@ -376,20 +397,20 @@
                 batchRuleText.textContent = text || "";
             }
 
-            function setTeacherEmailBox(emails, school, grade) {
+            function setTeacherEmailBox(emails, labelPrefix, grade) {
                 const cleaned = Array.isArray(emails) ? emails.filter(Boolean) : [];
                 teacherEmailBox.classList.toggle("is-empty", cleaned.length === 0);
-                if (!school || !grade) {
-                    teacherEmailBox.textContent = "Teacher emails used for this school and grade will appear here.";
+                if (!labelPrefix || !grade) {
+                    teacherEmailBox.textContent = "Teacher emails for the selected scope will appear here.";
                     return;
                 }
                 if (!cleaned.length) {
-                    teacherEmailBox.textContent = `No teacher email addresses were found yet for ${school}, Grade ${grade}.`;
+                    teacherEmailBox.textContent = `No teacher email addresses were found yet for ${labelPrefix}, Grade ${grade}.`;
                     return;
                 }
-                const label = cleaned.length === 1 ? "Teacher email used" : "Teacher emails used";
+                const label = cleaned.length === 1 ? "Teacher email" : "Teacher emails";
                 teacherEmailBox.innerHTML = `
-                    <strong>${label} for ${school}, Grade ${grade}:</strong>
+                    <strong>${label} for ${labelPrefix}, Grade ${grade}:</strong>
                     <div class="teacher-email-list">${cleaned.join(", ")}</div>
                 `;
             }
@@ -427,11 +448,67 @@
                 });
             }
 
+            function isGradeScope() {
+                return assignmentScope === "grade";
+            }
+
+            function schoolGateOk() {
+                return isGradeScope() || (schoolSelect.value || "").trim();
+            }
+
             function setAssignLoading(isLoading) {
                 loadingAssign = isLoading;
-                assignBtn.disabled = isLoading || loadingSummary || !schoolSelect.value || !gradeSelect.value || !batchSelect.value;
+                assignBtn.disabled =
+                    isLoading ||
+                    loadingSummary ||
+                    !schoolGateOk() ||
+                    !gradeSelect.value ||
+                    !batchSelect.value;
                 assignSpinner.classList.toggle("d-none", !isLoading);
                 assignBtnText.textContent = isLoading ? "Assigning..." : "Assign & Send";
+            }
+
+            function setScopeButtons() {
+                const gradeActive = isGradeScope();
+                scopeGradeBtn.classList.toggle("active", gradeActive);
+                scopeSchoolBtn.classList.toggle("active", !gradeActive);
+                schoolSelectCol.classList.toggle("d-none", gradeActive);
+            }
+
+            function renderGradeLevelGrades() {
+                const selected = gradeSelect.value;
+                gradeSelect.innerHTML = '<option value="">Select grade</option>';
+                batchSelect.innerHTML = '<option value="">Select batch</option>';
+                approvedCount = 0;
+                batchCount = 0;
+                summaryBatches = [];
+                readerEmail.value = "";
+                for (const item of gradeLevelSummaries) {
+                    const option = document.createElement("option");
+                    option.value = item.grade;
+                    const teacherCount = Number(
+                        item.teacherEmailCount || (Array.isArray(item.teacherEmails) ? item.teacherEmails.length : 0)
+                    );
+                    const teacherSuffix =
+                        teacherCount > 0 ? `, ${teacherCount} teacher email${teacherCount === 1 ? "" : "s"}` : "";
+                    option.textContent = `Grade ${item.grade} (${item.approvedCount} approved${teacherSuffix})`;
+                    option.dataset.count = String(item.approvedCount);
+                    gradeSelect.appendChild(option);
+                }
+                gradeSelect.disabled = gradeLevelSummaries.length === 0;
+                if (gradeLevelSummaries.length === 0) {
+                    setSummaryText("No approved essays found in any grade yet.", "error");
+                    setBatchRuleText("");
+                    setTeacherEmailBox([], "", "");
+                } else {
+                    setSummaryText("Select a grade to load batch details.");
+                    setBatchRuleText("Batch rule: 1-30 essays = 1 batch, 31-60 = 2, 61-90 = 3, 91-120 = 4.");
+                    setTeacherEmailBox([], "", "");
+                }
+                if (selected && gradeLevelSummaries.some((g) => String(g.grade) === String(selected))) {
+                    gradeSelect.value = selected;
+                }
+                assignBtn.disabled = loadingAssign || loadingSummary || !gradeSelect.value || !batchSelect.value;
             }
 
             function renderSchools() {
@@ -450,7 +527,7 @@
 
             function renderGradeBatches() {
                 const selectedSchool = schoolSelect.value;
-                gradeSelect.innerHTML = '<option value="">Select grade batch</option>';
+                gradeSelect.innerHTML = '<option value="">Select grade</option>';
                 batchSelect.innerHTML = '<option value="">Select batch</option>';
                 approvedCount = 0;
                 batchCount = 0;
@@ -484,11 +561,12 @@
                     setBatchRuleText("");
                     setTeacherEmailBox([], selectedSchool, "");
                 } else {
-                    setSummaryText("Select a grade batch to see approved count.");
+                    setSummaryText("Select a grade to see approved count.");
                     setBatchRuleText("Batch rule: 1-30 essays = 1 batch, 31-60 = 2, 61-90 = 3, 91-120 = 4.");
                     setTeacherEmailBox([], selectedSchool, "");
                 }
-                assignBtn.disabled = loadingAssign || loadingSummary || !gradeSelect.value || !batchSelect.value;
+                assignBtn.disabled =
+                    loadingAssign || loadingSummary || !schoolGateOk() || !gradeSelect.value || !batchSelect.value;
             }
 
             function renderBatchOptions() {
@@ -513,7 +591,8 @@
                 if (selected && summaryBatches.some(b => String(b.batchNumber) === selected)) {
                     batchSelect.value = selected;
                 }
-                assignBtn.disabled = loadingAssign || loadingSummary || !schoolSelect.value || !gradeSelect.value || !batchSelect.value;
+                assignBtn.disabled =
+                    loadingAssign || loadingSummary || !schoolGateOk() || !gradeSelect.value || !batchSelect.value;
             }
 
             async function fetchBatches() {
@@ -530,8 +609,14 @@
                         throw new Error(data.error || "Failed to load batches.");
                     }
                     schoolBatches = data.schools || [];
-                    renderSchools();
-                    renderGradeBatches();
+                    gradeLevelSummaries = data.gradeLevels || [];
+                    setScopeButtons();
+                    if (isGradeScope()) {
+                        renderGradeLevelGrades();
+                    } else {
+                        renderSchools();
+                        renderGradeBatches();
+                    }
                 } catch (err) {
                     setSummaryText(err.message || "Failed to load school batches.", "error");
                 } finally {
@@ -549,8 +634,15 @@
                 readerEmail.value = "";
                 batchSelect.innerHTML = '<option value="">Select batch</option>';
                 batchSelect.disabled = true;
-                if (!school || !grade) {
-                    setSummaryText("Select school and grade batch.");
+                if (!grade) {
+                    setSummaryText(isGradeScope() ? "Select a grade." : "Select school and grade.");
+                    setBatchRuleText("");
+                    setTeacherEmailBox([], isGradeScope() ? "All schools" : school, grade);
+                    assignBtn.disabled = true;
+                    return;
+                }
+                if (!isGradeScope() && !school) {
+                    setSummaryText("Select a school and grade.");
                     setBatchRuleText("");
                     setTeacherEmailBox([], school, grade);
                     assignBtn.disabled = true;
@@ -560,22 +652,39 @@
                 assignBtn.disabled = true;
                 setSummaryText("Loading approved essay count...");
                 try {
-                    const res = await fetch(
-                        `/admin/essays/summary?school=${encodeURIComponent(school)}&grade=${encodeURIComponent(grade)}`,
-                        { headers: { "Accept": "application/json" }, credentials: "same-origin" }
-                    );
+                    let url;
+                    if (isGradeScope()) {
+                        url = `/admin/essays/summary?scope=grade&grade=${encodeURIComponent(grade)}`;
+                    } else {
+                        url = `/admin/essays/summary?school=${encodeURIComponent(school)}&grade=${encodeURIComponent(grade)}`;
+                    }
+                    const res = await fetch(url, {
+                        headers: { "Accept": "application/json" },
+                        credentials: "same-origin",
+                    });
                     const data = await res.json();
                     if (!res.ok) throw new Error(data.error || "Failed to load summary.");
                     approvedCount = Number(data.approvedCount || 0);
                     batchCount = Number(data.batchCount || 0);
                     summaryBatches = Array.isArray(data.batches) ? data.batches : [];
-                    const schoolInfo = schoolBatches.find(item => item.school === school);
-                    const gradeInfo = ((schoolInfo && schoolInfo.grades) || []).find(item => String(item.grade) === String(grade));
-                    setTeacherEmailBox((gradeInfo && gradeInfo.teacherEmails) || [], school, grade);
-                    setSummaryText(
-                        `${approvedCount} approved essays found for ${school}, Grade ${grade}`,
-                        approvedCount > 0 ? "success" : ""
-                    );
+                    let teacherEmails = [];
+                    let labelPrefix = school;
+                    if (isGradeScope()) {
+                        labelPrefix = "All schools (grade-level)";
+                        const ginfo = gradeLevelSummaries.find((item) => String(item.grade) === String(grade));
+                        teacherEmails = (ginfo && ginfo.teacherEmails) || [];
+                    } else {
+                        const schoolInfo = schoolBatches.find((item) => item.school === school);
+                        const gradeInfo = ((schoolInfo && schoolInfo.grades) || []).find(
+                            (item) => String(item.grade) === String(grade)
+                        );
+                        teacherEmails = (gradeInfo && gradeInfo.teacherEmails) || [];
+                    }
+                    setTeacherEmailBox(teacherEmails, labelPrefix, grade);
+                    const summaryLabel = isGradeScope()
+                        ? `${approvedCount} approved essays for Grade ${grade} (all schools)`
+                        : `${approvedCount} approved essays for ${school}, Grade ${grade}`;
+                    setSummaryText(summaryLabel, approvedCount > 0 ? "success" : "");
                     if (approvedCount > 0 && batchCount > 0) {
                         setBatchRuleText(`This selection requires ${batchCount} batch${batchCount === 1 ? "" : "es"} and ${batchCount} reader${batchCount === 1 ? "" : "s"}.`);
                     } else {
@@ -585,10 +694,11 @@
                 } catch (err) {
                     setSummaryText(err.message || "Failed to load summary.", "error");
                     setBatchRuleText("");
-                    setTeacherEmailBox([], school, grade);
+                    setTeacherEmailBox([], isGradeScope() ? "All schools" : school, grade);
                 } finally {
                     loadingSummary = false;
-                    assignBtn.disabled = loadingAssign || !schoolSelect.value || !gradeSelect.value || !batchSelect.value;
+                    assignBtn.disabled =
+                        loadingAssign || !schoolGateOk() || !gradeSelect.value || !batchSelect.value;
                 }
             }
 
@@ -663,12 +773,12 @@
 
                 const school = (schoolSelect.value || "").trim();
                 const grade = (gradeSelect.value || "").trim();
-                if (!school) {
+                if (!isGradeScope() && !school) {
                     setSubmitStatus("Select a school first.", "error");
                     return;
                 }
                 if (!grade) {
-                    setSubmitStatus("Select a grade batch first.", "error");
+                    setSubmitStatus("Select a grade first.", "error");
                     return;
                 }
 
@@ -684,8 +794,18 @@
                     return;
                 }
                 if (approvedCount <= 0) {
-                    setSubmitStatus(`No approved essays found for ${school}, Grade ${grade}.`, "error");
+                    const pool = isGradeScope()
+                        ? `Grade ${grade} (all schools)`
+                        : `${school}, Grade ${grade}`;
+                    setSubmitStatus(`No approved essays found for ${pool}.`, "error");
                     return;
+                }
+
+                const payload = { grade: grade, batchNumber: batchNumber, readerEmail: email };
+                if (isGradeScope()) {
+                    payload.scope = "grade";
+                } else {
+                    payload.school = school;
                 }
 
                 setAssignLoading(true);
@@ -694,7 +814,7 @@
                         method: "POST",
                         headers: { "Content-Type": "application/json", "Accept": "application/json" },
                         credentials: "same-origin",
-                        body: JSON.stringify({ school: school, grade: grade, batchNumber: batchNumber, readerEmail: email }),
+                        body: JSON.stringify(payload),
                     });
                     const data = await res.json();
                     if (!res.ok) {
@@ -705,8 +825,12 @@
                         throw new Error(err);
                     }
                     resultMessage.className = "text-success mb-0";
+                    const sentLabel =
+                        data.scope === "grade"
+                            ? `Grade ${data.grade} (all schools)`
+                            : `${data.school}, Grade ${data.grade}`;
                     resultMessage.textContent =
-                        `Sent a reader access link for Batch ${data.batchNumber} of ${data.batchCount} for ${data.school}, Grade ${data.grade} to ${data.readerEmail}.`;
+                        `Sent a reader access link for Batch ${data.batchNumber} of ${data.batchCount} for ${sentLabel} to ${data.readerEmail}.`;
                     resultCard.classList.remove("d-none");
                     setSubmitStatus("Assignments saved.", "success");
                     await fetchSummary();
@@ -718,6 +842,36 @@
                 }
             }
 
+            function applyAssignmentScope(nextScope) {
+                assignmentScope = nextScope === "school" ? "school" : "grade";
+                setScopeButtons();
+                gradeSelect.innerHTML = '<option value="">Select grade</option>';
+                batchSelect.innerHTML = '<option value="">Select batch</option>';
+                batchSelect.disabled = true;
+                readerEmail.value = "";
+                approvedCount = 0;
+                batchCount = 0;
+                summaryBatches = [];
+                setSummaryText("");
+                setBatchRuleText("");
+                setTeacherEmailBox([], "", "");
+                if (isGradeScope()) {
+                    schoolSelect.value = "";
+                    renderGradeLevelGrades();
+                } else {
+                    renderSchools();
+                    renderGradeBatches();
+                }
+                assignBtn.disabled = true;
+            }
+
+            scopeGradeBtn.addEventListener("click", function() {
+                applyAssignmentScope("grade");
+            });
+            scopeSchoolBtn.addEventListener("click", function() {
+                applyAssignmentScope("school");
+            });
+
             schoolSelect.addEventListener("change", function() {
                 renderGradeBatches();
             });
@@ -725,7 +879,8 @@
             gradeSelect.addEventListener("change", fetchSummary);
             batchSelect.addEventListener("change", function() {
                 readerEmail.value = "";
-                assignBtn.disabled = loadingAssign || loadingSummary || !schoolSelect.value || !gradeSelect.value || !batchSelect.value;
+                assignBtn.disabled =
+                    loadingAssign || loadingSummary || !schoolGateOk() || !gradeSelect.value || !batchSelect.value;
             });
             assignBtn.addEventListener("click", submitAssignments);
             refreshBatchesBtn.addEventListener("click", fetchBatches);
@@ -753,6 +908,7 @@
             });
 
             assignBtn.disabled = true;
+            setScopeButtons();
             fetchBatches();
             fetchAssignmentRecords();
         })();

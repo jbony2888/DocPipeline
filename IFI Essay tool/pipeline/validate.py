@@ -22,6 +22,70 @@ from idp_guardrails_core.core import (
 )
 
 _SCHOOL_REFERENCE_VALIDATOR = SchoolReferenceValidator()
+_WEEKDAY_WORDS = (
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+    "sunday",
+)
+_MONTH_WORDS = (
+    "january",
+    "february",
+    "march",
+    "april",
+    "may",
+    "june",
+    "july",
+    "august",
+    "september",
+    "october",
+    "november",
+    "december",
+)
+
+
+def _strip_leading_noise(value: str) -> str:
+    return re.sub(r"^[^A-Za-z0-9]+", "", value).strip()
+
+
+def _looks_like_date_or_header_text(value: str) -> bool:
+    low = value.lower().strip()
+    if not low:
+        return False
+    if "page" in low and re.search(r"\bpage\s+\d+\b", low):
+        return True
+    if any(day in low for day in _WEEKDAY_WORDS) and any(month in low for month in _MONTH_WORDS):
+        return True
+    if any(day in low for day in _WEEKDAY_WORDS) and re.search(r"\b\d{4}\b", low):
+        return True
+    if low in ("ifi", "i said", "initiative", "illinois", "english page 2"):
+        return True
+    return False
+
+
+def _sanitize_student_name(value):
+    if value is None:
+        return None
+    s = _strip_leading_noise(str(value).strip())
+    if not s:
+        return None
+    if _looks_like_date_or_header_text(s):
+        return None
+    return s
+
+
+def _sanitize_school_name(value):
+    if value is None:
+        return None
+    s = _strip_leading_noise(str(value).strip())
+    if not s:
+        return None
+    if _looks_like_date_or_header_text(s):
+        return None
+    return s
 
 
 def _resolve_doc_class(record: Dict) -> DocClass:
@@ -39,9 +103,10 @@ def _resolve_doc_class(record: Dict) -> DocClass:
 
 def _is_effectively_missing_student_name(val) -> bool:
     """True if value is missing or is a form label / placeholder (not a real name)."""
-    if not val or not str(val).strip():
+    s = _sanitize_student_name(val)
+    if not s:
         return True
-    s = str(val).strip().rstrip(".,;:")  # Allow trailing punctuation (common OCR artifact)
+    s = s.rstrip(".,;:")  # Allow trailing punctuation (common OCR artifact)
     # Known IFI form labels or page headers mistaken for name
     if len(s) < 2:
         return True
@@ -92,9 +157,9 @@ def _looks_like_essay_text(s: str) -> bool:
 
 def _is_effectively_missing_school_name(val) -> bool:
     """True if value is missing or is only a form label (e.g. 'Escuela'), not a real school name."""
-    if not val or not str(val).strip():
+    s = _sanitize_school_name(val)
+    if not s:
         return True
-    s = str(val).strip()
     if len(s) < 3:
         return True
     # Label-only values from IFI form
@@ -103,6 +168,8 @@ def _is_effectively_missing_school_name(val) -> bool:
         return True
     if s == "Escuela" or s == "/ Escuela":
         return True
+    if "a dog" in lower or lower == "escuela a dog":
+        return True  # essay placeholder, not a real school
     # Guardrail: long/sentence-like content in school_name is almost always essay text.
     if _looks_like_essay_text(s):
         return True
@@ -153,6 +220,23 @@ def _coerce_reason_codes(value) -> List[str]:
     return sorted(set(codes))
 
 
+def _is_likely_content_mismatch(
+    *,
+    doc_type: str,
+    school_name_missing: bool,
+    grade_missing: bool,
+    word_count: int,
+) -> bool:
+    """
+    Heuristic for records likely linked to the wrong/invalid page.
+    """
+    if doc_type != "unknown":
+        return False
+    if not school_name_missing or not grade_missing:
+        return False
+    return word_count <= 12
+
+
 def can_auto_approve(record: Dict, policy: ValidationPolicy) -> bool:
     if str(record.get("doc_role") or "").strip().lower() == DocRole.CONTAINER.value:
         return False
@@ -193,12 +277,12 @@ def can_approve_record(record: Dict) -> Tuple[bool, List[str]]:
 
     required_fields = policy.required_fields
     if "student_name" in required_fields:
-        student_name = record.get("student_name")
+        student_name = _sanitize_student_name(record.get("student_name"))
         if _is_effectively_missing_student_name(student_name):
             missing_fields.append("student_name")
 
     if "school_name" in required_fields:
-        school_name = record.get("school_name")
+        school_name = _sanitize_school_name(record.get("school_name"))
         if _is_effectively_missing_school_name(school_name):
             missing_fields.append("school_name")
 
@@ -313,14 +397,15 @@ def validate_record(partial: dict, report: dict | None = None) -> tuple[Submissi
             reason_codes.add("DOC_TYPE_UNKNOWN")
 
     # Required identity fields must be enforced for all document types.
+    student_name_value = _sanitize_student_name(partial.get("student_name"))
+    school_name_value = _sanitize_school_name(partial.get("school_name"))
+
     if "student_name" in policy.required_fields:
-        student_name = partial.get("student_name")
-        if _is_effectively_missing_student_name(student_name):
+        if _is_effectively_missing_student_name(student_name_value):
             reason_codes.add("MISSING_STUDENT_NAME")
 
     if "school_name" in policy.required_fields:
-        school_name = partial.get("school_name")
-        if _is_effectively_missing_school_name(school_name):
+        if _is_effectively_missing_school_name(school_name_value):
             reason_codes.add("MISSING_SCHOOL_NAME")
 
     grade_raw = partial.get("grade")
@@ -335,6 +420,8 @@ def validate_record(partial: dict, report: dict | None = None) -> tuple[Submissi
             reason_codes.add("MISSING_GRADE")
         elif grade_normalized is None:
             reason_codes.add("INVALID_GRADE_RANGE")
+    school_name_missing = "MISSING_SCHOOL_NAME" in reason_codes
+    grade_missing = "MISSING_GRADE" in reason_codes
 
     school_reference_validation = {
         "matched": False,
@@ -343,14 +430,13 @@ def validate_record(partial: dict, report: dict | None = None) -> tuple[Submissi
         "reference_version": _SCHOOL_REFERENCE_VALIDATOR.reference_version,
     }
     if "TEMPLATE_ONLY" not in reason_codes and "school_name" in policy.required_fields:
-        school_name = partial.get("school_name")
-        if not _is_effectively_missing_school_name(school_name):
-            school_reference_validation = _SCHOOL_REFERENCE_VALIDATOR.validate(school_name)
+        if not _is_effectively_missing_school_name(school_name_value):
+            school_reference_validation = _SCHOOL_REFERENCE_VALIDATOR.validate(school_name_value)
             if not school_reference_validation["matched"]:
                 reason_codes.add("UNKNOWN_SCHOOL")
 
     if "TEMPLATE_ONLY" not in reason_codes:
-        if is_name_school_possible_swap(partial.get("student_name"), partial.get("school_name")):
+        if is_name_school_possible_swap(student_name_value, school_name_value):
             reason_codes.add("POSSIBLE_FIELD_SWAP")
 
     word_count = int(partial.get("word_count") or 0)
@@ -386,6 +472,14 @@ def validate_record(partial: dict, report: dict | None = None) -> tuple[Submissi
         if extraction_method == "fallback" and policy.review_on_fallback_extraction:
             reason_codes.add("EXTRACTION_FALLBACK_USED")
 
+    if _is_likely_content_mismatch(
+        doc_type=doc_type,
+        school_name_missing=school_name_missing,
+        grade_missing=grade_missing,
+        word_count=word_count,
+    ):
+        reason_codes.add("CONTENT_MISMATCH")
+
     # Reason codes must be enum strings only.
     reason_codes = {c for c in reason_codes if c in ALLOWED_REASON_CODES}
     needs_review = len(reason_codes) > 0
@@ -410,8 +504,8 @@ def validate_record(partial: dict, report: dict | None = None) -> tuple[Submissi
     record = SubmissionRecord(
         submission_id=partial["submission_id"],
         doc_class=doc_class,
-        student_name=partial.get("student_name"),
-        school_name=partial.get("school_name"),
+        student_name=student_name_value,
+        school_name=school_name_value,
         grade=grade_for_record,
         teacher_name=partial.get("teacher_name"),
         city_or_location=partial.get("city_or_location"),

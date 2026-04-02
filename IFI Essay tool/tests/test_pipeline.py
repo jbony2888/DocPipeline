@@ -477,6 +477,10 @@ class TestSchoolNameCleaning:
         assert sanitize_school_name("X") is None
         assert sanitize_school_name("42") is None
 
+    def test_de_la_salle_not_treated_as_label_candidate(self):
+        from pipeline.extract import is_valid_value_candidate
+        assert is_valid_value_candidate("De La Salle Institute", max_length=80) is True
+
 
 class TestIsPlausibleStudentName:
     """Structural validator to avoid false name extraction from essay text."""
@@ -508,6 +512,14 @@ class TestIsPlausibleStudentName:
         assert is_plausible_student_name("One", max_line_length=40) is False
         assert is_plausible_student_name("One Two Three Four Five", max_line_length=40) is False
 
+    def test_rejects_date_like_header_text(self):
+        from pipeline.extract import is_plausible_student_name
+        assert is_plausible_student_name("Wednesday, March 18, 2026", max_line_length=40) is False
+
+    def test_accepts_name_with_leading_symbol_noise(self):
+        from pipeline.extract import is_plausible_student_name
+        assert is_plausible_student_name("- Christian Alfred", max_line_length=40) is True
+
     def test_accepts_real_names(self):
         from pipeline.extract import is_plausible_student_name
         assert is_plausible_student_name("Maria Garcia", max_line_length=40) is True
@@ -538,6 +550,24 @@ class TestFormFieldStudentName:
         )
         # Empty form value must not overwrite; result may be from text or None
         assert result.get("student_name") != ""
+
+
+class TestTypedFormSchoolExtraction:
+    def test_deadline_date_not_used_as_school_name(self):
+        from pipeline.extract_ifi import extract_fields_ifi
+
+        raw = (
+            "Illinois Fatherhood 2026 IFI Fatherhood Essay Contest Initiative\n"
+            "Student's Name / Nombre del Estudiante Rosemary Villa\n"
+            "Grade Grado 9th\n"
+            "Deadline:\n"
+            "March 19\n"
+            "School / Escuela De La Salle Institute\n"
+            "Writing About / Escribiendo Sobre:\n"
+            "Father / Padre\n"
+        )
+        result = extract_fields_ifi(raw, raw, "Villa_Rosemary.pdf")
+        assert result.get("school_name") == "De La Salle Institute"
 
 
 class TestComputeEssayMetrics:

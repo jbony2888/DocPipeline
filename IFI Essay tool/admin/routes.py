@@ -11,7 +11,7 @@ import uuid
 import zipfile
 import hashlib
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from threading import Thread
 
@@ -26,15 +26,23 @@ from pipeline.grouping import normalize_key
 from auth.app_admin import is_app_admin_email
 from admin.assignments_service import (
     STANDARD_SCHOOL_OPTIONS,
+    GRADE_LEVEL_ASSIGNMENT_SCHOOL_LABEL,
     calculate_assignment_batch_count,
     compute_ranking_results,
+    compute_round2_ranking_results,
+    get_grade_batch_progress,
     count_approved_essays_for_batch,
     delete_single_assignment_ranking,
     get_batch_bounds,
     get_assignment_with_reader,
+    is_grade_level_assignment_school,
     list_approved_batches_by_school,
+    list_approved_grade_level_summaries,
     list_approved_submissions_for_batch,
     list_assignment_submission_rows,
+    list_assignment_finalist_rows,
+    assignment_has_finalists,
+    create_round2_assignment_from_top_results,
     list_assignments_for_reader,
     list_batch_assignments_for_school_grade,
     list_rankings_for_assignment,
@@ -47,9 +55,14 @@ from admin.assignments_service import (
     save_single_assignment_ranking,
     get_reader_by_email,
     replace_assignment_rankings,
+    mark_assignment_ranking_completed,
     upsert_reader_name,
 )
-from utils.email_notification import send_assignment_batch_email
+from utils.email_notification import (
+    send_assignment_batch_email,
+    send_reader_ranking_confirmation_email,
+    send_reader_ranking_completion_email,
+)
 
 admin_bp = Blueprint("admin", __name__, url_prefix="/admin")
 
@@ -69,6 +82,8 @@ _REVIEW_REASON_MAP = {
     "INVALID_GRADE_RANGE": "Invalid grade (not K–12 / recognized)",
     "UNKNOWN_SCHOOL": "School not in reference list",
     "POSSIBLE_FIELD_SWAP": "Possible student/school mix-up",
+    "CONTENT_MISMATCH": "Content mismatch (wrong/partial page attached)",
+    "BLANK_SUBMISSION": "Blank submission (no essay written)",
 }
 
 
@@ -80,6 +95,10 @@ def _is_missing_assignment_schema_error(exc: Exception) -> bool:
         or "public.essay_rankings" in msg
         or "batch_number" in msg
         or "total_batches" in msg
+        or "ranking_completed_at" in msg
+        or "ranking_completed_by_name" in msg
+        or "ranking_completed_by_email" in msg
+        or "assignment_finalists" in msg
         or "pgrst205" in msg
         or "could not find the table" in msg
     )
@@ -88,7 +107,7 @@ def _is_missing_assignment_schema_error(exc: Exception) -> bool:
 def _assignment_schema_error_response() -> tuple:
     return jsonify(
         {
-            "error": "Assignment schema is missing in Supabase. Run migrations 008, 009, 010, and 011, then reload the page."
+            "error": "Assignment schema is missing in Supabase. Run migrations 008, 009, 010, 011, 013, and 014, then reload the page."
         }
     ), 500
 
@@ -107,11 +126,23 @@ def _format_review_reasons(reason_codes: str) -> str:
 
 
 def _coerce_reason_codes(reason_codes: str | None) -> set[str]:
+    raw = (reason_codes or "").strip()
+    if raw in {"[]", "{}", "null", "None"}:
+        return set()
     return {
         c.strip()
         for c in (reason_codes or "").split(";")
         if c.strip() and c.strip() in ALLOWED_REASON_CODES
     }
+
+
+def _row_has_reason_codes(row: dict) -> bool:
+    return bool(_coerce_reason_codes(row.get("review_reason_codes")))
+
+
+def _is_excluded_submission_row(row: dict) -> bool:
+    codes = _coerce_reason_codes(row.get("review_reason_codes"))
+    return bool(codes & {"CONTENT_MISMATCH", "BLANK_SUBMISSION"})
 
 
 def _format_human_datetime(value: str | None) -> str:
@@ -223,29 +254,43 @@ def _fetch_all_submissions(limit: int = 1000) -> list:
             sb.table("submissions")
             .select(
                 "submission_id, student_name, school_name, grade, filename, "
-                "artifact_dir, needs_review, review_reason_codes, created_at, owner_user_id"
+                "artifact_dir, needs_review, review_reason_codes, created_at, owner_user_id, "
+                "parent_submission_id, chunk_index, chunk_page_start, chunk_page_end, "
+                "is_chunk, is_container_parent"
             )
             .order("created_at", desc=True)
             .limit(cap)
             .execute()
         )
-        return result.data if result.data else []
+        rows = result.data if result.data else []
+        return [row for row in rows if not _is_excluded_submission_row(row)]
     except Exception:
         return []
 
 
-def _apply_school_grade_filters(rows: list, school: str, grade: str, status: str = "") -> list:
+def _apply_school_grade_filters(
+    rows: list,
+    school: str,
+    grade: str,
+    status: str = "",
+    submission_id: str = "",
+) -> list:
     """Filter rows by normalized school/grade and optional status."""
     school_key = normalize_key(school) if (school or "").strip() else ""
     grade_key = normalize_key(grade) if (grade or "").strip() else ""
     status_key = (status or "").strip().lower()
+    submission_key = str(submission_id or "").strip().lower()
 
     def _row_status(r: dict) -> str:
-        has_all = r.get("student_name") and r.get("school_name") and r.get("grade")
-        has_reason = (r.get("review_reason_codes") or "").strip()
-        if has_all and not has_reason:
+        has_all = bool(
+            (r.get("student_name") or "").strip()
+            and (r.get("school_name") or "").strip()
+            and str(r.get("grade") or "").strip()
+        )
+        has_reason = _row_has_reason_codes(r)
+        if has_all and not has_reason and not r.get("needs_review"):
             return "approved"
-        return "needs_review" if r.get("needs_review") else "approved"
+        return "needs_review"
 
     if not school_key and not grade_key:
         out = []
@@ -254,13 +299,9 @@ def _apply_school_grade_filters(rows: list, school: str, grade: str, status: str
                 continue
             if status_key == "needs_review" and _row_status(r) != "needs_review":
                 continue
-            normalized_school = normalize_school_to_standard(r.get("school_name"))
-            if normalized_school:
-                rr = dict(r)
-                rr["school_name"] = normalized_school
-                out.append(rr)
-            else:
-                out.append(r)
+            if submission_key and str(r.get("submission_id") or "").strip().lower() != submission_key:
+                continue
+            out.append(r)
         return out
     out = []
     for r in rows:
@@ -268,15 +309,14 @@ def _apply_school_grade_filters(rows: list, school: str, grade: str, status: str
             continue
         if status_key == "needs_review" and _row_status(r) != "needs_review":
             continue
+        if submission_key and str(r.get("submission_id") or "").strip().lower() != submission_key:
+            continue
         normalized_school = normalize_school_to_standard(r.get("school_name"))
         if school_key and normalize_key(normalized_school or "") != school_key:
             continue
         if grade_key and normalize_key(str(r.get("grade") or "")) != grade_key:
             continue
-        rr = dict(r)
-        if normalized_school:
-            rr["school_name"] = normalized_school
-        out.append(rr)
+        out.append(r)
     return out
 
 
@@ -363,15 +403,16 @@ def _build_zip_for_submission_rows(
 
 def _build_assignment_batch_payload(sb, *, school: str, grade: str, batch_number: int) -> dict:
     """
-    Resolve approved submissions for one school+grade batch and package them as ZIP-ready data.
+    Resolve approved submissions for one batch (school+grade or grade-level across all schools) and package ZIP data.
     """
     submissions = list_approved_submissions_for_batch(sb, school=school, grade=grade)
     total_essays = len(submissions)
     total_batches = calculate_assignment_batch_count(total_essays)
+    scope_label = f"Grade {grade} (all schools)" if is_grade_level_assignment_school(school) else f"{school}, Grade {grade}"
     if total_batches <= 0:
-        raise ValueError(f"No approved essays found for {school}, Grade {grade}.")
+        raise ValueError(f"No approved essays found for {scope_label}.")
     if batch_number < 1 or batch_number > total_batches:
-        raise ValueError(f"Batch {batch_number} is out of range for {school}, Grade {grade}.")
+        raise ValueError(f"Batch {batch_number} is out of range for {scope_label}.")
 
     start, end = get_batch_bounds(batch_number, total_essays)
     batch_rows = submissions[start:end]
@@ -389,7 +430,10 @@ def _build_assignment_batch_payload(sb, *, school: str, grade: str, batch_number
         batch_number=batch_number,
         submission_ids=submission_ids,
     )
-    safe_school = secure_filename(school) or "school"
+    if is_grade_level_assignment_school(school):
+        safe_school = "grade_level_all_schools"
+    else:
+        safe_school = secure_filename(school) or "school"
     safe_grade = secure_filename(str(grade)) or "grade"
     zip_filename = f"{safe_school}_grade_{safe_grade}_batch_{batch_number}_of_{total_batches}.zip"
     if cache_path.exists():
@@ -476,6 +520,22 @@ def _load_verified_assignment(sb, *, assignment_id: int, token: str) -> tuple[st
         abort(403, description="Assignment does not belong to this reader.")
 
     return reader_email, assignment
+
+
+def _resolve_assignment_essay_rows(sb, assignment: dict) -> tuple[list[dict], bool]:
+    assignment_id = int(assignment.get("id") or 0)
+    has_finalists = assignment_has_finalists(sb, assignment_id=assignment_id)
+    if has_finalists:
+        return list_assignment_finalist_rows(sb, assignment_id=assignment_id), True
+    return (
+        list_assignment_submission_rows(
+            sb,
+            school=str(assignment.get("school_name") or ""),
+            grade=str(assignment.get("grade") or ""),
+            batch_number=int(assignment.get("batch_number") or 1),
+        ),
+        False,
+    )
 
 
 def _validate_forced_rankings(essay_rows: list[dict], ranking_map: dict[str, int]) -> tuple[bool, str | None]:
@@ -599,9 +659,35 @@ def admin_dashboard():
     selected_school = (request.args.get("school") or "").strip()
     selected_grade = (request.args.get("grade") or "").strip()
     selected_status = (request.args.get("status") or "").strip()
+    selected_submission_id = (request.args.get("submission_id") or "").strip()
+    selected_multi_entry = (request.args.get("multi_entry") or "").strip()
+    multi_entry_only = selected_multi_entry in ("1", "true", "yes", "on")
 
     school_options, grade_options = _distinct_schools_and_grades(all_rows)
-    submissions = _apply_school_grade_filters(all_rows, selected_school, selected_grade, selected_status)
+    submissions = _apply_school_grade_filters(
+        all_rows,
+        selected_school,
+        selected_grade,
+        selected_status,
+        selected_submission_id,
+    )
+    if multi_entry_only:
+        fn_counts: Counter[str] = Counter()
+        for r in all_rows:
+            fn = (r.get("filename") or "").strip()
+            if fn:
+                fn_counts[fn] += 1
+        multi_filenames = {fn for fn, n in fn_counts.items() if n > 1}
+        submissions = [s for s in submissions if (s.get("filename") or "").strip() in multi_filenames]
+    for s in submissions:
+        has_all = bool(
+            (s.get("student_name") or "").strip()
+            and (s.get("school_name") or "").strip()
+            and str(s.get("grade") or "").strip()
+        )
+        has_reason = _row_has_reason_codes(s)
+        s["has_reason"] = has_reason
+        s["status"] = "approved" if (has_all and not has_reason and not s.get("needs_review")) else "needs_review"
 
     return render_template(
         "admin_dashboard.html",
@@ -613,6 +699,8 @@ def admin_dashboard():
         selected_school=selected_school,
         selected_grade=selected_grade,
         selected_status=selected_status,
+        selected_submission_id=selected_submission_id,
+        selected_multi_entry=selected_multi_entry,
         fetch_limit=fetch_limit,
         format_review_reasons=_format_review_reasons,
     )
@@ -654,6 +742,63 @@ def _list_ranking_filter_options(sb) -> tuple[list[str], list[str]]:
     return schools, grades
 
 
+def _list_round1_reader_choices(sb, *, grade: str, school: str | None = None) -> list[dict[str, str]]:
+    """
+    Return unique reader choices from Round 1 assignments for a grade/school scope.
+    Round 2 finalist assignments are excluded.
+    """
+    query = (
+        sb.table("assignments")
+        .select("id, school_name, grade, readers(id, email, name)")
+        .eq("grade", str(grade).strip())
+        .limit(2000)
+    )
+    if school:
+        query = query.eq("school_name", str(school).strip())
+    rows = query.execute().data or []
+    if not rows:
+        return []
+
+    assignment_ids = [
+        int(row.get("id"))
+        for row in rows
+        if row.get("id") is not None
+    ]
+    finalist_assignment_ids: set[int] = set()
+    if assignment_ids:
+        finalist_rows = (
+            sb.table("assignment_finalists")
+            .select("assignment_id")
+            .in_("assignment_id", assignment_ids)
+            .limit(max(1, len(assignment_ids) * 20))
+            .execute()
+            .data
+            or []
+        )
+        finalist_assignment_ids = {
+            int(row.get("assignment_id"))
+            for row in finalist_rows
+            if row.get("assignment_id") is not None
+        }
+
+    by_email: dict[str, dict[str, str]] = {}
+    for row in rows:
+        assignment_id = int(row.get("id") or 0)
+        if assignment_id in finalist_assignment_ids:
+            continue
+        reader = row.get("readers") or {}
+        email = str(reader.get("email") or "").strip().lower()
+        if not email:
+            continue
+        name = str(reader.get("name") or "").strip()
+        by_email[email] = {
+            "email": email,
+            "name": name,
+            "label": f"{name} ({email})" if name else email,
+        }
+    return sorted(by_email.values(), key=lambda item: (str(item.get("name") or "").casefold(), item["email"]))
+
+
 @admin_bp.route("/rankings", methods=["GET"])
 def admin_rankings():
     """Admin rankings page with winners and all reader score breakdowns."""
@@ -680,12 +825,26 @@ def admin_rankings():
         sections = []
         for grade in grades_to_render:
             results = compute_ranking_results(sb, grade=grade, school=selected_school or None)
-            if not results:
+            round2_results = compute_round2_ranking_results(sb, grade=grade, school=selected_school or None)
+            if not results and not round2_results:
                 continue
+            school_scope = selected_school or (results[0].get("schoolName") if results else None)
+            round1_reader_choices = _list_round1_reader_choices(
+                sb,
+                grade=grade,
+                school=str(school_scope or "").strip() or None,
+            )
+            top_ten = results[:10]
+            batch_progress = get_grade_batch_progress(sb, grade=grade, school=selected_school or None)
             sections.append(
                 {
                     "grade": grade,
-                    "winner": results[0] if results else None,
+                    "winner": top_ten[0] if top_ten else None,
+                    "topTen": top_ten,
+                    "round2Winner": round2_results[0] if round2_results else None,
+                    "round2Results": round2_results,
+                    "round1ReaderChoices": round1_reader_choices,
+                    "batchProgress": batch_progress,
                     "results": results,
                 }
             )
@@ -707,22 +866,25 @@ def admin_rankings():
                 grade_options=[],
                 school_options=[],
                 sections=[],
-                schema_error="Ranking schema is missing in Supabase. Run migrations 008, 009, 010, and 011.",
+                schema_error="Ranking schema is missing in Supabase. Run migrations 008, 009, 010, 011, 013, and 014.",
             )
         raise
 
 
 @admin_bp.route("/essays/summary", methods=["GET"])
 def essays_summary():
-    """API: approved essay summary for a selected school+grade batch."""
+    """API: approved essay summary for a grade-level batch or a single-school+grade batch."""
     _require_admin()
 
+    scope = (request.args.get("scope") or "").strip().lower()
     school = (request.args.get("school") or "").strip()
     grade = (request.args.get("grade") or "").strip()
-    if not school:
-        return jsonify({"error": "School is required."}), 400
     if not grade:
         return jsonify({"error": "Grade is required."}), 400
+    if scope == "grade":
+        school = GRADE_LEVEL_ASSIGNMENT_SCHOOL_LABEL
+    elif not school:
+        return jsonify({"error": "School is required unless scope=grade."}), 400
 
     sb = _get_service_role_client()
     if not sb:
@@ -757,6 +919,7 @@ def essays_summary():
             {
                 "school": school,
                 "grade": grade,
+                "scope": "grade" if is_grade_level_assignment_school(school) else "school",
                 "approvedCount": approved_count,
                 "batchCount": batch_count,
                 "batches": batches,
@@ -768,7 +931,7 @@ def essays_summary():
 
 @admin_bp.route("/essays/batches", methods=["GET"])
 def essays_batches():
-    """API: list approved essay batches grouped by school then grade."""
+    """API: list approved essay batches by school, plus grade-level aggregates for assignment."""
     _require_admin()
 
     sb = _get_service_role_client()
@@ -777,21 +940,25 @@ def essays_batches():
 
     try:
         batches = list_approved_batches_by_school(sb)
-        return jsonify({"schools": batches})
+        grade_levels = list_approved_grade_level_summaries(sb)
+        return jsonify({"schools": batches, "gradeLevels": grade_levels})
     except Exception as exc:
         return jsonify({"error": f"Failed to fetch school batches: {exc}"}), 500
 
 
 @admin_bp.route("/assign-and-send", methods=["POST"])
 def assign_and_send():
-    """API: resolve readers and create school+grade assignments."""
+    """API: resolve readers and create grade-level or school+grade batch assignments."""
     _require_admin()
 
     payload = request.get_json(silent=True) or {}
+    scope = str(payload.get("scope") or "").strip().lower()
     school = str(payload.get("school") or "").strip()
     grade = str(payload.get("grade") or "").strip()
-    if not school:
-        return jsonify({"error": "School is required."}), 400
+    if scope == "grade":
+        school = GRADE_LEVEL_ASSIGNMENT_SCHOOL_LABEL
+    elif not school:
+        return jsonify({"error": "School is required unless scope is grade."}), 400
     if not grade:
         return jsonify({"error": "Grade is required."}), 400
 
@@ -819,7 +986,8 @@ def assign_and_send():
     try:
         essay_count = count_approved_essays_for_batch(sb, school=school, grade=grade)
         if essay_count <= 0:
-            return jsonify({"error": f"No approved essays found for {school}, Grade {grade}."}), 400
+            err_scope = f"Grade {grade} (all schools)" if is_grade_level_assignment_school(school) else f"{school}, Grade {grade}"
+            return jsonify({"error": f"No approved essays found for {err_scope}."}), 400
         batch_count = calculate_assignment_batch_count(essay_count)
         if len(reader_emails) != 1:
             return jsonify(
@@ -830,11 +998,15 @@ def assign_and_send():
                 }
             ), 400
         if batch_number < 1 or batch_number > batch_count:
-            return jsonify({"error": f"Batch {batch_number} is out of range for {school}, Grade {grade}."}), 400
+            err_scope = f"Grade {grade} (all schools)" if is_grade_level_assignment_school(school) else f"{school}, Grade {grade}"
+            return jsonify({"error": f"Batch {batch_number} is out of range for {err_scope}."}), 400
 
         start, end = get_batch_bounds(batch_number, essay_count)
         batch_essay_count = max(0, end - start)
-        safe_school = secure_filename(school) or "school"
+        if is_grade_level_assignment_school(school):
+            safe_school = "grade_level_all_schools"
+        else:
+            safe_school = secure_filename(school) or "school"
         safe_grade = secure_filename(str(grade)) or "grade"
         zip_filename = f"{safe_school}_grade_{safe_grade}_batch_{batch_number}_of_{batch_count}.zip"
         readers = resolve_or_create_readers(sb, reader_emails)
@@ -869,6 +1041,7 @@ def assign_and_send():
             total_batches=batch_count,
             essay_count=batch_essay_count,
             portal_url=portal_url,
+            grade_level_scope=is_grade_level_assignment_school(school),
         )
         if not email_sent:
             return jsonify({"error": "Reader access email could not be sent. Check SMTP configuration."}), 500
@@ -877,6 +1050,7 @@ def assign_and_send():
             {
                 "school": school,
                 "grade": grade,
+                "scope": "grade" if is_grade_level_assignment_school(school) else "school",
                 "essayCount": essay_count,
                 "batchCount": batch_count,
                 "batchNumber": batch_number,
@@ -891,6 +1065,75 @@ def assign_and_send():
         if _is_missing_assignment_schema_error(exc):
             return _assignment_schema_error_response()
         return jsonify({"error": f"Failed to assign readers: {exc}"}), 500
+
+
+@admin_bp.route("/round2/assign-and-send", methods=["POST"])
+def assign_round2_and_send():
+    """API: create a Round 2 finalist assignment for one reader and send access link."""
+    _require_admin()
+
+    payload = request.get_json(silent=True) or {}
+    grade = str(payload.get("grade") or "").strip()
+    school = str(payload.get("school") or "").strip()
+    if not grade:
+        return jsonify({"error": "Grade is required."}), 400
+
+    reader_emails, invalid_emails = parse_and_validate_reader_emails(payload.get("readerEmail"))
+    if invalid_emails:
+        return jsonify({"error": "One or more reader emails are invalid.", "invalidEmails": invalid_emails}), 400
+    if len(reader_emails) != 1:
+        return jsonify({"error": "Enter exactly one reader email for Round 2 assignment."}), 400
+
+    sb = _get_service_role_client()
+    if not sb:
+        return jsonify({"error": "Database not configured"}), 500
+
+    try:
+        readers = resolve_or_create_readers(sb, reader_emails)
+        reader_ids = [r.get("id") for r in readers if r.get("id") is not None]
+        if len(reader_ids) != 1:
+            return jsonify({"error": "Failed to resolve the requested reader."}), 500
+
+        school_label = school or "Round 2 Finalists"
+        assignment_id, finalist_count = create_round2_assignment_from_top_results(
+            sb,
+            grade=grade,
+            school=school or None,
+            reader_id=reader_ids[0],
+            top_n=10,
+        )
+        token = _generate_reader_portal_token(reader_emails[0])
+        portal_url = _reader_portal_url(token)
+        email_sent = send_assignment_batch_email(
+            to_email=reader_emails[0],
+            school=school_label,
+            grade=grade,
+            batch_number=1,
+            total_batches=1,
+            essay_count=finalist_count,
+            portal_url=portal_url,
+        )
+        if not email_sent:
+            return jsonify({"error": "Reader access email could not be sent. Check SMTP configuration."}), 500
+
+        return jsonify(
+            {
+                "success": True,
+                "assignmentId": assignment_id,
+                "grade": grade,
+                "school": school_label,
+                "essayCount": finalist_count,
+                "batchCount": 1,
+                "batchNumber": 1,
+                "readerEmail": reader_emails[0],
+                "portalUrl": portal_url,
+                "round": 2,
+            }
+        )
+    except Exception as exc:
+        if _is_missing_assignment_schema_error(exc):
+            return _assignment_schema_error_response()
+        return jsonify({"error": f"Failed to assign Round 2 reader: {exc}"}), 500
 
 
 @admin_bp.route("/assignment-records", methods=["GET"])
@@ -973,19 +1216,18 @@ def reader_access():
             reader = get_reader_by_email(sb, token_email)
             if reader:
                 for row in list_assignments_for_reader(sb, reader.get("id")):
-                    total_essays = count_approved_essays_for_batch(
-                        sb,
-                        school=str(row.get("school_name") or ""),
-                        grade=str(row.get("grade") or ""),
-                    )
-                    start, end = get_batch_bounds(int(row.get("batch_number") or 1), total_essays)
+                    essay_rows, is_finalist_round = _resolve_assignment_essay_rows(sb, row)
+                    total_essays = len(essay_rows)
+                    if is_finalist_round:
+                        start, end = 0, total_essays
+                    else:
+                        approved_total = count_approved_essays_for_batch(
+                            sb,
+                            school=str(row.get("school_name") or ""),
+                            grade=str(row.get("grade") or ""),
+                        )
+                        start, end = get_batch_bounds(int(row.get("batch_number") or 1), approved_total)
                     assignment_id = int(row.get("id"))
-                    essay_rows = list_assignment_submission_rows(
-                        sb,
-                        school=str(row.get("school_name") or ""),
-                        grade=str(row.get("grade") or ""),
-                        batch_number=int(row.get("batch_number") or 1),
-                    )
                     saved_rankings = list_rankings_for_assignment(
                         sb,
                         assignment_id=assignment_id,
@@ -1003,6 +1245,7 @@ def reader_access():
                             "grade": row.get("grade"),
                             "batchNumber": row.get("batch_number"),
                             "totalBatches": row.get("total_batches"),
+                            "isFinalistRound": is_finalist_round,
                             "essayCount": max(0, end - start),
                             "essayRange": f"{start + 1}-{end}" if end > start else "0-0",
                             "createdAt": row.get("created_at"),
@@ -1100,12 +1343,7 @@ def reader_assignment_review(assignment_id: int):
         abort(404, description="Assignment not found")
 
     reader = assignment.get("readers") or {}
-    essay_rows = list_assignment_submission_rows(
-        sb,
-        school=str(assignment.get("school_name") or ""),
-        grade=str(assignment.get("grade") or ""),
-        batch_number=int(assignment.get("batch_number") or 1),
-    )
+    essay_rows, is_finalist_round = _resolve_assignment_essay_rows(sb, assignment)
     saved_rankings = list_rankings_for_assignment(
         sb,
         assignment_id=assignment_id,
@@ -1117,6 +1355,8 @@ def reader_assignment_review(assignment_id: int):
         if str(row.get("submission_id") or "").strip()
     }
     total_essays = len(essay_rows)
+    ranking_finalized_at = assignment.get("ranking_completed_at")
+    ranking_finalized = bool(ranking_finalized_at)
 
     submitted_name = str(reader.get("name") or "").strip()
     submitted_email = reader_email
@@ -1124,6 +1364,55 @@ def reader_assignment_review(assignment_id: int):
     success_message = ""
 
     if request.method == "POST":
+        if ranking_finalized:
+            error_message = "Ranking for this batch is finalized and read-only."
+        if error_message:
+            essays_out = []
+            for index, row in enumerate(essay_rows, start=1):
+                submission_id = str(row.get("submission_id") or "").strip()
+                essays_out.append(
+                    {
+                        "index": index,
+                        "submissionId": submission_id,
+                        "studentName": row.get("student_name") or f"Essay {index}",
+                        "schoolName": row.get("school_name") or assignment.get("school_name"),
+                        "createdAt": _format_human_datetime(row.get("created_at")),
+                        "rankPosition": saved_by_submission.get(submission_id, ""),
+                        "viewUrl": url_for(
+                            "admin.reader_assignment_submission_view",
+                            assignment_id=assignment_id,
+                            submission_id=submission_id,
+                            token=token,
+                        ),
+                        "downloadUrl": url_for(
+                            "admin.reader_assignment_submission_download",
+                            assignment_id=assignment_id,
+                            submission_id=submission_id,
+                            token=token,
+                        ),
+                    }
+                )
+
+            return render_template(
+                "reader_assignment_review.html",
+                token=token,
+                assignment_id=assignment_id,
+                assignment={
+                    "school": assignment.get("school_name"),
+                    "grade": assignment.get("grade"),
+                    "batchNumber": assignment.get("batch_number"),
+                    "totalBatches": assignment.get("total_batches"),
+                    "essayCount": total_essays,
+                },
+                reader_name=submitted_name,
+                reader_email=reader_email,
+                essays=essays_out,
+                error_message=error_message,
+                success_message=success_message,
+                ranking_finalized=ranking_finalized,
+                ranking_finalized_at=_format_human_datetime(ranking_finalized_at),
+            )
+
         submitted_name = str(request.form.get("reader_name") or "").strip()
         submitted_email = str(request.form.get("reader_email") or "").strip().lower()
         ranking_map: dict[str, int] = {}
@@ -1231,6 +1520,46 @@ def reader_assignment_review(assignment_id: int):
                 ],
             )
             saved_by_submission = ranking_map
+            mark_assignment_ranking_completed(
+                sb,
+                assignment_id=assignment_id,
+                reader_name=submitted_name,
+                reader_email=reader_email,
+            )
+            ranking_finalized = True
+            ranking_finalized_at = datetime.now(timezone.utc).isoformat()
+            try:
+                send_reader_ranking_completion_email(
+                    reader_name=submitted_name,
+                    reader_email=reader_email,
+                    school=str(assignment.get("school_name") or ""),
+                    grade=str(assignment.get("grade") or ""),
+                    batch_number=int(assignment.get("batch_number") or 1),
+                    total_batches=int(assignment.get("total_batches") or 1),
+                    essay_count=total_essays,
+                )
+            except Exception as email_exc:
+                current_app.logger.warning(
+                    "Failed to send reader ranking completion email for assignment %s: %s",
+                    assignment_id,
+                    email_exc,
+                )
+            try:
+                send_reader_ranking_confirmation_email(
+                    reader_name=submitted_name,
+                    reader_email=reader_email,
+                    school=str(assignment.get("school_name") or ""),
+                    grade=str(assignment.get("grade") or ""),
+                    batch_number=int(assignment.get("batch_number") or 1),
+                    total_batches=int(assignment.get("total_batches") or 1),
+                    essay_count=total_essays,
+                )
+            except Exception as email_exc:
+                current_app.logger.warning(
+                    "Failed to send volunteer ranking confirmation email for assignment %s: %s",
+                    assignment_id,
+                    email_exc,
+                )
             success_message = "Rankings saved."
 
     essays_out = []
@@ -1268,6 +1597,7 @@ def reader_assignment_review(assignment_id: int):
             "grade": assignment.get("grade"),
             "batchNumber": assignment.get("batch_number"),
             "totalBatches": assignment.get("total_batches"),
+            "isFinalistRound": is_finalist_round,
             "essayCount": total_essays,
         },
         reader_name=submitted_name,
@@ -1275,6 +1605,8 @@ def reader_assignment_review(assignment_id: int):
         essays=essays_out,
         error_message=error_message,
         success_message=success_message,
+        ranking_finalized=ranking_finalized,
+        ranking_finalized_at=_format_human_datetime(ranking_finalized_at),
     )
 
 
@@ -1286,12 +1618,7 @@ def _load_assignment_submission_or_404(sb, *, assignment_id: int, submission_id:
         abort(404, description="Assignment not found")
 
     submission_id_value = str(submission_id or "").strip()
-    essay_rows = list_assignment_submission_rows(
-        sb,
-        school=str(assignment.get("school_name") or ""),
-        grade=str(assignment.get("grade") or ""),
-        batch_number=int(assignment.get("batch_number") or 1),
-    )
+    essay_rows, _ = _resolve_assignment_essay_rows(sb, assignment)
     for row in essay_rows:
         if str(row.get("submission_id") or "").strip() == submission_id_value:
             return row
@@ -1396,13 +1723,25 @@ def get_submissions():
     selected_school = (request.args.get("school") or "").strip()
     selected_grade = (request.args.get("grade") or "").strip()
     selected_status = (request.args.get("status") or "").strip()
+    selected_multi_entry = (request.args.get("multi_entry") or "").strip()
+    multi_entry_only = selected_multi_entry in ("1", "true", "yes", "on")
     submissions = _apply_school_grade_filters(all_rows, selected_school, selected_grade, selected_status)
+    if multi_entry_only:
+        fn_counts: Counter[str] = Counter()
+        for r in all_rows:
+            fn = (r.get("filename") or "").strip()
+            if fn:
+                fn_counts[fn] += 1
+        multi_filenames = {fn for fn, n in fn_counts.items() if n > 1}
+        submissions = [s for s in submissions if (s.get("filename") or "").strip() in multi_filenames]
 
     def _display_status(s):
         has_all = s.get("student_name") and s.get("school_name") and s.get("grade")
-        has_reason = (s.get("review_reason_codes") or "").strip()
+        has_reason = _row_has_reason_codes(s)
         if has_all and not has_reason:
             return "approved"
+        if has_reason:
+            return "needs_review"
         return "needs_review" if s.get("needs_review") else "approved"
 
     return jsonify({
@@ -1594,7 +1933,12 @@ def update_submission_metadata(submission_id: str):
     if "student_name" in payload:
         updates["student_name"] = (str(payload.get("student_name") or "").strip() or None)
     if "school_name" in payload:
-        updates["school_name"] = (str(payload.get("school_name") or "").strip() or None)
+        raw_school_name = (str(payload.get("school_name") or "").strip() or None)
+        if raw_school_name:
+            normalized_school = normalize_school_to_standard(raw_school_name)
+            updates["school_name"] = normalized_school or raw_school_name
+        else:
+            updates["school_name"] = None
     if "grade" in payload:
         updates["grade"] = _normalize_grade_value(payload.get("grade"))
 
@@ -1632,7 +1976,7 @@ def update_submission_metadata(submission_id: str):
         and (updated.get("school_name") or "").strip()
         and str(updated.get("grade") or "").strip()
     )
-    has_reason = bool((updated.get("review_reason_codes") or "").strip())
+    has_reason = bool(_coerce_reason_codes(updated.get("review_reason_codes")))
     status = "approved" if has_all_data and not has_reason else "needs_review"
     return jsonify(
         {

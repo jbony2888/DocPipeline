@@ -29,6 +29,8 @@ ALLOWED_REASON_CODES = {
     "INVALID_GRADE_RANGE",
     "UNKNOWN_SCHOOL",
     "POSSIBLE_FIELD_SWAP",
+    "CONTENT_MISMATCH",
+    "BLANK_SUBMISSION",
 }
 
 
@@ -745,4 +747,3 @@ def compare_snapshots(current: dict, baseline: dict) -> Tuple[bool, dict]:
 
     report = {"ok": len(issues) == 0, "issues": issues}
     return report["ok"], report
-

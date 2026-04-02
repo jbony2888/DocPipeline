@@ -297,11 +297,17 @@ def send_assignment_batch_email(
     total_batches: int,
     essay_count: int,
     portal_url: str,
+    grade_level_scope: bool = False,
 ) -> bool:
     """
     Send one assignment email with a portal link for batch access.
     """
-    subject = f"IFI Essay Batch Assignment: {school} Grade {grade} Batch {batch_number}"
+    if grade_level_scope:
+        subject = f"IFI Essay Batch Assignment: Grade {grade} (all schools) Batch {batch_number}"
+        school_line = "All schools (grade-level pool)"
+    else:
+        subject = f"IFI Essay Batch Assignment: {school} Grade {grade} Batch {batch_number}"
+        school_line = school
     html_body = f"""
     <html>
     <head>
@@ -320,7 +326,7 @@ def send_assignment_batch_email(
                 <p>Hello,</p>
                 <p>You have been assigned an IFI essay reading batch.</p>
                 <div class="info">
-                    <strong>School:</strong> {school}<br>
+                    <strong>School:</strong> {school_line}<br>
                     <strong>Grade:</strong> {grade}<br>
                     <strong>Batch:</strong> {batch_number} of {total_batches}<br>
                     <strong>Essays in this batch:</strong> {essay_count}
@@ -342,7 +348,7 @@ def send_assignment_batch_email(
     """
     text_body = (
         "Essay Batch Assignment\n\n"
-        f"School: {school}\n"
+        f"School: {school_line}\n"
         f"Grade: {grade}\n"
         f"Batch: {batch_number} of {total_batches}\n"
         f"Essays in this batch: {essay_count}\n\n"
@@ -354,6 +360,150 @@ def send_assignment_batch_email(
         "- Save each essay with its own Save button\n"
         "- Use Unrank to move an essay back to unranked\n"
         "- Only one essay can use each rank number in the batch"
+    )
+    return send_smtp_email(to_email, subject, html_body, text_body)
+
+
+def send_reader_ranking_completion_email(
+    *,
+    reader_name: str,
+    reader_email: str,
+    school: str,
+    grade: str,
+    batch_number: int,
+    total_batches: int,
+    essay_count: int,
+) -> bool:
+    """
+    Notify the configured sender/admin inbox that a reader completed ranking a batch.
+    Uses RANKING_COMPLETION_EMAIL when set; otherwise falls back to EMAIL.
+    """
+    notify_email = (os.environ.get("RANKING_COMPLETION_EMAIL") or os.environ.get("EMAIL") or "").strip()
+    if not notify_email:
+        print("⚠️ Ranking completion email skipped: set RANKING_COMPLETION_EMAIL or EMAIL.")
+        return False
+
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    safe_reader_name = str(reader_name or "").strip() or "Reader"
+    safe_reader_email = str(reader_email or "").strip()
+    safe_school = str(school or "").strip()
+    safe_grade = str(grade or "").strip()
+    safe_batch = int(batch_number or 1)
+    safe_total_batches = int(total_batches or 1)
+    safe_essay_count = int(essay_count or 0)
+
+    subject = (
+        "IFI Ranking Completed: "
+        f"{safe_school} Grade {safe_grade} Batch {safe_batch}/{safe_total_batches}"
+    )
+    html_body = f"""
+    <html>
+    <head>
+        <style>
+            body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
+            .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+            .header {{ background-color: #166534; color: white; padding: 20px; text-align: center; }}
+            .content {{ background-color: #f8fafc; padding: 20px; }}
+            .info {{ background-color: white; padding: 15px; margin: 10px 0; border-left: 4px solid #166534; }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header"><h2>Reader Completed Ranking</h2></div>
+            <div class="content">
+                <p>A volunteer has completed ranking their assigned essay batch.</p>
+                <div class="info">
+                    <strong>Reader:</strong> {safe_reader_name}<br>
+                    <strong>Reader Email:</strong> {safe_reader_email}<br>
+                    <strong>School:</strong> {safe_school}<br>
+                    <strong>Grade:</strong> {safe_grade}<br>
+                    <strong>Batch:</strong> {safe_batch} of {safe_total_batches}<br>
+                    <strong>Essays Ranked:</strong> {safe_essay_count}<br>
+                    <strong>Submitted At:</strong> {timestamp}
+                </div>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+    text_body = (
+        "Reader Completed Ranking\n\n"
+        f"Reader: {safe_reader_name}\n"
+        f"Reader Email: {safe_reader_email}\n"
+        f"School: {safe_school}\n"
+        f"Grade: {safe_grade}\n"
+        f"Batch: {safe_batch} of {safe_total_batches}\n"
+        f"Essays Ranked: {safe_essay_count}\n"
+        f"Submitted At: {timestamp}"
+    )
+    return send_smtp_email(notify_email, subject, html_body, text_body)
+
+
+def send_reader_ranking_confirmation_email(
+    *,
+    reader_name: str,
+    reader_email: str,
+    school: str,
+    grade: str,
+    batch_number: int,
+    total_batches: int,
+    essay_count: int,
+) -> bool:
+    """
+    Send completion confirmation to the volunteer who finalized ranking.
+    """
+    to_email = str(reader_email or "").strip().lower()
+    if not to_email:
+        print("⚠️ Reader ranking confirmation email skipped: reader email missing.")
+        return False
+
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    safe_reader_name = str(reader_name or "").strip() or "Reader"
+    safe_school = str(school or "").strip()
+    safe_grade = str(grade or "").strip()
+    safe_batch = int(batch_number or 1)
+    safe_total_batches = int(total_batches or 1)
+    safe_essay_count = int(essay_count or 0)
+
+    subject = f"IFI Ranking Submitted: {safe_school} Grade {safe_grade} Batch {safe_batch}/{safe_total_batches}"
+    html_body = f"""
+    <html>
+    <head>
+        <style>
+            body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
+            .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+            .header {{ background-color: #1d4ed8; color: white; padding: 20px; text-align: center; }}
+            .content {{ background-color: #f8fafc; padding: 20px; }}
+            .info {{ background-color: white; padding: 15px; margin: 10px 0; border-left: 4px solid #1d4ed8; }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header"><h2>Ranking Submission Received</h2></div>
+            <div class="content">
+                <p>Thank you, {safe_reader_name}. Your batch ranking has been submitted and finalized.</p>
+                <div class="info">
+                    <strong>School:</strong> {safe_school}<br>
+                    <strong>Grade:</strong> {safe_grade}<br>
+                    <strong>Batch:</strong> {safe_batch} of {safe_total_batches}<br>
+                    <strong>Essays Ranked:</strong> {safe_essay_count}<br>
+                    <strong>Submitted At:</strong> {timestamp}
+                </div>
+                <p>This batch is now read-only.</p>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+    text_body = (
+        "Ranking Submission Received\n\n"
+        f"Thank you, {safe_reader_name}. Your batch ranking has been submitted and finalized.\n\n"
+        f"School: {safe_school}\n"
+        f"Grade: {safe_grade}\n"
+        f"Batch: {safe_batch} of {safe_total_batches}\n"
+        f"Essays Ranked: {safe_essay_count}\n"
+        f"Submitted At: {timestamp}\n\n"
+        "This batch is now read-only."
     )
     return send_smtp_email(to_email, subject, html_body, text_body)
 

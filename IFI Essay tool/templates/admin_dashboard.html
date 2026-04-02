@@ -29,6 +29,7 @@
         .viewer-frame { width: 100%; height: 78vh; border: 1px solid #cbd5e1; border-radius: 0.5rem; background: white; }
         .sticky-viewer { position: sticky; top: 96px; }
         tr.active-row { background: #eff6ff !important; }
+        .save-feedback { min-height: 1.25rem; }
         @media (max-width: 991px) {
             .viewer-frame { height: 60vh; }
             .sticky-viewer { position: static; }
@@ -109,6 +110,17 @@
                                     <option value="needs_review" {% if selected_status == "needs_review" %}selected{% endif %}>Needs review only</option>
                                 </select>
                             </div>
+                            <div class="col-md-3 col-lg-2">
+                                <label class="form-label small text-muted mb-0">Multi-entry</label>
+                                <select name="multi_entry" class="form-select" onchange="this.form.submit()">
+                                    <option value="" {% if not selected_multi_entry %}selected{% endif %}>All files</option>
+                                    <option value="1" {% if selected_multi_entry in ("1", "true", "yes", "on") %}selected{% endif %}>Multi-entry only</option>
+                                </select>
+                            </div>
+                            <div class="col-md-4 col-lg-3">
+                                <label class="form-label small text-muted mb-0">Submission ID</label>
+                                <input type="text" name="submission_id" class="form-control" value="{{ selected_submission_id or '' }}" placeholder="Exact submission ID">
+                            </div>
                             <div class="col-md-auto">
                                 <button type="submit" class="btn btn-outline-secondary btn-sm">Apply</button>
                             </div>
@@ -124,6 +136,9 @@
                         <span class="text-muted small" id="selCount">0 selected</span>
                         <span class="text-muted small ms-auto">Max 50 files per ZIP · row edits save directly to DB</span>
                     </div>
+                    <div class="card-body pt-0">
+                        <div id="saveFeedback" class="small save-feedback text-muted"></div>
+                    </div>
                 </div>
 
                 <div class="card overflow-hidden">
@@ -138,6 +153,7 @@
                                     <th>School</th>
                                     <th>Grade</th>
                                     <th>File</th>
+                                    <th>Source</th>
                                     <th>Status</th>
                                     <th>Why in review</th>
                                     <th>Date</th>
@@ -147,7 +163,7 @@
                             <tbody>
                                 {% for s in submissions %}
                                 {% set has_all_data = s.student_name and s.school_name and s.grade %}
-                                {% set has_reason = (s.review_reason_codes or '')|trim %}
+                                {% set has_reason = s.has_reason %}
                                 <tr data-submission-id="{{ s.submission_id }}">
                                     <td>
                                         {% if s.artifact_dir %}
@@ -164,13 +180,26 @@
                                         <input type="text" class="form-control form-control-sm metadata-input grade-input" data-field="grade" value="{{ s.grade or '' }}" placeholder="Grade">
                                     </td>
                                     <td class="small text-break">{{ s.filename or '—' }}</td>
-                                    <td data-role="status">
-                                        {% if has_all_data and not has_reason %}
-                                        <span class="badge badge-approved">Approved</span>
-                                        {% elif s.needs_review %}
-                                        <span class="badge badge-needs-review">Needs review</span>
+                                    <td class="small text-muted">
+                                        {% if s.is_container_parent %}
+                                        <div>Parent file</div>
+                                        {% elif s.parent_submission_id %}
+                                        <div class="text-break">{{ s.parent_submission_id }}</div>
+                                        {% if s.chunk_page_start and s.chunk_page_end %}
+                                        <div>pp. {{ s.chunk_page_start }}-{{ s.chunk_page_end }}</div>
+                                        {% endif %}
+                                        {% if s.chunk_index is not none %}
+                                        <div>chunk {{ s.chunk_index }}</div>
+                                        {% endif %}
                                         {% else %}
+                                        —
+                                        {% endif %}
+                                    </td>
+                                    <td data-role="status">
+                                        {% if s.status == 'approved' %}
                                         <span class="badge badge-approved">Approved</span>
+                                        {% else %}
+                                        <span class="badge badge-needs-review">Needs review</span>
                                         {% endif %}
                                     </td>
                                     <td class="text-muted small" style="max-width: 260px;" data-role="reasons">
@@ -194,7 +223,13 @@
                                                 <i class="bi bi-download"></i>
                                             </a>
                                             {% endif %}
-                                            <button type="button" class="btn btn-sm btn-success btn-save" data-update-url="{{ url_for('admin.update_submission_metadata', submission_id=s.submission_id) }}">
+                                            <button
+                                                type="button"
+                                                class="btn btn-sm btn-success btn-save"
+                                                data-update-url="{{ url_for('admin.update_submission_metadata', submission_id=s.submission_id) }}"
+                                                data-approve-url="{{ url_for('admin.force_approve_submission', submission_id=s.submission_id) }}"
+                                                title="Save and approve if required metadata is present"
+                                            >
                                                 <i class="bi bi-check2"></i>
                                             </button>
                                         </div>
@@ -202,7 +237,7 @@
                                 </tr>
                                 {% else %}
                                 <tr>
-                                    <td colspan="9" class="text-center text-muted py-4">No submissions match these filters.</td>
+                                    <td colspan="10" class="text-center text-muted py-4">No submissions match these filters.</td>
                                 </tr>
                                 {% endfor %}
                             </tbody>
@@ -231,6 +266,14 @@
             const frame = document.getElementById('viewerFrame');
             const viewerMeta = document.getElementById('viewerMeta');
             const master = document.getElementById('checkMaster');
+            const saveFeedback = document.getElementById('saveFeedback');
+
+            function setSaveFeedback(message, type) {
+                if (!saveFeedback) return;
+                const cls = type === 'error' ? 'text-danger' : (type === 'success' ? 'text-success' : 'text-muted');
+                saveFeedback.className = 'small save-feedback ' + cls;
+                saveFeedback.textContent = message || '';
+            }
 
             const rows = () => Array.from(document.querySelectorAll('input.row-check'));
             function updateCount() {
@@ -281,15 +324,44 @@
                         return;
                     }
 
-                    tr.querySelector('[data-field="student_name"]').value = data.student_name || '';
-                    tr.querySelector('[data-field="school_name"]').value = data.school_name || '';
-                    tr.querySelector('[data-field="grade"]').value = data.grade || '';
+                    let finalData = data;
+                    if (button.dataset.approveUrl) {
+                        const approveResp = await fetch(button.dataset.approveUrl, {
+                            method: 'POST',
+                            credentials: 'same-origin'
+                        });
+                        const approveData = await approveResp.json().catch(() => ({}));
+                        if (approveResp.ok && approveData.success) {
+                            finalData = {
+                                ...data,
+                                ...approveData,
+                                needs_review: false,
+                                review_reason_codes: '',
+                                review_reasons: '—',
+                                status: 'approved'
+                            };
+                        } else if (approveData && approveData.missing_fields) {
+                            finalData = data;
+                        } else if (!approveResp.ok && approveData.error) {
+                            console.warn('Approve skipped:', approveData.error);
+                        }
+                    }
+
+                    tr.querySelector('[data-field="student_name"]').value = finalData.student_name || '';
+                    tr.querySelector('[data-field="school_name"]').value = finalData.school_name || '';
+                    tr.querySelector('[data-field="grade"]').value = finalData.grade || '';
 
                     const reasonsCell = tr.querySelector('[data-role="reasons"]');
-                    if (reasonsCell) reasonsCell.textContent = data.review_reasons || '—';
-                    setRowStatus(tr, data.status);
+                    if (reasonsCell) reasonsCell.textContent = finalData.review_reasons || '—';
+                    setRowStatus(tr, finalData.status);
+                    tr.classList.add('table-success');
+                    setTimeout(() => tr.classList.remove('table-success'), 1200);
+                    const savedId = finalData.submission_id || tr.dataset.submissionId || '';
+                    const approved = finalData.status === 'approved';
+                    setSaveFeedback((approved ? 'Approved record ' : 'Saved record ') + savedId, 'success');
                 } catch (err) {
                     alert('Save failed: ' + err);
+                    setSaveFeedback('Save failed. Check your admin session and try again.', 'error');
                 } finally {
                     button.disabled = false;
                     button.innerHTML = originalHtml;

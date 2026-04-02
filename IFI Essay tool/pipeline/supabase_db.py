@@ -128,7 +128,15 @@ def check_duplicate_submission(submission_id: str, current_user_id: str, access_
         return {"is_duplicate": False, "existing_owner_user_id": None, "is_own_duplicate": False, "existing_filename": None}
 
 
-def save_record(record: SubmissionRecord, filename: str, owner_user_id: str, access_token: Optional[str] = None, upload_batch_id: Optional[str] = None, essay_text: Optional[str] = None) -> Dict[str, Any]:
+def save_record(
+    record: SubmissionRecord,
+    filename: str,
+    owner_user_id: str,
+    access_token: Optional[str] = None,
+    upload_batch_id: Optional[str] = None,
+    essay_text: Optional[str] = None,
+    extra_fields: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     """Save a submission record to Supabase."""
     try:
         # Prefer an authenticated client when possible (RLS relies on auth.uid()).
@@ -145,6 +153,9 @@ def save_record(record: SubmissionRecord, filename: str, owner_user_id: str, acc
         record_dict["updated_at"] = datetime.now().isoformat()
         if essay_text is not None:
             record_dict["essay_text"] = essay_text if essay_text else None
+        if extra_fields:
+            for key, value in extra_fields.items():
+                record_dict[key] = value
         
         # Add batch tracking
         if upload_batch_id:
@@ -190,8 +201,33 @@ def save_record(record: SubmissionRecord, filename: str, owner_user_id: str, acc
                 or ("grade_source" in err_str and "schema" in err_str)
                 or "pgrst204" in err_str
             )
-            if ("school_source" in record_dict or "grade_source" in record_dict or "teacher_source" in record_dict) and missing_column:
-                for k in ("school_source", "grade_source", "teacher_source"):
+            if (
+                (
+                    "school_source" in record_dict
+                    or "grade_source" in record_dict
+                    or "teacher_source" in record_dict
+                    or "parent_submission_id" in record_dict
+                    or "chunk_index" in record_dict
+                    or "chunk_page_start" in record_dict
+                    or "chunk_page_end" in record_dict
+                    or "is_chunk" in record_dict
+                    or "template_detected" in record_dict
+                    or "is_container_parent" in record_dict
+                )
+                and missing_column
+            ):
+                for k in (
+                    "school_source",
+                    "grade_source",
+                    "teacher_source",
+                    "parent_submission_id",
+                    "chunk_index",
+                    "chunk_page_start",
+                    "chunk_page_end",
+                    "is_chunk",
+                    "template_detected",
+                    "is_container_parent",
+                ):
                     record_dict.pop(k, None)
                 result = supabase.table("submissions").upsert(
                     record_dict,

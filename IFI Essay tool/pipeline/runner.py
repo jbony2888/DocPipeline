@@ -6,6 +6,8 @@ Runs OCR → segmentation → extraction → validation and writes artifacts.
 import json
 import re
 import time
+import tempfile
+import os
 from pathlib import Path
 from typing import Tuple
 
@@ -31,7 +33,7 @@ def _student_name_from_filename(filename: str | None) -> str | None:
         return None
     from pipeline.extract import is_plausible_student_name
     stem = Path(filename).stem
-    # Split on hyphens or spaces; take first 2 tokens that look like name parts (alpha, 2–25 chars)
+    # Split on hyphens/underscores/spaces; keep up to first 3 plausible name tokens.
     parts = re.split(r"[-_\s]+", stem)
     name_parts = []
     for p in parts:
@@ -41,10 +43,10 @@ def _student_name_from_filename(filename: str | None) -> str | None:
             continue
         # Skip common non-name leading tokens
         low = p.lower()
-        if low in ("ifi", "essay", "contest", "fatherhood", "form", "export", "pdf", "the", "and"):
+        if low in ("ifi", "essay", "contest", "fatherhood", "form", "export", "pdf", "the", "and", "what", "my", "father", "means", "to", "me"):
             continue
         name_parts.append(p)
-        if len(name_parts) >= 2:
+        if len(name_parts) >= 3:
             break
     if len(name_parts) < 2:
         return None
@@ -112,6 +114,204 @@ def _extract_header_fields_from_text(text: str) -> dict:
             if extracted[field]:
                 break
     return extracted
+
+
+def _is_low_quality_student_name(value: str | None) -> bool:
+    if not value or not str(value).strip():
+        return True
+    s = str(value).strip()
+    compact = re.sub(r"[^A-Za-z]", "", s)
+    if len(compact) < 4:
+        return True
+    # Typical OCR failure seen in scans: very short split tokens like "P d"
+    if len(s.split()) == 2 and all(len(tok) <= 2 for tok in s.split()):
+        return True
+    return False
+
+
+def _is_low_quality_school_name(value: str | None) -> bool:
+    if not value or not str(value).strip():
+        return True
+    s = str(value).strip()
+    low = s.lower()
+    if any(
+        k in low
+        for k in (
+            "character",
+            "maximo",
+            "máximo",
+            "deadline",
+            "writing about",
+            "escribiendo",
+            "father",
+            "grandfather",
+            "stepdad",
+            "father-figure",
+        )
+    ):
+        return True
+    if len(s) > 40:
+        return True
+    alpha_count = sum(1 for c in s if c.isalpha())
+    if alpha_count < 2:
+        return True
+    # Very short numeric-heavy patterns are usually partial OCR captures.
+    if re.fullmatch(r"#?\s*\d{1,4}\s*[A-Za-z]?", s):
+        return True
+    return False
+
+
+def _is_plausible_school_candidate(value: str | None) -> bool:
+    if not value or not str(value).strip():
+        return False
+    s = str(value).strip()
+    low = s.lower()
+    if _is_low_quality_school_name(s):
+        return False
+    tokens = s.split()
+    if len(tokens) > 5:
+        return False
+    # School-like keyword or known compact school code pattern.
+    if any(
+        k in low
+        for k in ("school", "academy", "elementary", "middle", "high", "institute", "carson", "ps ")
+    ):
+        return True
+    if re.fullmatch(r"(?:p\.?\s*s\.?\s*)?\d{1,4}\s*[A-Za-z]?", low):
+        return True
+    # Two to four title-cased words can still be a school name.
+    if 2 <= len(tokens) <= 4 and all(t and t[0].isupper() for t in tokens if t[0].isalpha()):
+        return True
+    return False
+
+
+def _extract_roi_text_with_ocr(
+    pdf_path: str,
+    page_index: int,
+    roi_norm: tuple[float, float, float, float],
+    ocr_provider,
+    dpi: int = 400,
+) -> str:
+    """
+    OCR a normalized ROI from a PDF page.
+    roi_norm = (x0, y0, x1, y1) in page-relative coordinates [0,1].
+    """
+    try:
+        import fitz
+    except Exception:
+        return ""
+
+    doc = fitz.open(pdf_path)
+    try:
+        if page_index < 0 or page_index >= len(doc):
+            return ""
+        page = doc.load_page(page_index)
+        rect = page.rect
+        x0 = rect.x0 + rect.width * roi_norm[0]
+        y0 = rect.y0 + rect.height * roi_norm[1]
+        x1 = rect.x0 + rect.width * roi_norm[2]
+        y1 = rect.y0 + rect.height * roi_norm[3]
+        clip = fitz.Rect(x0, y0, x1, y1)
+        pix = page.get_pixmap(clip=clip, dpi=dpi, alpha=False)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+            tmp.write(pix.tobytes("png"))
+            tmp_path = tmp.name
+        try:
+            res = ocr_provider.process_image(tmp_path)
+            return (res.text or "").strip()
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
+    finally:
+        doc.close()
+
+
+def _extract_typed_form_fields_via_roi_ocr(
+    pdf_path: str,
+    ocr_provider,
+) -> dict:
+    """
+    ROI fallback for scanned IFI typed forms.
+    Tries fixed regions where student/school/grade usually appear in the 26-IFI layout.
+    """
+    from pipeline.extract import is_plausible_student_name, parse_grade, looks_like_essay_fragment, is_valid_value_candidate
+    from pipeline.normalize import sanitize_grade
+
+    # Candidate regions tuned for IFI 2-page form scans.
+    # Format: (field, page_index, (x0, y0, x1, y1))
+    rois: list[tuple[str, int, tuple[float, float, float, float]]] = [
+        # Page 1 (index 0): top/mid header metadata zones
+        ("student_name", 0, (0.18, 0.22, 0.78, 0.42)),
+        ("grade", 0, (0.55, 0.72, 0.72, 0.95)),
+        ("school_name", 0, (0.62, 0.72, 0.98, 0.96)),
+        # Page 2 (index 1): bottom metadata often repeats grade/school in scans
+        ("grade", 1, (0.45, 0.72, 0.66, 0.98)),
+        ("school_name", 1, (0.52, 0.72, 0.98, 0.98)),
+    ]
+
+    out = {"student_name": None, "school_name": None, "grade": None}
+    for field, page_idx, roi in rois:
+        txt = _extract_roi_text_with_ocr(pdf_path, page_idx, roi, ocr_provider, dpi=400)
+        if not txt:
+            continue
+        lines = [re.sub(r"\s+", " ", ln).strip() for ln in txt.splitlines() if ln.strip()]
+        if not lines:
+            continue
+
+        if field == "grade" and out.get("grade") is None:
+            for ln in lines:
+                g = parse_grade(ln)
+                if g is not None:
+                    out["grade"] = sanitize_grade(g)
+                    break
+
+        elif field == "student_name" and out.get("student_name") is None:
+            for ln in lines:
+                low = ln.lower()
+                if any(k in low for k in ("student", "name", "nombre", "escuela", "school", "grade", "grado")):
+                    continue
+                if looks_like_essay_fragment(ln):
+                    continue
+                if is_plausible_student_name(ln, max_line_length=60):
+                    out["student_name"] = ln
+                    break
+
+        elif field == "school_name" and out.get("school_name") is None:
+            for ln in lines:
+                low = ln.lower()
+                if any(
+                    k in low
+                    for k in (
+                        "school",
+                        "escuela",
+                        "grade",
+                        "grado",
+                        "student",
+                        "name",
+                        "nombre",
+                        "character",
+                        "maximo",
+                        "máximo",
+                        "deadline",
+                        "writing about",
+                        "escribiendo",
+                        "father",
+                        "grandfather",
+                        "stepdad",
+                    )
+                ):
+                    continue
+                if looks_like_essay_fragment(ln):
+                    continue
+                if not is_valid_value_candidate(ln, max_length=80):
+                    continue
+                if _is_plausible_school_candidate(ln):
+                    out["school_name"] = ln.lstrip("# ").strip()
+                    break
+
+    return out
 
 
 def _get_best_essay_text(essay_block: str, llm_essay_text: str = None, raw_text: str = None) -> tuple[str, str]:
@@ -220,6 +420,20 @@ def process_submission(
     pipeline_start = time.perf_counter()
     
     try:
+        # Hash the exact bytes being processed (for audit/proof).
+        input_file_sha256 = None
+        input_file_size = None
+        try:
+            p = Path(str(image_path))
+            if p.exists() and p.is_file():
+                b = p.read_bytes()
+                import hashlib
+
+                input_file_sha256 = hashlib.sha256(b).hexdigest()
+                input_file_size = len(b)
+        except Exception:
+            pass
+
         # Stage 1: OCR (or text-layer extraction for typed PDFs)
         ocr_stage_start = time.perf_counter()
         ocr_provider = get_ocr_provider(ocr_provider_name)
@@ -329,7 +543,10 @@ def process_submission(
             acroform_fields = _extract_typed_form_acroform_fields(form_field_values)
             # Typed forms must source metadata from form fields only.
             contact_fields["student_name"] = acroform_fields.get("student_name")
-            contact_fields["school_name"] = acroform_fields.get("school_name")
+            school_from_acro = acroform_fields.get("school_name")
+            if school_from_acro and ("a dog" in school_from_acro.lower() or school_from_acro.lower() == "escuela a dog"):
+                school_from_acro = None  # essay placeholder, not a real school
+            contact_fields["school_name"] = school_from_acro
             contact_fields["grade"] = acroform_fields.get("grade")
 
         is_typed_form = ifi_meta.get("extraction_method") == "typed_form_rule_based"
@@ -338,6 +555,54 @@ def process_submission(
         chunk_end = chunk_meta.get("chunk_page_end")
         chunk_span = (chunk_end if chunk_end is not None else 0) - (chunk_start if chunk_start is not None else 0)
         multi_page_typed = is_typed_form and chunk_span >= 1 and str(image_path).lower().endswith(".pdf")
+
+        # Scanned typed-form fallback: when header fields look low quality, OCR targeted ROIs.
+        # This avoids full-page label bleed and improves boxed-field metadata extraction.
+        if is_typed_form and str(image_path).lower().endswith(".pdf"):
+            current_student = contact_fields.get("student_name")
+            current_school = contact_fields.get("school_name")
+            current_grade = contact_fields.get("grade")
+            needs_roi_retry = (
+                _is_low_quality_student_name(current_student)
+                or _is_low_quality_school_name(current_school)
+                or current_grade is None
+            )
+            if needs_roi_retry:
+                try:
+                    roi_fields = _extract_typed_form_fields_via_roi_ocr(
+                        str(image_path),
+                        ocr_provider=ocr_provider,
+                    )
+                    roi_student = roi_fields.get("student_name")
+                    roi_school = roi_fields.get("school_name")
+                    roi_grade = roi_fields.get("grade")
+
+                    if roi_student and _is_low_quality_student_name(current_student):
+                        contact_fields["student_name"] = roi_student
+                    if (
+                        roi_school
+                        and _is_low_quality_school_name(current_school)
+                        and _is_plausible_school_candidate(roi_school)
+                    ):
+                        contact_fields["school_name"] = roi_school
+                    if roi_grade is not None and current_grade is None:
+                        contact_fields["grade"] = roi_grade
+
+                    if any(v is not None for v in (roi_student, roi_school, roi_grade)):
+                        notes = ifi_meta.get("notes", []) if isinstance(ifi_meta, dict) else []
+                        notes = list(notes)
+                        notes.append("Scanned-form ROI OCR fallback applied for metadata fields")
+                        ifi_meta["notes"] = notes
+                        contact_fields["_ifi_metadata"] = ifi_meta
+                        logger.info(
+                            "ROI OCR fallback applied for %s: student=%r school=%r grade=%r",
+                            submission_id,
+                            contact_fields.get("student_name"),
+                            contact_fields.get("school_name"),
+                            contact_fields.get("grade"),
+                        )
+                except Exception as exc:
+                    logger.warning("ROI OCR fallback failed for %s: %s", submission_id, exc)
 
         # For multi-page typed forms (e.g. 26-IFI: page 1 = essay details, page 2 = contest),
         # re-run header extraction on page-1 text only so grade/name/school come from essay page.
@@ -420,11 +685,19 @@ def process_submission(
             except Exception as exc:
                 logger.warning(f"Chunk attribution guardrail failed for {submission_id}: {exc}")
 
-        # Fallback: student name from filename when still missing (e.g. IFI form with empty Student's Name field, #9)
-        if not contact_fields.get("student_name") and original_filename:
+        # Fallback: student name from filename when missing OR clearly low quality on typed forms
+        # (e.g. scanned OCR outputs like "P d").
+        current_student_name = contact_fields.get("student_name")
+        needs_name_from_filename = (
+            not current_student_name
+            or (is_typed_form and _is_low_quality_student_name(current_student_name))
+        )
+        if needs_name_from_filename and original_filename:
             name_from_file = _student_name_from_filename(original_filename)
             if name_from_file:
-                contact_fields["student_name"] = name_from_file
+                from pipeline.extract import looks_like_essay_fragment
+                if not looks_like_essay_fragment(name_from_file):
+                    contact_fields["student_name"] = name_from_file
                 logger.info("Student name from filename (form/content empty): %s", name_from_file)
 
         # Deterministic normalization
@@ -649,6 +922,72 @@ def process_submission(
         }
         processing_report["timing_ms"]["validation"] = round((time.perf_counter() - validation_stage_start) * 1000, 2)
         processing_report["timing_ms"]["total"] = round((time.perf_counter() - pipeline_start) * 1000, 2)
+
+        # Upload audit + core artifacts to storage (service-role, best-effort).
+        try:
+            from pipeline.supabase_db import _get_service_role_client
+            from pipeline.supabase_storage import BUCKET_NAME
+
+            sb = _get_service_role_client()
+            if sb and artifact_dir:
+                base = f"{str(artifact_dir).rstrip('/')}/artifacts/{submission_id}"
+                # Core artifacts written above (if present)
+                for name in (
+                    "ocr.json",
+                    "raw_text.txt",
+                    "contact_block.txt",
+                    "essay_block.txt",
+                    "structured.json",
+                    "extraction_debug.json",
+                    "validation.json",
+                ):
+                    fp = artifact_path / name
+                    if not fp.exists():
+                        continue
+                    data = fp.read_bytes()
+                    content_type = "application/json" if name.endswith(".json") else "text/plain"
+                    sb.storage.from_(BUCKET_NAME).upload(
+                        f"{base}/{name}",
+                        data,
+                        {"content-type": content_type, "upsert": "true"},
+                    )
+
+                # Audit artifact: ties stored bytes ↔ OCR ↔ extracted essay
+                import hashlib as _hashlib
+                audit = {
+                    "generated_at": datetime.now(timezone.utc).isoformat(),
+                    "submission_id": submission_id,
+                    "artifact_dir": artifact_dir,
+                    "original_filename": original_filename,
+                    "doc_format": doc_format,
+                    "chunk_metadata": chunk_metadata or {},
+                    "input_file": {
+                        "sha256": input_file_sha256,
+                        "sha256_12": (input_file_sha256[:12] if input_file_sha256 else None),
+                        "size_bytes": input_file_size,
+                        "path_hint": str(image_path),
+                    },
+                    "ocr_text": {
+                        "sha256": _hashlib.sha256((ocr_result.text or "").encode("utf-8")).hexdigest(),
+                        "char_count": len(ocr_result.text or ""),
+                        "snippet_500": (ocr_result.text or "")[:500],
+                    },
+                    "essay_text": {
+                        "sha256": _hashlib.sha256((final_essay_text or "").encode("utf-8")).hexdigest(),
+                        "char_count": len(final_essay_text or ""),
+                        "word_count": len((final_essay_text or "").split()),
+                        "source": essay_source,
+                        "snippet_500": (final_essay_text or "")[:500],
+                    },
+                }
+                sb.storage.from_(BUCKET_NAME).upload(
+                    f"{base}/audit.json",
+                    json.dumps(audit, indent=2).encode("utf-8"),
+                    {"content-type": "application/json", "upsert": "true"},
+                )
+        except Exception:
+            # Best-effort; never block processing
+            pass
     
     finally:
         # Clean up temporary directory (artifacts are stored in Supabase Storage, not needed locally)

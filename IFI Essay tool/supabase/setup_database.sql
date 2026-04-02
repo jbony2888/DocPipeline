@@ -27,6 +27,13 @@ CREATE TABLE IF NOT EXISTS public.submissions (
     artifact_dir TEXT,
     filename TEXT,
     essay_text TEXT, -- Optional: full essay text content
+    parent_submission_id TEXT,
+    chunk_index INTEGER,
+    chunk_page_start INTEGER,
+    chunk_page_end INTEGER,
+    is_chunk BOOLEAN NOT NULL DEFAULT FALSE,
+    template_detected BOOLEAN NOT NULL DEFAULT FALSE,
+    is_container_parent BOOLEAN NOT NULL DEFAULT FALSE,
     owner_user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -50,6 +57,9 @@ CREATE INDEX IF NOT EXISTS idx_submissions_grade
 
 CREATE INDEX IF NOT EXISTS idx_submissions_school_name 
     ON public.submissions(school_name);
+
+CREATE INDEX IF NOT EXISTS idx_submissions_parent_submission_id
+    ON public.submissions(parent_submission_id);
 
 -- ============================================================================
 -- STEP 3: Create function to auto-update updated_at timestamp
@@ -270,5 +280,4 @@ CREATE INDEX IF NOT EXISTS idx_essay_rankings_submission_id ON public.essay_rank
 
 -- Check indexes
 -- SELECT indexname, indexdef FROM pg_indexes WHERE tablename = 'submissions';
-
 

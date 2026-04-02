@@ -1,9 +1,9 @@
 """
-Assignment service layer for admin grade-level reader assignments.
+Assignment service layer for admin reader batch assignments.
 
-Scope is intentionally narrow for v1:
-- grade-level assignment only (reader gets all approved essays for grade)
-- no per-essay assignment tables
+Supports:
+- Grade-level batches: all approved essays for a grade across every school (fair comparison).
+- School-scoped batches: approved essays for one standardized school + grade (legacy / admin browse).
 - email delivery is a post-assignment hook only
 """
 
@@ -13,6 +13,17 @@ import re
 from difflib import SequenceMatcher
 from collections import defaultdict
 from typing import Any
+from datetime import datetime, timezone
+
+from pipeline.validate import ALLOWED_REASON_CODES
+
+# Stored in assignments.school_name for cross-school grade batches (must match exactly everywhere).
+GRADE_LEVEL_ASSIGNMENT_SCHOOL_LABEL = "All schools (grade-level)"
+
+
+def is_grade_level_assignment_school(school: str | None) -> bool:
+    """True when this school_name value denotes a grade-wide (all schools) assignment."""
+    return str(school or "").strip() == GRADE_LEVEL_ASSIGNMENT_SCHOOL_LABEL
 
 
 EMAIL_REGEX = re.compile(r"^[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}$", re.IGNORECASE)
@@ -57,12 +68,21 @@ def parse_and_validate_reader_emails(raw_value: Any) -> tuple[list[str], list[st
 def _is_approved_submission_row(row: dict[str, Any]) -> bool:
     """Mirror admin dashboard approval logic for consistency."""
     has_all_data = bool(row.get("student_name") and row.get("school_name") and row.get("grade") is not None)
-    has_reason = bool((row.get("review_reason_codes") or "").strip())
-    if has_all_data and not has_reason:
-        return True
+    raw_reason_codes = str(row.get("review_reason_codes") or "").strip()
+    if raw_reason_codes in {"[]", "{}", "null", "None"}:
+        raw_reason_codes = ""
+    reason_codes = {
+        code.strip()
+        for code in raw_reason_codes.split(";")
+        if code.strip() and code.strip() in ALLOWED_REASON_CODES
+    }
+    if reason_codes & {"CONTENT_MISMATCH", "BLANK_SUBMISSION"}:
+        return False
+    if reason_codes:
+        return False
     if row.get("needs_review"):
         return False
-    return True
+    return has_all_data
 
 
 def _grade_query_value(grade: str) -> Any:
@@ -220,10 +240,50 @@ def get_batch_bounds(batch_number: int, total_items: int) -> tuple[int, int]:
     return start, end
 
 
+def count_approved_essays_for_grade_level(sb: Any, grade: str) -> int:
+    """Count approved submissions for one grade across all schools."""
+    query_value = _grade_query_value(grade)
+    result = (
+        sb.table("submissions")
+        .select("student_name, school_name, grade, needs_review, review_reason_codes")
+        .eq("grade", query_value)
+        .limit(10000)
+        .execute()
+    )
+    rows = result.data or []
+    count = 0
+    for row in rows:
+        if _is_approved_submission_row(row):
+            count += 1
+    return count
+
+
+def list_approved_submissions_for_grade_level(sb: Any, grade: str) -> list[dict[str, Any]]:
+    """Return approved submissions for one grade across all schools, stable-sorted for batching."""
+    query_value = _grade_query_value(grade)
+    result = (
+        sb.table("submissions")
+        .select("submission_id, filename, artifact_dir, created_at, grade, school_name, student_name, needs_review, review_reason_codes")
+        .eq("grade", query_value)
+        .limit(10000)
+        .execute()
+    )
+    rows = result.data or []
+    filtered: list[dict[str, Any]] = []
+    for row in rows:
+        if not _is_approved_submission_row(row):
+            continue
+        filtered.append(dict(row))
+    filtered.sort(key=lambda row: (str(row.get("created_at") or ""), str(row.get("submission_id") or "")))
+    return filtered
+
+
 def count_approved_essays_for_batch(sb: Any, school: str, grade: str) -> int:
     """
-    Count approved submissions for a selected grade.
+    Count approved submissions for a school+grade bucket, or all schools when school is the grade-level label.
     """
+    if is_grade_level_assignment_school(school):
+        return count_approved_essays_for_grade_level(sb, grade)
     query_value = _grade_query_value(grade)
     selected_school = str(school or "").strip()
     try:
@@ -254,8 +314,10 @@ def count_approved_essays_for_batch(sb: Any, school: str, grade: str) -> int:
 
 def list_approved_submissions_for_batch(sb: Any, school: str, grade: str) -> list[dict[str, Any]]:
     """
-    Return approved submissions for one standardized school+grade bucket.
+    Return approved submissions for one standardized school+grade bucket, or all schools for the grade-level label.
     """
+    if is_grade_level_assignment_school(school):
+        return list_approved_submissions_for_grade_level(sb, grade)
     query_value = _grade_query_value(grade)
     selected_school = str(school or "").strip()
     try:
@@ -300,6 +362,133 @@ def list_assignment_submission_rows(
         return []
     start, end = get_batch_bounds(int(batch_number or 1), len(submissions))
     return submissions[start:end]
+
+
+def list_assignment_finalist_rows(sb: Any, *, assignment_id: int) -> list[dict[str, Any]]:
+    """
+    Return submissions explicitly mapped to an assignment via assignment_finalists.
+    """
+    finalist_rows = (
+        sb.table("assignment_finalists")
+        .select("assignment_id, submission_id, finalist_position")
+        .eq("assignment_id", int(assignment_id))
+        .order("finalist_position")
+        .limit(200)
+        .execute()
+        .data
+        or []
+    )
+    if not finalist_rows:
+        return []
+
+    ordered_ids = [
+        str(row.get("submission_id") or "").strip()
+        for row in finalist_rows
+        if str(row.get("submission_id") or "").strip()
+    ]
+    if not ordered_ids:
+        return []
+
+    submissions = (
+        sb.table("submissions")
+        .select("submission_id, filename, artifact_dir, created_at, grade, school_name, student_name, needs_review, review_reason_codes")
+        .in_("submission_id", ordered_ids)
+        .limit(max(1, len(ordered_ids)))
+        .execute()
+        .data
+        or []
+    )
+    by_id = {str(row.get("submission_id") or "").strip(): dict(row) for row in submissions}
+    out: list[dict[str, Any]] = []
+    for submission_id in ordered_ids:
+        row = by_id.get(submission_id)
+        if row:
+            out.append(row)
+    return out
+
+
+def assignment_has_finalists(sb: Any, *, assignment_id: int) -> bool:
+    rows = (
+        sb.table("assignment_finalists")
+        .select("assignment_id")
+        .eq("assignment_id", int(assignment_id))
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    return bool(rows)
+
+
+def create_round2_assignment_from_top_results(
+    sb: Any,
+    *,
+    grade: str,
+    reader_id: Any,
+    school: str | None = None,
+    top_n: int = 10,
+) -> tuple[int, int]:
+    """
+    Create a Round 2 assignment for one reader with Top-N finalist submissions from Round 1.
+    Returns (assignment_id, finalist_count).
+    """
+    finalists = compute_ranking_results(sb, grade=grade, school=school)[: max(1, int(top_n or 10))]
+    finalist_ids = [str(item.get("submissionId") or "").strip() for item in finalists if str(item.get("submissionId") or "").strip()]
+    if not finalist_ids:
+        raise ValueError("No ranked essays are available to seed Round 2 finalists.")
+
+    school_label = str(school or "").strip() or "Round 2 Finalists"
+    assignment_row = {
+        "reader_id": reader_id,
+        "school_name": school_label,
+        "grade": str(grade).strip(),
+        "batch_number": 1,
+        "total_batches": 1,
+    }
+    inserted = (
+        sb.table("assignments")
+        .upsert(
+            [assignment_row],
+            on_conflict="reader_id,school_name,grade,batch_number",
+            ignore_duplicates=False,
+        )
+        .execute()
+        .data
+        or []
+    )
+    assignment_id = int(inserted[0]["id"]) if inserted and inserted[0].get("id") is not None else None
+    if assignment_id is None:
+        lookup = (
+            sb.table("assignments")
+            .select("id")
+            .eq("reader_id", reader_id)
+            .eq("school_name", school_label)
+            .eq("grade", str(grade).strip())
+            .eq("batch_number", 1)
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+        if not lookup:
+            raise RuntimeError("Failed to create Round 2 assignment.")
+        assignment_id = int(lookup[0]["id"])
+
+    sb.table("assignment_finalists").delete().eq("assignment_id", assignment_id).execute()
+    finalist_payload = [
+        {
+            "assignment_id": assignment_id,
+            "submission_id": submission_id,
+            "finalist_position": idx,
+        }
+        for idx, submission_id in enumerate(finalist_ids, start=1)
+    ]
+    sb.table("assignment_finalists").upsert(
+        finalist_payload,
+        on_conflict="assignment_id,submission_id",
+        ignore_duplicates=False,
+    ).execute()
+    return assignment_id, len(finalist_ids)
 
 
 def list_approved_batches_by_school(sb: Any) -> list[dict[str, Any]]:
@@ -360,6 +549,54 @@ def list_approved_batches_by_school(sb: Any) -> list[dict[str, Any]]:
             )
         out.append({"school": school, "grades": grade_items})
     return out
+
+
+def list_approved_grade_level_summaries(sb: Any) -> list[dict[str, Any]]:
+    """
+    Return one entry per grade with approved counts and teacher emails aggregated across all schools.
+    """
+    result = (
+        sb.table("submissions")
+        .select("grade, school_name, student_name, needs_review, review_reason_codes, owner_user_id")
+        .limit(10000)
+        .execute()
+    )
+    rows = result.data or []
+
+    counts: dict[str, int] = defaultdict(int)
+    owner_ids_by_grade: dict[str, set[str]] = defaultdict(set)
+
+    for row in rows:
+        grade = str(row.get("grade") or "").strip()
+        if not grade:
+            continue
+        if not _is_approved_submission_row(row):
+            continue
+        counts[grade] += 1
+        owner_id = str(row.get("owner_user_id") or "").strip()
+        if owner_id:
+            owner_ids_by_grade[grade].add(owner_id)
+
+    # Reuse auth list_users resolution; fake single "school" bucket with grade keys.
+    teacher_email_by_owner_id = _load_teacher_emails_by_owner_id(sb, {"": owner_ids_by_grade})
+
+    grade_items: list[dict[str, Any]] = []
+    for grade in sorted(counts.keys(), key=lambda g: (not str(g).isdigit(), str(g).casefold())):
+        owner_ids = sorted(owner_ids_by_grade.get(grade, set()))
+        teacher_emails = [
+            teacher_email_by_owner_id[oid]
+            for oid in owner_ids
+            if teacher_email_by_owner_id.get(oid)
+        ]
+        grade_items.append(
+            {
+                "grade": grade,
+                "approvedCount": counts[grade],
+                "teacherEmails": teacher_emails,
+                "teacherEmailCount": len(teacher_emails),
+            }
+        )
+    return grade_items
 
 
 def _load_teacher_emails_by_owner_id(
@@ -580,7 +817,11 @@ def get_assignment_with_reader(sb: Any, assignment_id: int) -> dict[str, Any] | 
     """
     result = (
         sb.table("assignments")
-        .select("id, reader_id, school_name, grade, batch_number, total_batches, created_at, readers(id, email, name)")
+        .select(
+            "id, reader_id, school_name, grade, batch_number, total_batches, created_at, "
+            "ranking_completed_at, ranking_completed_by_name, ranking_completed_by_email, "
+            "readers(id, email, name)"
+        )
         .eq("id", int(assignment_id))
         .limit(1)
         .execute()
@@ -646,6 +887,31 @@ def replace_assignment_rankings(
     return result.data or []
 
 
+def mark_assignment_ranking_completed(
+    sb: Any,
+    *,
+    assignment_id: int,
+    reader_name: str,
+    reader_email: str,
+) -> bool:
+    """
+    Mark an assignment ranking as final/locked.
+    """
+    result = (
+        sb.table("assignments")
+        .update(
+            {
+                "ranking_completed_at": datetime.now(timezone.utc).isoformat(),
+                "ranking_completed_by_name": str(reader_name or "").strip(),
+                "ranking_completed_by_email": str(reader_email or "").strip().lower(),
+            }
+        )
+        .eq("id", int(assignment_id))
+        .execute()
+    )
+    return bool(result.data)
+
+
 def save_single_assignment_ranking(
     sb: Any,
     *,
@@ -701,21 +967,26 @@ def delete_single_assignment_ranking(sb: Any, *, assignment_id: int, reader_id: 
     return bool(result.data)
 
 
-def compute_ranking_results(sb: Any, *, grade: str, school: str | None = None) -> list[dict[str, Any]]:
-    """
-    Compute final ranking results for a grade, optionally filtered to one school.
-    """
-    query = (
-        sb.table("essay_rankings")
-        .select(
-            "submission_id, school_name, grade, rank_position, reader_id, reader_name, reader_email"
-        )
-        .eq("grade", str(grade).strip())
-        .limit(10000)
+def _load_finalist_assignment_ids(sb: Any, assignment_ids: list[int]) -> set[int]:
+    if not assignment_ids:
+        return set()
+    finalist_rows = (
+        sb.table("assignment_finalists")
+        .select("assignment_id")
+        .in_("assignment_id", assignment_ids)
+        .limit(max(1, len(assignment_ids) * 20))
+        .execute()
+        .data
+        or []
     )
-    if school:
-        query = query.eq("school_name", str(school).strip())
-    rankings = query.execute().data or []
+    return {
+        int(row.get("assignment_id"))
+        for row in finalist_rows
+        if row.get("assignment_id") is not None
+    }
+
+
+def _compute_ranking_results_from_rows(sb: Any, rankings: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if not rankings:
         return []
 
@@ -782,6 +1053,113 @@ def compute_ranking_results(sb: Any, *, grade: str, school: str | None = None) -
     for index, item in enumerate(results, start=1):
         item["finalPosition"] = index
     return results
+
+
+def compute_ranking_results(sb: Any, *, grade: str, school: str | None = None) -> list[dict[str, Any]]:
+    """
+    Compute Round 1 ranking results for a grade, optionally filtered to one school.
+    Round 2 finalist assignments are excluded.
+    """
+    query = (
+        sb.table("essay_rankings")
+        .select(
+            "assignment_id, submission_id, school_name, grade, rank_position, reader_id, reader_name, reader_email"
+        )
+        .eq("grade", str(grade).strip())
+        .limit(10000)
+    )
+    if school:
+        query = query.eq("school_name", str(school).strip())
+    rankings = query.execute().data or []
+    if not rankings:
+        return []
+
+    assignment_ids = sorted(
+        {
+            int(row.get("assignment_id"))
+            for row in rankings
+            if row.get("assignment_id") is not None
+        }
+    )
+    finalist_assignment_ids = _load_finalist_assignment_ids(sb, assignment_ids)
+    if finalist_assignment_ids:
+        rankings = [
+            row for row in rankings if int(row.get("assignment_id") or 0) not in finalist_assignment_ids
+        ]
+    return _compute_ranking_results_from_rows(sb, rankings)
+
+
+def compute_round2_ranking_results(sb: Any, *, grade: str, school: str | None = None) -> list[dict[str, Any]]:
+    """
+    Compute Round 2 ranking results for a grade, optionally filtered to one school.
+    Only finalist assignments are included.
+    """
+    query = (
+        sb.table("essay_rankings")
+        .select(
+            "assignment_id, submission_id, school_name, grade, rank_position, reader_id, reader_name, reader_email"
+        )
+        .eq("grade", str(grade).strip())
+        .limit(10000)
+    )
+    if school:
+        query = query.eq("school_name", str(school).strip())
+    rankings = query.execute().data or []
+    if not rankings:
+        return []
+
+    assignment_ids = sorted(
+        {
+            int(row.get("assignment_id"))
+            for row in rankings
+            if row.get("assignment_id") is not None
+        }
+    )
+    finalist_assignment_ids = _load_finalist_assignment_ids(sb, assignment_ids)
+    if finalist_assignment_ids:
+        rankings = [
+            row for row in rankings if int(row.get("assignment_id") or 0) in finalist_assignment_ids
+        ]
+    else:
+        rankings = []
+    return _compute_ranking_results_from_rows(sb, rankings)
+
+
+def get_grade_batch_progress(sb: Any, *, grade: str, school: str | None = None) -> dict[str, int]:
+    """
+    Return finalized-vs-assigned batch counts for one grade (optionally one school).
+    Counts unique (school_name, grade, batch_number) batches.
+    """
+    query = (
+        sb.table("assignments")
+        .select("school_name, grade, batch_number, ranking_completed_at")
+        .eq("grade", str(grade).strip())
+        .limit(5000)
+    )
+    if school:
+        query = query.eq("school_name", str(school).strip())
+    rows = query.execute().data or []
+
+    assigned_batches: set[tuple[str, str, int]] = set()
+    completed_batches: set[tuple[str, str, int]] = set()
+    for row in rows:
+        school_name = str(row.get("school_name") or "").strip()
+        grade_value = str(row.get("grade") or "").strip()
+        try:
+            batch_number = int(row.get("batch_number") or 0)
+        except Exception:
+            batch_number = 0
+        if not school_name or not grade_value or batch_number < 1:
+            continue
+        key = (school_name, grade_value, batch_number)
+        assigned_batches.add(key)
+        if row.get("ranking_completed_at"):
+            completed_batches.add(key)
+
+    return {
+        "completedBatches": len(completed_batches),
+        "assignedBatches": len(assigned_batches),
+    }
 
 
 def trigger_assignment_send_hook(school: str, grade: str, essay_count: int, reader_emails: list[str]) -> None:

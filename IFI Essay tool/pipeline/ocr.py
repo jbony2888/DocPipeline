@@ -28,6 +28,37 @@ def _confidence_stats(confidences: list[float], low_threshold: float = 0.65) -> 
     return float(min_conf), float(p10_conf), int(low_conf_count)
 
 
+def _looks_like_navigation_text_layer(lines: list[str]) -> bool:
+    """
+    Detect OCR-hostile PDF text layers that only contain viewer/navigation overlays
+    like "English Page 1", timestamp lines, etc.
+    """
+    import re
+
+    cleaned = [str(x or "").strip() for x in lines if str(x or "").strip()]
+    if not cleaned:
+        return False
+
+    nav_line_count = 0
+    for ln in cleaned:
+        low = ln.lower()
+        if re.match(r"^english\s+page\s+\d+\b", low):
+            nav_line_count += 1
+            continue
+        if re.match(r"^(monday|tuesday|wednesday|thursday|friday|saturday|sunday),\s+[a-z]+\s+\d{1,2},\s+\d{4}$", low):
+            nav_line_count += 1
+            continue
+        if re.match(r"^\d{1,2}:\d{2}\s*(am|pm)$", low):
+            nav_line_count += 1
+            continue
+        if low in ("father", "mother", "grandfather", "stepdad", "father-figure"):
+            nav_line_count += 1
+            continue
+
+    # If most non-empty lines are navigation-like, ignore text layer and force OCR.
+    return nav_line_count >= 3 and (nav_line_count / max(1, len(cleaned))) >= 0.7
+
+
 def extract_pdf_text_layer(
     pdf_path: str,
     pages: list[int] | None = None,
@@ -128,6 +159,8 @@ def get_ocr_result_from_pdf_text_layer(pdf_path: str) -> OcrResult | None:
         if not all(texts):
             return None
     full_text = "\n\n".join(texts)
+    if _looks_like_navigation_text_layer(full_text.splitlines()):
+        return None
     lines = full_text.split("\n") if full_text else []
     return OcrResult(
         text=full_text,

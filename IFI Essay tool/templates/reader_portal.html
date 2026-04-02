@@ -62,6 +62,11 @@
                         <div>
                             <h3 class="h5 mb-2">{{ item.school }}</h3>
                             <div class="text-muted">
+                                {% if item.isFinalistRound %}
+                                Round 2 Finalists ·
+                                {% else %}
+                                Round 1 Initial Ranking ·
+                                {% endif %}
                                 Grade {{ item.grade }} · Batch {{ item.batchNumber }} of {{ item.totalBatches }} · {{ item.essayCount }} essays ({{ item.essayRange }})
                             </div>
                             <div class="text-muted small mt-1">Assigned {{ item.formattedCreatedAt }}</div>

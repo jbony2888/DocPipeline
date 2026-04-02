@@ -96,6 +96,15 @@ def is_likely_label_line(line: str) -> bool:
     # Empty or very short
     if len(norm) < 2:
         return True
+
+    # Proper-noun style values (e.g. "De La Salle Institute") should not be
+    # rejected as labels just because they contain stopwords like "de"/"la".
+    raw_words = [w for w in re.split(r"\s+", line.strip()) if w]
+    alpha_words = [w for w in raw_words if re.fullmatch(r"[A-Za-z'\-]+", w)]
+    if 2 <= len(alpha_words) <= 8:
+        non_label_alpha = [w for w in alpha_words if normalize_text(w) not in LABEL_KEYWORDS]
+        if non_label_alpha and any(len(w) >= 4 for w in non_label_alpha):
+            return False
     
     # Contains common label keywords
     words = norm.split()
@@ -119,10 +128,30 @@ _ESSAY_FRAGMENT_STARTERS = (
     "it ", "we ", "they ", "this ", "what ", "and if ", "of ", "as ", "by ", "from ",
     "a ", "a father to ", "a father to",  # e.g. "a father to Adrian" from father reaction
     "fatherhood essay ", "fatherhood essay",  # essay title, not student name
+    "friend ", "friend",  # e.g. "Friend Hes My Dad Patient" from essay body, not school
 )
 
 # Sentence starters / essay fragments to reject as student name (reduce false positives)
 _STUDENT_NAME_REJECT_WORDS = frozenset({"porque", "estar", "yo", "mi", "se"})
+_WEEKDAY_WORDS = frozenset(
+    {"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"}
+)
+_MONTH_WORDS = frozenset(
+    {
+        "january",
+        "february",
+        "march",
+        "april",
+        "may",
+        "june",
+        "july",
+        "august",
+        "september",
+        "october",
+        "november",
+        "december",
+    }
+)
 
 
 def looks_like_essay_fragment(text: str) -> bool:
@@ -148,8 +177,20 @@ def is_plausible_student_name(value: str, max_line_length: int = 40) -> bool:
     """
     if not value or not value.strip():
         return False
-    s = value.strip()
+    s = re.sub(r"^[^A-Za-z]+", "", value.strip())
+    s = s.strip()
+    if not s:
+        return False
     if len(s) > max_line_length:
+        return False
+    if re.search(r"\d", s):
+        return False
+    lower = normalize_text(s)
+    if "page" in lower and re.search(r"\bpage\s+\d+\b", lower):
+        return False
+    if any(day in lower for day in _WEEKDAY_WORDS) and any(month in lower for month in _MONTH_WORDS):
+        return False
+    if any(day in lower for day in _WEEKDAY_WORDS) and "," in s:
         return False
     tokens = s.split()
     if not (2 <= len(tokens) <= 4):
@@ -192,7 +233,7 @@ def student_name_from_filename(filename: str | None) -> Optional[str]:
         if low in ("ifi", "essay", "contest", "fatherhood", "form", "export", "pdf", "the", "and", "eng", "spanish"):
             continue
         name_parts.append(p)
-        if len(name_parts) >= 2:
+        if len(name_parts) >= 3:
             break
     if len(name_parts) < 2:
         return None
@@ -505,11 +546,20 @@ def parse_grade(text: Optional[str]) -> Optional[Union[int, str]]:
     if len(tokens) == 1 and re.match(r"^\d{4}$", tokens[0]):
         return None
 
-    # Kindergarten: only accept as single token or short phrase with K/kinder
+    # Kindergarten: accept as single token or short phrase with K/kinder.
+    # Include common OCR misspellings seen in scanned submissions (e.g. Kindergarden, Kindergartesi,
+    # and initial-letter confusion like "Rinder"/"Prinder").
     kindergarten_variants = ("K", "KINDER", "KINDERGARTEN", "PRE-K", "PRE-KINDERGARTEN")
+    kindergarten_ocr_pattern = re.compile(
+        r"\b(?:pre[\s\-]?k|kinder(?:garten|garden)?|kinder(?:garte)?n|"
+        r"[prk]inder(?:garten|garden)?|kindergard(?:en|an)|kindergar(?:den|dan)|kindergart(?:en|esi))\b",
+        re.IGNORECASE,
+    )
     if text_upper in kindergarten_variants or (
         len(tokens) <= 2 and any(v in text_upper for v in kindergarten_variants)
     ):
+        return "K"
+    if len(tokens) <= 4 and kindergarten_ocr_pattern.search(text):
         return "K"
 
     # Single numeric token 1–12 only (digit or ordinal)
@@ -764,4 +814,3 @@ def compute_essay_metrics(essay_block: str) -> dict:
         "char_count": char_count,
         "paragraph_count": paragraph_count
     }
-

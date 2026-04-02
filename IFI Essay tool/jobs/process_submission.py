@@ -252,6 +252,56 @@ def process_submission_job(
         if analysis.doc_class == DocClass.BULK_SCANNED_BATCH:
             logger.info(f"📑 BULK_SCANNED_BATCH: splitting into {len(iter_ranges)} submission(s)")
 
+        # Multi-entry mode: only split when analysis indicates multiple distinct submissions.
+        # Do NOT split normal single-student multi-page essays (iter_ranges == 1).
+        multi_entry_mode = (
+            len(iter_ranges) > 1
+            and (analysis.structure == "multi" or analysis.doc_class == DocClass.BULK_SCANNED_BATCH)
+        )
+        if multi_entry_mode:
+            logger.info(
+                "🧩 Multi-entry upload detected: will store %s split submission(s) as separate records",
+                len(iter_ranges),
+            )
+            # Also store a lightweight parent/container row that points at the full original upload.
+            # This keeps the original PDF available in Admin review even when some child chunks
+            # have weak OCR/extraction.
+            try:
+                from pipeline.schema import SubmissionRecord, DocClass
+                parent_record = SubmissionRecord(
+                    submission_id=ingest_data["submission_id"],
+                    doc_class=DocClass.MULTI_ENTRY_PARENT,
+                    student_name=None,
+                    school_name=None,
+                    grade=None,
+                    teacher_name=None,
+                    city_or_location=None,
+                    father_figure_name=None,
+                    phone=None,
+                    email=None,
+                    word_count=0,
+                    ocr_confidence_avg=None,
+                    needs_review=True,
+                    review_reason_codes="MULTI_ENTRY_PARENT",
+                    artifact_dir=ingest_data["artifact_dir"],
+                )
+                # Save to DB (upsert is fine; parent is deterministic by file hash)
+                save_db_record(
+                    parent_record,
+                    filename=filename,
+                    owner_user_id=owner_user_id,
+                    access_token=storage_token,
+                    upload_batch_id=upload_batch_id,
+                    essay_text=None,
+                    extra_fields={
+                        "is_container_parent": True,
+                        "template_detected": analysis.structure == "template",
+                    },
+                )
+                logger.info("📦 Saved MULTI_ENTRY_PARENT row: %s", ingest_data["submission_id"])
+            except Exception as exc:
+                logger.warning("Failed to save MULTI_ENTRY_PARENT row: %s", exc)
+
         first_result = None
         processed_count = 0
         doc = fitz.open(processing_path)
@@ -280,9 +330,25 @@ def process_submission_job(
                 # (Student's Name, School, Grade) are present; the chunk PDF strips widgets and yields N/A.
                 image_path = processing_path if len(iter_ranges) == 1 else chunk_path
 
-                chunk_submission_id = make_chunk_submission_id(ingest_data["submission_id"], idx)
-                run_id = ingest_data["submission_id"]
-                chunk_artifact_dir = f"{owner_user_id}/{run_id}/artifacts/{run_id}/chunk_{idx}_{chunk_submission_id}"
+                chunk_ingest = None
+                if multi_entry_mode:
+                    # Store each chunk as its own original upload → new submission_id + artifact_dir.
+                    if not chunk_path:
+                        raise ValueError("Chunk path missing for multi-entry split")
+                    chunk_bytes_for_upload = Path(chunk_path).read_bytes()
+                    chunk_ingest = ingest_upload_supabase(
+                        uploaded_bytes=chunk_bytes_for_upload,
+                        original_filename=filename,
+                        owner_user_id=owner_user_id,
+                        access_token=storage_token,
+                    )
+                    chunk_submission_id = chunk_ingest["submission_id"]
+                    chunk_artifact_dir = chunk_ingest["artifact_dir"]
+                    image_path = chunk_path
+                else:
+                    chunk_submission_id = make_chunk_submission_id(ingest_data["submission_id"], idx)
+                    run_id = ingest_data["submission_id"]
+                    chunk_artifact_dir = f"{owner_user_id}/{run_id}/artifacts/{run_id}/chunk_{idx}_{chunk_submission_id}"
                 child_doc_class = DocClass.SINGLE_SCANNED if analysis.doc_class == DocClass.BULK_SCANNED_BATCH else analysis.doc_class
                 chunk_context = {
                     "submission_id": chunk_submission_id,
@@ -335,6 +401,15 @@ def process_submission_job(
                     access_token=storage_token,
                     upload_batch_id=upload_batch_id,
                     essay_text=report.get("essay_text"),
+                    extra_fields={
+                        "parent_submission_id": ingest_data["submission_id"],
+                        "chunk_index": idx,
+                        "chunk_page_start": chunk.start_page + 1,
+                        "chunk_page_end": chunk.end_page + 1,
+                        "is_chunk": len(iter_ranges) > 1,
+                        "template_detected": analysis.structure == "template",
+                        "is_container_parent": False,
+                    },
                 )
 
                 if not save_result.get("success", False):
@@ -381,7 +456,7 @@ def process_submission_job(
                     "filename": filename,
                     "submission_id": chunk_submission_id,
                     "record": None,
-                    "storage_url": ingest_data.get("storage_url"),
+                    "storage_url": (chunk_ingest.get("storage_url") if chunk_ingest else ingest_data.get("storage_url")),
                     "is_duplicate": is_update,
                     "is_own_duplicate": is_own_duplicate,
                     "was_update": is_update,
