@@ -5,6 +5,7 @@ Handles applying default values to submissions in a batch while protecting manua
 
 from typing import Optional, Dict, List
 from auth.supabase_client import get_supabase_client
+from pipeline.validate import can_approve_record
 
 
 def apply_batch_defaults(
@@ -72,7 +73,8 @@ def apply_batch_defaults(
         # Query all submissions in the batch first, then filter and update in Python
         # This approach is safer and handles NULL/empty checks correctly
         all_submissions = supabase.table("submissions").select(
-            "submission_id, school_name, grade, teacher_name, school_source, grade_source, teacher_source"
+            "submission_id, student_name, school_name, grade, teacher_name, word_count, "
+            "school_source, grade_source, teacher_source, needs_review, review_reason_codes"
         ).eq("upload_batch_id", upload_batch_id).eq("owner_user_id", owner_user_id).execute()
         
         if not all_submissions.data:
@@ -105,10 +107,47 @@ def apply_batch_defaults(
                     updates["teacher_source"] = "batch_default"
             
             if updates:
-                submissions_to_update.append((sub["submission_id"], updates))
+                submissions_to_update.append((sub["submission_id"], sub, updates))
         
-        # Update each submission
-        for submission_id, updates in submissions_to_update:
+        # Update each submission and re-sync validation state
+        for submission_id, original_sub, updates in submissions_to_update:
+            effective_student_name = original_sub.get("student_name")
+            effective_school_name = updates.get("school_name") or original_sub.get("school_name")
+            effective_grade = updates.get("grade") if "grade" in updates else original_sub.get("grade")
+            effective_word_count = original_sub.get("word_count")
+
+            can_approve_ok, missing_fields = can_approve_record({
+                "student_name": effective_student_name,
+                "school_name": effective_school_name,
+                "grade": effective_grade,
+                "word_count": effective_word_count,
+            })
+
+            existing_codes = set()
+            raw_codes = original_sub.get("review_reason_codes") or ""
+            for c in raw_codes.split(";"):
+                c = c.strip()
+                if c:
+                    existing_codes.add(c)
+
+            existing_codes.discard("MISSING_STUDENT_NAME")
+            existing_codes.discard("MISSING_SCHOOL_NAME")
+            existing_codes.discard("MISSING_GRADE")
+
+            if "student_name" in missing_fields:
+                existing_codes.add("MISSING_STUDENT_NAME")
+            if "school_name" in missing_fields:
+                existing_codes.add("MISSING_SCHOOL_NAME")
+            if "grade" in missing_fields:
+                existing_codes.add("MISSING_GRADE")
+
+            updates["review_reason_codes"] = ";".join(sorted(existing_codes))
+            updates["needs_review"] = bool(existing_codes)
+
+            if can_approve_ok and not existing_codes:
+                updates["needs_review"] = False
+                updates["review_reason_codes"] = ""
+
             supabase.table("submissions").update(updates).eq("submission_id", submission_id).eq("owner_user_id", owner_user_id).execute()
         
         updated_count = len(submissions_to_update)

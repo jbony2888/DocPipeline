@@ -213,7 +213,7 @@ def normalize_grade(raw_grade):
         return None, "missing"
 
     lowered = raw.casefold()
-    if lowered in {"k", "kindergarten", "kinder"}:
+    if lowered in {"k", "kindergarten", "kinder", "pre-k", "prek", "pre-kindergarten"}:
         return "K", "kindergarten_alias"
 
     match = re.search(r"(-?\d+)", lowered)

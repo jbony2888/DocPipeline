@@ -930,6 +930,54 @@ def review():
         if upload_batch_id and not batch_info:
             batch_info = get_batch_with_submissions(upload_batch_id, owner_user_id=user_id, access_token=access_token)
 
+        # Filters for needs_review mode
+        selected_school_filter = (request.args.get("school") or "").strip()
+        selected_grade_filter = (request.args.get("grade") or "").strip()
+        selected_reason_filter = (request.args.get("reason") or "").strip()
+
+        school_filter_options = sorted(
+            {
+                str(r.get("school_name", "")).strip()
+                for r in records
+                if str(r.get("school_name", "")).strip()
+            },
+            key=lambda s: s.casefold(),
+        )
+        grade_filter_options = sorted(
+            {
+                str(r.get("grade", "")).strip()
+                for r in records
+                if str(r.get("grade", "")).strip()
+            },
+            key=lambda g: (not str(g).isdigit(), str(g).casefold()),
+        )
+        reason_filter_options = sorted(
+            {
+                c.strip()
+                for r in records
+                for c in (r.get("review_reason_codes") or "").split(";")
+                if c.strip() and c.strip() in ALLOWED_REASON_CODES
+            }
+        )
+
+        if selected_school_filter:
+            school_key = normalize_key(selected_school_filter)
+            records = [
+                r for r in records
+                if normalize_key(r.get("school_name")) == school_key
+            ]
+        if selected_grade_filter:
+            grade_key = normalize_key(selected_grade_filter)
+            records = [
+                r for r in records
+                if normalize_key(str(r.get("grade", ""))) == grade_key
+            ]
+        if selected_reason_filter:
+            records = [
+                r for r in records
+                if selected_reason_filter in (r.get("review_reason_codes") or "")
+            ]
+
         action_label = "Approve"
         schools_data = None
         approved_ungrouped = []
@@ -1090,12 +1138,14 @@ def review():
                          grouped_data=grouped if review_mode == "approved" else None,
                          schools_data=schools_data,
                          approved_ungrouped=approved_ungrouped,
-                         school_filter_options=school_filter_options if review_mode == "approved" else [],
-                         grade_filter_options=grade_filter_options if review_mode == "approved" else [],
+                         school_filter_options=school_filter_options,
+                         grade_filter_options=grade_filter_options,
                          batch_filter_options=batch_filter_options if review_mode == "approved" else [],
-                         selected_school_filter=selected_school_filter if review_mode == "approved" else "",
-                         selected_grade_filter=selected_grade_filter if review_mode == "approved" else "",
+                         selected_school_filter=selected_school_filter,
+                         selected_grade_filter=selected_grade_filter,
                          selected_batch_filter=selected_batch_filter if review_mode == "approved" else "",
+                         selected_reason_filter=selected_reason_filter if review_mode == "needs_review" else "",
+                         reason_filter_options=reason_filter_options if review_mode == "needs_review" else [],
                          filtered_approved_count=(len(filtered_approved_records) if review_mode == "approved" else 0),
                          batch_info=batch_info,
                          upload_batch_id=upload_batch_id)
@@ -1178,9 +1228,8 @@ def record_detail(submission_id):
             grade_str = updates["grade"].strip()
             grade_upper = grade_str.upper()
             
-            # Check if it's a kindergarten variant
-            if grade_upper in ["K", "KINDER", "KINDERGARTEN", "PRE-K", "PREK"]:
-                updates["grade"] = "K"  # Standardize to "K"
+            if grade_upper in ["K", "KINDER", "KINDERGARTEN", "PRE-K", "PREK", "PRE-KINDERGARTEN"]:
+                updates["grade"] = "K"
             else:
                 # Try to extract number
                 grade_match = re.search(r'\d+', grade_str)
@@ -1210,26 +1259,20 @@ def record_detail(submission_id):
         updates["review_reason_codes"] = synced_codes_db
         updates["needs_review"] = synced_needs_review
 
-        # Auto-reassignment: If record now has school_name and grade, check if it can be auto-approved
-        # This happens when a record that was missing school/grade gets those fields filled in
+        # Auto-reassignment: If record now has all required fields, check if it can be auto-approved
         auto_approve = False
-        if updates.get("school_name") and updates.get("grade"):
-            # Check if record can now be approved (has all required fields)
+        if effective_school_name and effective_grade:
             can_approve, missing_fields = can_approve_record({
                 "student_name": effective_student_name,
-                "school_name": updates["school_name"],
-                "grade": updates["grade"],
+                "school_name": effective_school_name,
+                "grade": effective_grade,
                 "word_count": record.get("word_count"),
             })
             
-            # If record was in needs_review and now has all required fields, auto-approve it
-            if can_approve and record.get("needs_review", True):
+            if can_approve and not synced_needs_review:
                 updates["needs_review"] = False
                 updates["review_reason_codes"] = ""
                 auto_approve = True
-            elif not can_approve:
-                # Still missing fields, keep in needs_review
-                updates["needs_review"] = True
         
         access_token = session.get("supabase_access_token")
         refresh_token = session.get("supabase_refresh_token")
@@ -1333,34 +1376,65 @@ def bulk_update_records():
     if not school_name and not grade:
         return jsonify({"success": False, "error": "Please provide a school name or grade for bulk update."}), 400
     
+    # Normalize grade once for all records
+    parsed_grade = None
+    if grade:
+        grade_upper = grade.upper() if grade else ""
+        if grade_upper in ["K", "KINDER", "KINDERGARTEN", "PRE-K", "PREK", "PRE-KINDERGARTEN"]:
+            parsed_grade = "K"
+        else:
+            grade_match = re.search(r'\d+', grade)
+            if grade_match:
+                grade_int = int(grade_match.group())
+                if 1 <= grade_int <= 12:
+                    parsed_grade = grade_int
+                else:
+                    parsed_grade = grade
+            else:
+                parsed_grade = grade
+
     updated_count = 0
     errors = []
+    refresh_token = session.get("supabase_refresh_token")
     
     for submission_id in selected_ids:
         updates = {}
         if school_name:
             updates["school_name"] = school_name
-        if grade:
-            # Parse grade - handle text values like "K", "Kindergarten", etc.
-            grade_upper = grade.upper() if grade else ""
-            if grade_upper in ["K", "KINDER", "KINDERGARTEN"]:
-                updates["grade"] = "K"
-            elif grade_upper in ["PRE-K", "PREK", "PRE-KINDERGARTEN"]:
-                updates["grade"] = "Pre-K"
-            else:
-                # Try to extract number
-                grade_match = re.search(r'\d+', grade)
-                if grade_match:
-                    grade_int = int(grade_match.group())
-                    if 1 <= grade_int <= 12:
-                        updates["grade"] = grade_int
-                    else:
-                        updates["grade"] = grade  # Keep as text if out of range
-                else:
-                    updates["grade"] = grade  # Keep as text if no number found
+        if parsed_grade is not None:
+            updates["grade"] = parsed_grade
         
         try:
-            refresh_token = session.get("supabase_refresh_token")
+            record = get_record_by_id(submission_id, owner_user_id=user_id, access_token=access_token, refresh_token=refresh_token)
+            if not record:
+                errors.append(f"Record {submission_id} not found")
+                continue
+
+            effective_student_name = record.get("student_name")
+            effective_school_name = updates.get("school_name") or record.get("school_name")
+            effective_grade = updates.get("grade") if "grade" in updates else record.get("grade")
+
+            synced_codes_db, synced_needs_review = _sync_required_field_reason_codes(
+                student_name=effective_student_name,
+                school_name=effective_school_name,
+                grade=effective_grade,
+                word_count=record.get("word_count"),
+                existing_reason_codes=record.get("review_reason_codes"),
+            )
+            updates["review_reason_codes"] = synced_codes_db
+            updates["needs_review"] = synced_needs_review
+
+            if not synced_needs_review:
+                can_approve_ok, _ = can_approve_record({
+                    "student_name": effective_student_name,
+                    "school_name": effective_school_name,
+                    "grade": effective_grade,
+                    "word_count": record.get("word_count"),
+                })
+                if can_approve_ok:
+                    updates["needs_review"] = False
+                    updates["review_reason_codes"] = ""
+
             if update_db_record(submission_id, updates, owner_user_id=user_id, access_token=access_token, refresh_token=refresh_token):
                 updated_count += 1
             else:
@@ -1368,6 +1442,8 @@ def bulk_update_records():
         except Exception as e:
             errors.append(f"Error updating {submission_id}: {str(e)}")
     
+    invalidate_db_stats_cache(user_id)
+
     if errors:
         return jsonify({
             "success": False,
@@ -1376,7 +1452,6 @@ def bulk_update_records():
             "message": f"Updated {updated_count} records with errors."
         }), 500
 
-    invalidate_db_stats_cache(user_id)
     return jsonify({
         "success": True,
         "updated_count": updated_count,

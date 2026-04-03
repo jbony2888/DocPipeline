@@ -95,9 +95,50 @@
     </div>
     <div class="card-body">
         {% if review_mode == 'needs_review' %}
-            {# Needs Review Section - show flat list #}
+            {# Needs Review Section - show flat list with filters #}
+            {% if school_filter_options or grade_filter_options or reason_filter_options %}
+            <form method="GET" action="{{ url_for('review') }}" class="row g-2 align-items-end mb-3">
+                <input type="hidden" name="mode" value="needs_review">
+                <div class="col-md-3">
+                    <label class="form-label mb-1"><strong>School</strong></label>
+                    <select class="form-select form-select-sm" name="school">
+                        <option value="">All schools</option>
+                        {% for school in school_filter_options %}
+                        <option value="{{ school }}" {% if selected_school_filter == school %}selected{% endif %}>{{ school }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label mb-1"><strong>Grade</strong></label>
+                    <select class="form-select form-select-sm" name="grade">
+                        <option value="">All grades</option>
+                        {% for grade in grade_filter_options %}
+                        <option value="{{ grade }}" {% if selected_grade_filter == grade %}selected{% endif %}>{{ grade }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label mb-1"><strong>Review Reason</strong></label>
+                    <select class="form-select form-select-sm" name="reason">
+                        <option value="">All reasons</option>
+                        {% for reason in reason_filter_options %}
+                        <option value="{{ reason }}" {% if selected_reason_filter == reason %}selected{% endif %}>{{ format_review_reasons(reason) }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-3 d-flex gap-2">
+                    <button type="submit" class="btn btn-sm btn-primary w-100">Filter</button>
+                    <a href="{{ url_for('review', mode='needs_review') }}" class="btn btn-sm btn-outline-secondary w-100">Reset</a>
+                </div>
+            </form>
+            {% endif %}
+
             {% if records %}
-            <p class="text-muted">Found <strong>{{ records|length }}</strong> record(s) needing review</p>
+            <p class="text-muted">Found <strong>{{ records|length }}</strong> record(s) needing review
+                {% if selected_school_filter or selected_grade_filter or selected_reason_filter %}
+                    with active filters.
+                {% endif %}
+            </p>
             
             {# Bulk Edit / Bulk Delete Panel - ALWAYS SHOWN when there are records #}
             <div class="card mb-4 border-info shadow-sm" style="border-width: 2px !important;">
