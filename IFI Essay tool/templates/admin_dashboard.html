@@ -133,8 +133,35 @@
                         <button type="button" class="btn btn-sm btn-outline-secondary" id="btnSelectAll"><i class="bi bi-check2-square"></i> Select all on page</button>
                         <button type="button" class="btn btn-sm btn-outline-secondary" id="btnSelectNone"><i class="bi bi-square"></i> Clear selection</button>
                         <button type="button" class="btn btn-sm btn-primary" id="btnZipSelected"><i class="bi bi-file-zip"></i> Download selected as ZIP</button>
+                        <button type="button" class="btn btn-sm btn-outline-info" id="btnBulkUpdateSelected" data-bs-toggle="modal" data-bs-target="#bulkUpdateSelectedModal">
+                            <i class="bi bi-pencil"></i> Update Selected
+                        </button>
+                        <button type="button" class="btn btn-sm btn-outline-warning" id="btnBulkSendReview">
+                            <i class="bi bi-arrow-counterclockwise"></i> Send Selected to Review
+                        </button>
                         <span class="text-muted small" id="selCount">0 selected</span>
                         <span class="text-muted small ms-auto">Max 50 files per ZIP · row edits save directly to DB</span>
+                    </div>
+                    <div class="card-body pt-0 d-flex flex-wrap align-items-center gap-2 border-top">
+                        <span class="small text-muted fw-semibold pt-2">Database tools:</span>
+                        <button type="button" class="btn btn-sm btn-outline-warning mt-2" data-bs-toggle="modal" data-bs-target="#bulkRenameModal">
+                            <i class="bi bi-pencil-square"></i> Bulk Rename
+                        </button>
+                        <a href="{{ url_for('admin.admin_export_csv') }}" class="btn btn-sm btn-outline-success mt-2">
+                            <i class="bi bi-file-earmark-spreadsheet"></i> Export All (CSV)
+                        </a>
+                        {% if selected_school %}
+                        <a href="{{ url_for('admin.admin_export_csv', school=selected_school, grade=selected_grade) }}" class="btn btn-sm btn-outline-success mt-2">
+                            <i class="bi bi-funnel"></i> Export Filtered (CSV)
+                        </a>
+                        {% elif selected_grade %}
+                        <a href="{{ url_for('admin.admin_export_csv', grade=selected_grade) }}" class="btn btn-sm btn-outline-success mt-2">
+                            <i class="bi bi-funnel"></i> Export Filtered (CSV)
+                        </a>
+                        {% endif %}
+                        <a href="{{ url_for('admin.admin_export_csv', status='all') }}" class="btn btn-sm btn-outline-secondary mt-2">
+                            <i class="bi bi-file-earmark-spreadsheet"></i> Export All incl. Review (CSV)
+                        </a>
                     </div>
                     <div class="card-body pt-0">
                         <div id="saveFeedback" class="small save-feedback text-muted"></div>
@@ -232,6 +259,14 @@
                                             >
                                                 <i class="bi bi-check2"></i>
                                             </button>
+                                            <button
+                                                type="button"
+                                                class="btn btn-sm btn-outline-warning btn-send-review"
+                                                data-review-url="{{ url_for('admin.send_submission_to_review', submission_id=s.submission_id) }}"
+                                                title="Send to review"
+                                            >
+                                                <i class="bi bi-arrow-counterclockwise"></i>
+                                            </button>
                                         </div>
                                     </td>
                                 </tr>
@@ -260,6 +295,87 @@
         </div>
     </main>
 
+    <!-- Bulk Rename Modal -->
+    <div class="modal fade" id="bulkRenameModal" tabindex="-1" aria-labelledby="bulkRenameLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="bulkRenameLabel"><i class="bi bi-pencil-square"></i> Bulk Rename</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="text-muted small">Rename a value across <strong>all</strong> matching submissions in the database. For example, change <em>St. Mary Pontiac</em> to <em>St. Mary's Pontiac</em>.</p>
+                    <div class="mb-3">
+                        <label class="form-label small fw-semibold">Field</label>
+                        <select id="renameField" class="form-select">
+                            <option value="school_name">School Name</option>
+                            <option value="teacher_name">Teacher Name</option>
+                            <option value="city_or_location">City / Location</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small fw-semibold">Current value (exact match)</label>
+                        <input type="text" id="renameOldValue" class="form-control" placeholder="e.g. St. Mary Pontiac">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small fw-semibold">New value</label>
+                        <input type="text" id="renameNewValue" class="form-control" placeholder="e.g. St. Mary's Pontiac">
+                    </div>
+                    <div id="renameResult" class="small"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-warning" id="btnDoRename">
+                        <i class="bi bi-pencil-square"></i> Rename All Matching
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bulk Update Selected Modal -->
+    <div class="modal fade" id="bulkUpdateSelectedModal" tabindex="-1" aria-labelledby="bulkUpdateSelectedLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="bulkUpdateSelectedLabel"><i class="bi bi-pencil"></i> Update Selected Submissions</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="text-muted small">Set fields on the <strong>checked</strong> submissions. Leave a field blank to keep its current value.</p>
+                    <div class="mb-3">
+                        <label class="form-label small fw-semibold">Student Name</label>
+                        <input type="text" id="bulkSelStudentName" class="form-control" placeholder="Leave blank to keep current">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small fw-semibold">School Name</label>
+                        <input type="text" id="bulkSelSchoolName" class="form-control" placeholder="Leave blank to keep current">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small fw-semibold">Grade</label>
+                        <input type="text" id="bulkSelGrade" class="form-control" placeholder="Leave blank to keep current">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small fw-semibold">Teacher Name</label>
+                        <input type="text" id="bulkSelTeacherName" class="form-control" placeholder="Leave blank to keep current">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small fw-semibold">City / Location</label>
+                        <input type="text" id="bulkSelCity" class="form-control" placeholder="Leave blank to keep current">
+                    </div>
+                    <div id="bulkUpdateSelResult" class="small"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-info text-white" id="btnDoBulkUpdateSelected">
+                        <i class="bi bi-pencil"></i> Apply to Selected
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
         (function() {
             const table = document.getElementById('submissionsTable');
@@ -395,6 +511,42 @@
                     return;
                 }
 
+                const reviewBtn = e.target.closest('.btn-send-review');
+                if (reviewBtn) {
+                    const tr = reviewBtn.closest('tr');
+                    if (!tr) return;
+                    const sid = tr.dataset.submissionId || '';
+                    if (!confirm('Send submission ' + sid + ' to review?')) return;
+                    reviewBtn.disabled = true;
+                    const origHtml = reviewBtn.innerHTML;
+                    reviewBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+                    try {
+                        const r = await fetch(reviewBtn.dataset.reviewUrl, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            credentials: 'same-origin',
+                            body: JSON.stringify({})
+                        });
+                        const data = await r.json().catch(() => ({}));
+                        if (r.ok && data.success) {
+                            setRowStatus(tr, 'needs_review');
+                            const reasonsCell = tr.querySelector('[data-role="reasons"]');
+                            if (reasonsCell) reasonsCell.textContent = data.review_reasons || 'Pending review';
+                            tr.classList.add('table-warning');
+                            setTimeout(() => tr.classList.remove('table-warning'), 1200);
+                            setSaveFeedback('Sent ' + sid + ' to review', 'success');
+                        } else {
+                            alert('Failed: ' + (data.error || r.status));
+                        }
+                    } catch (err) {
+                        alert('Network error: ' + err);
+                    } finally {
+                        reviewBtn.disabled = false;
+                        reviewBtn.innerHTML = origHtml;
+                    }
+                    return;
+                }
+
                 const viewBtn = e.target.closest('.btn-view');
                 if (viewBtn) {
                     const tr = viewBtn.closest('tr');
@@ -453,6 +605,141 @@
             });
 
             updateCount();
+
+            // Bulk Send Selected to Review
+            document.getElementById('btnBulkSendReview')?.addEventListener('click', async function() {
+                const ids = rows().filter(c => c.checked).map(c => c.value);
+                if (!ids.length) {
+                    alert('Select at least one submission first.');
+                    return;
+                }
+                if (!confirm(`Send ${ids.length} selected submission(s) to review?`)) return;
+
+                const btn = this;
+                btn.disabled = true;
+                try {
+                    const r = await fetch('{{ url_for("admin.bulk_send_to_review") }}', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        credentials: 'same-origin',
+                        body: JSON.stringify({ submission_ids: ids })
+                    });
+                    const data = await r.json().catch(() => ({}));
+                    if (data.updated_count > 0) {
+                        setSaveFeedback(`${data.updated_count} submission(s) sent to review. Reload to see changes.`, 'success');
+                        ids.forEach(id => {
+                            const tr = document.querySelector(`tr[data-submission-id="${id}"]`);
+                            if (tr) setRowStatus(tr, 'needs_review');
+                        });
+                    } else {
+                        alert(data.error || 'No submissions were updated.');
+                    }
+                } catch (err) {
+                    alert('Network error: ' + err);
+                } finally {
+                    btn.disabled = false;
+                }
+            });
+
+            // Bulk Update Selected
+            document.getElementById('btnDoBulkUpdateSelected')?.addEventListener('click', async function() {
+                const ids = rows().filter(c => c.checked).map(c => c.value);
+                const resultEl = document.getElementById('bulkUpdateSelResult');
+                if (!ids.length) {
+                    resultEl.innerHTML = '<span class="text-danger">No submissions selected. Check the rows you want to update first.</span>';
+                    return;
+                }
+
+                const payload = { submission_ids: ids };
+                const studentName = document.getElementById('bulkSelStudentName').value.trim();
+                const schoolName = document.getElementById('bulkSelSchoolName').value.trim();
+                const grade = document.getElementById('bulkSelGrade').value.trim();
+                const teacherName = document.getElementById('bulkSelTeacherName').value.trim();
+                const city = document.getElementById('bulkSelCity').value.trim();
+
+                if (studentName) payload.student_name = studentName;
+                if (schoolName) payload.school_name = schoolName;
+                if (grade) payload.grade = grade;
+                if (teacherName) payload.teacher_name = teacherName;
+                if (city) payload.city_or_location = city;
+
+                const fieldCount = [studentName, schoolName, grade, teacherName, city].filter(Boolean).length;
+                if (!fieldCount) {
+                    resultEl.innerHTML = '<span class="text-danger">Fill in at least one field to apply.</span>';
+                    return;
+                }
+
+                if (!confirm(`Apply changes to ${ids.length} selected submission(s)?`)) return;
+
+                const btn = this;
+                btn.disabled = true;
+                resultEl.innerHTML = '<span class="text-muted">Updating...</span>';
+
+                try {
+                    const r = await fetch('{{ url_for("admin.bulk_update_selected") }}', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        credentials: 'same-origin',
+                        body: JSON.stringify(payload)
+                    });
+                    const data = await r.json().catch(() => ({}));
+                    if (data.updated_count > 0) {
+                        let msg = `<span class="text-success"><strong>${data.updated_count}</strong> submission(s) updated.`;
+                        if (data.error_count > 0) msg += ` <span class="text-warning">${data.error_count} failed.</span>`;
+                        msg += ' Reload the page to see changes.</span>';
+                        resultEl.innerHTML = msg;
+                    } else {
+                        resultEl.innerHTML = `<span class="text-danger">${data.error || 'Update failed.'}</span>`;
+                    }
+                } catch (err) {
+                    resultEl.innerHTML = `<span class="text-danger">Network error: ${err}</span>`;
+                } finally {
+                    btn.disabled = false;
+                }
+            });
+
+            // Bulk Rename
+            document.getElementById('btnDoRename')?.addEventListener('click', async function() {
+                const field = document.getElementById('renameField').value;
+                const oldVal = document.getElementById('renameOldValue').value.trim();
+                const newVal = document.getElementById('renameNewValue').value.trim();
+                const resultEl = document.getElementById('renameResult');
+
+                if (!oldVal || !newVal) {
+                    resultEl.innerHTML = '<span class="text-danger">Both current and new value are required.</span>';
+                    return;
+                }
+                if (oldVal === newVal) {
+                    resultEl.innerHTML = '<span class="text-danger">Values are the same.</span>';
+                    return;
+                }
+
+                const fieldLabels = { school_name: 'School Name', teacher_name: 'Teacher Name', city_or_location: 'City / Location' };
+                if (!confirm(`Rename all submissions where ${fieldLabels[field] || field} is exactly "${oldVal}" to "${newVal}"?`)) return;
+
+                const btn = this;
+                btn.disabled = true;
+                resultEl.innerHTML = '<span class="text-muted">Updating...</span>';
+
+                try {
+                    const r = await fetch('{{ url_for("admin.bulk_rename_field") }}', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        credentials: 'same-origin',
+                        body: JSON.stringify({ field, old_value: oldVal, new_value: newVal })
+                    });
+                    const data = await r.json().catch(() => ({}));
+                    if (r.ok && data.success) {
+                        resultEl.innerHTML = `<span class="text-success"><strong>${data.updated_count}</strong> submission(s) updated. Reload the page to see changes.</span>`;
+                    } else {
+                        resultEl.innerHTML = `<span class="text-danger">${data.error || 'Rename failed.'}</span>`;
+                    }
+                } catch (err) {
+                    resultEl.innerHTML = `<span class="text-danger">Network error: ${err}</span>`;
+                } finally {
+                    btn.disabled = false;
+                }
+            });
         })();
     </script>
 </body>

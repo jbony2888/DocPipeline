@@ -3,6 +3,7 @@ Admin Blueprint: view all submissions, download files securely.
 Admin-controlled access via Bearer token or session.
 """
 
+import csv
 import io
 import html
 import os
@@ -282,6 +283,8 @@ def _apply_school_grade_filters(
     submission_key = str(submission_id or "").strip().lower()
 
     def _row_status(r: dict) -> str:
+        if r.get("is_container_parent"):
+            return "needs_review"
         has_all = bool(
             (r.get("student_name") or "").strip()
             and (r.get("school_name") or "").strip()
@@ -1736,6 +1739,8 @@ def get_submissions():
         submissions = [s for s in submissions if (s.get("filename") or "").strip() in multi_filenames]
 
     def _display_status(s):
+        if s.get("is_container_parent"):
+            return "needs_review"
         has_all = s.get("student_name") and s.get("school_name") and s.get("grade")
         has_reason = _row_has_reason_codes(s)
         if has_all and not has_reason:
@@ -2045,6 +2050,82 @@ def force_approve_submission(submission_id: str):
     )
 
 
+@admin_bp.route("/submissions/<submission_id>/send-to-review", methods=["POST"])
+def send_submission_to_review(submission_id: str):
+    """Admin: explicitly move a submission back to needs_review."""
+    _require_admin()
+
+    payload = request.get_json(silent=True) or {}
+    reason = str(payload.get("reason") or "").strip()
+
+    sb = _get_service_role_client()
+    if not sb:
+        return jsonify({"error": "Database not configured"}), 500
+
+    current_res = (
+        sb.table("submissions")
+        .select("submission_id, review_reason_codes")
+        .eq("submission_id", submission_id)
+        .limit(1)
+        .execute()
+    )
+    if not current_res.data:
+        return jsonify({"error": "Submission not found"}), 404
+
+    existing_codes = _coerce_reason_codes(current_res.data[0].get("review_reason_codes"))
+    if reason and reason in ALLOWED_REASON_CODES:
+        existing_codes.add(reason)
+
+    sb.table("submissions").update(
+        {
+            "needs_review": True,
+            "review_reason_codes": ";".join(sorted(existing_codes)) if existing_codes else "",
+        }
+    ).eq("submission_id", submission_id).execute()
+
+    return jsonify({
+        "success": True,
+        "submission_id": submission_id,
+        "status": "needs_review",
+        "review_reasons": _format_review_reasons(";".join(sorted(existing_codes))) if existing_codes else "Pending review",
+    })
+
+
+@admin_bp.route("/submissions/bulk-send-to-review", methods=["POST"])
+def bulk_send_to_review():
+    """Admin: move multiple submissions back to needs_review by ID."""
+    _require_admin()
+
+    payload = request.get_json(silent=True) or {}
+    submission_ids = payload.get("submission_ids")
+    if not isinstance(submission_ids, list) or not submission_ids:
+        return jsonify({"error": "submission_ids (non-empty list) is required"}), 400
+
+    sb = _get_service_role_client()
+    if not sb:
+        return jsonify({"error": "Database not configured"}), 500
+
+    clean_ids = [str(sid).strip() for sid in submission_ids if str(sid).strip()][:500]
+    updated_count = 0
+    errors = []
+
+    for sid in clean_ids:
+        try:
+            sb.table("submissions").update(
+                {"needs_review": True}
+            ).eq("submission_id", sid).execute()
+            updated_count += 1
+        except Exception as exc:
+            errors.append(f"{sid}: {exc}")
+
+    return jsonify({
+        "success": updated_count > 0,
+        "updated_count": updated_count,
+        "error_count": len(errors),
+        "errors": errors[:20] if errors else [],
+    })
+
+
 @admin_bp.route("/submissions/bulk-download", methods=["POST"])
 def bulk_download_submissions():
     """ZIP originals for selected submission_ids (admin session or Bearer)."""
@@ -2121,6 +2202,234 @@ def bulk_download_submissions():
     if skipped:
         resp.headers["X-Admin-Zip-Skipped-Count"] = str(len(skipped))
     return resp
+
+
+@admin_bp.route("/submissions/bulk-update-selected", methods=["POST"])
+def bulk_update_selected():
+    """Update metadata fields on a selected set of submissions by ID."""
+    _require_admin()
+
+    payload = request.get_json(silent=True) or {}
+    submission_ids = payload.get("submission_ids")
+    if not isinstance(submission_ids, list) or not submission_ids:
+        return jsonify({"error": "submission_ids (non-empty list) is required"}), 400
+
+    updates: dict = {}
+    if "student_name" in payload:
+        updates["student_name"] = (str(payload["student_name"]).strip() or None)
+    if "school_name" in payload:
+        raw = (str(payload["school_name"]).strip() or None)
+        if raw:
+            normalized = normalize_school_to_standard(raw)
+            updates["school_name"] = normalized or raw
+        else:
+            updates["school_name"] = None
+    if "grade" in payload:
+        updates["grade"] = _normalize_grade_value(payload["grade"])
+    if "teacher_name" in payload:
+        updates["teacher_name"] = (str(payload["teacher_name"]).strip() or None)
+    if "city_or_location" in payload:
+        updates["city_or_location"] = (str(payload["city_or_location"]).strip() or None)
+
+    if not updates:
+        return jsonify({"error": "Provide at least one field to update (student_name, school_name, grade, teacher_name, city_or_location)"}), 400
+
+    sb = _get_service_role_client()
+    if not sb:
+        return jsonify({"error": "Database not configured"}), 500
+
+    clean_ids = [str(sid).strip() for sid in submission_ids if str(sid).strip()][:500]
+    if not clean_ids:
+        return jsonify({"error": "No valid submission IDs"}), 400
+
+    updated_count = 0
+    errors = []
+    for sid in clean_ids:
+        try:
+            current_res = (
+                sb.table("submissions")
+                .select("submission_id, student_name, school_name, grade, needs_review, review_reason_codes")
+                .eq("submission_id", sid)
+                .limit(1)
+                .execute()
+            )
+            if not current_res.data:
+                errors.append(sid)
+                continue
+            current = current_res.data[0]
+
+            row_updates = dict(updates)
+            eff_student = row_updates.get("student_name", current.get("student_name"))
+            eff_school = row_updates.get("school_name", current.get("school_name"))
+            eff_grade = row_updates.get("grade", current.get("grade"))
+            synced_codes, synced_needs_review = _sync_required_field_reason_codes(
+                student_name=eff_student,
+                school_name=eff_school,
+                grade=eff_grade,
+                existing_reason_codes=current.get("review_reason_codes"),
+            )
+            row_updates["review_reason_codes"] = synced_codes
+            row_updates["needs_review"] = synced_needs_review
+
+            sb.table("submissions").update(row_updates).eq("submission_id", sid).execute()
+            updated_count += 1
+        except Exception as exc:
+            errors.append(f"{sid}: {exc}")
+
+    return jsonify({
+        "success": updated_count > 0,
+        "updated_count": updated_count,
+        "error_count": len(errors),
+        "errors": errors[:20] if errors else [],
+    })
+
+
+@admin_bp.route("/submissions/bulk-rename", methods=["POST"])
+def bulk_rename_field():
+    """Rename a metadata value across all matching submissions (e.g. fix a school name globally)."""
+    _require_admin()
+
+    payload = request.get_json(silent=True) or {}
+    field = str(payload.get("field") or "").strip()
+    old_value = str(payload.get("old_value") or "").strip()
+    new_value = str(payload.get("new_value") or "").strip()
+
+    allowed_fields = {"school_name", "teacher_name", "city_or_location"}
+    if field not in allowed_fields:
+        return jsonify({"error": f"Field must be one of: {', '.join(sorted(allowed_fields))}"}), 400
+    if not old_value:
+        return jsonify({"error": "old_value is required"}), 400
+    if not new_value:
+        return jsonify({"error": "new_value is required"}), 400
+    if old_value == new_value:
+        return jsonify({"error": "old_value and new_value are the same"}), 400
+
+    sb = _get_service_role_client()
+    if not sb:
+        return jsonify({"error": "Database not configured"}), 500
+
+    try:
+        matching = (
+            sb.table("submissions")
+            .select("submission_id")
+            .eq(field, old_value)
+            .limit(5000)
+            .execute()
+        )
+        matched_ids = [r["submission_id"] for r in (matching.data or [])]
+        if not matched_ids:
+            return jsonify({"error": f'No submissions found with {field} = "{old_value}"', "updated_count": 0}), 404
+
+        update_payload = {field: new_value}
+        if field == "school_name":
+            normalized = normalize_school_to_standard(new_value)
+            if normalized:
+                update_payload["school_name"] = normalized
+
+        (
+            sb.table("submissions")
+            .update(update_payload)
+            .eq(field, old_value)
+            .execute()
+        )
+        return jsonify({
+            "success": True,
+            "field": field,
+            "old_value": old_value,
+            "new_value": update_payload.get(field, new_value),
+            "updated_count": len(matched_ids),
+        })
+    except Exception as exc:
+        return jsonify({"error": f"Bulk rename failed: {exc}"}), 500
+
+
+@admin_bp.route("/export/csv", methods=["GET"])
+def admin_export_csv():
+    """Export approved submissions to CSV for certificate mail merge."""
+    _require_admin()
+
+    sb = _get_service_role_client()
+    if not sb:
+        abort(500, description="Database not configured")
+
+    school_filter = (request.args.get("school") or "").strip()
+    grade_filter = (request.args.get("grade") or "").strip()
+    status_filter = (request.args.get("status") or "").strip().lower()
+
+    select_fields = (
+        "submission_id, student_name, school_name, grade, "
+        "teacher_name, city_or_location, father_figure_name, "
+        "phone, email, word_count, filename, "
+        "needs_review, review_reason_codes, created_at"
+    )
+
+    query = sb.table("submissions").select(select_fields).order("school_name").order("grade").order("student_name")
+
+    if status_filter != "all":
+        query = query.eq("needs_review", False)
+
+    if school_filter:
+        query = query.eq("school_name", school_filter)
+    if grade_filter:
+        query = query.eq("grade", grade_filter)
+
+    try:
+        result = query.limit(10000).execute()
+    except Exception as exc:
+        abort(500, description=f"Export query failed: {exc}")
+
+    rows = result.data or []
+    if status_filter != "all":
+        rows = [r for r in rows if not _is_excluded_submission_row(r)]
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "Student Name",
+        "School Name",
+        "Grade",
+        "Teacher Name",
+        "City / Location",
+        "Father Figure Name",
+        "Phone",
+        "Email",
+        "Word Count",
+        "File Name",
+        "Submission ID",
+        "Date Submitted",
+    ])
+    for row in rows:
+        created = (row.get("created_at") or "")[:10]
+        writer.writerow([
+            row.get("student_name") or "",
+            row.get("school_name") or "",
+            row.get("grade") if row.get("grade") is not None else "",
+            row.get("teacher_name") or "",
+            row.get("city_or_location") or "",
+            row.get("father_figure_name") or "",
+            row.get("phone") or "",
+            row.get("email") or "",
+            row.get("word_count") or "",
+            row.get("filename") or "",
+            row.get("submission_id") or "",
+            created,
+        ])
+
+    csv_bytes = output.getvalue().encode("utf-8-sig")
+    parts = ["ifi_submissions"]
+    if school_filter:
+        parts.append(secure_filename(school_filter) or "school")
+    if grade_filter:
+        parts.append(f"grade_{secure_filename(str(grade_filter))}")
+    parts.append(f"{len(rows)}_records")
+    download_name = "_".join(parts) + ".csv"
+
+    return send_file(
+        io.BytesIO(csv_bytes),
+        mimetype="text/csv",
+        as_attachment=True,
+        download_name=download_name,
+    )
 
 
 @admin_bp.route("/failure-stats", methods=["GET"])
