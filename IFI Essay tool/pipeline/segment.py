@@ -15,6 +15,105 @@ def normalize_for_matching(text: str) -> str:
     return text
 
 
+_REACTION_ANCHORS = [
+    'father/grandfather/step-dad/father-figure reaction',
+    'reaction to this essay',
+    'reaccion de padre/abuelo',
+]
+
+_FOOTER_LINE_PATTERNS = [
+    'barrington, il',
+    'grove avenue',
+    '4dads.org',
+    'ifi will also',
+    'ifi will cite',
+    'positive essay/response',
+    'publications and media',
+    'contest is open to illinois',
+    'deadline for upload or postmark',
+    'criteria for essay judging',
+    'character maximum',
+    'maximo de caracteres',
+    'figura paterna puede ser',
+    'ideal vision of a father',
+    'completed forms can be uploaded',
+    'parent/guardian permission',
+    'submissions will be evaluated',
+    'judging criteria will consist',
+    'una figura paterna puede ser',
+    'reverse side',
+    'confidentiality if requested',
+    'conceal names to maintain',
+    'world-wide basis',
+    'world wide basis',
+    'non-exclusive, royalty-free',
+    'royalty-free',
+    'how the essay describes',
+    'honesty, clarity, simplici',
+    'detail and stories that demonstrate',
+]
+
+_INLINE_ANCHORS = [
+    'God, or an ideal vision of a father',
+    'RULES able to return them',
+    'CRITERIA FOR ESSAY JUDGING',
+]
+
+
+def strip_footer_boilerplate(essay_text: str) -> str:
+    """Remove IFI contest rules / form boilerplate that appears after the student essay."""
+    if not essay_text or not essay_text.strip():
+        return essay_text
+
+    lines = essay_text.split('\n')
+
+    # Primary anchor: "reaction to this essay" is extremely specific to the
+    # IFI form and always marks the boundary between the student's essay and
+    # the parent-reaction / rules section.  Search bottom-up so the *last*
+    # occurrence wins (handles forms that print the prompt twice).
+    cut_idx = None
+    for i in range(len(lines) - 1, -1, -1):
+        line_norm = normalize_for_matching(lines[i].strip())
+        if any(anchor in line_norm for anchor in _REACTION_ANCHORS):
+            cut_idx = i
+            break
+
+    if cut_idx is not None:
+        # Scan upward past consecutive anchor lines (English + Spanish pair).
+        while cut_idx > 0:
+            prev_norm = normalize_for_matching(lines[cut_idx - 1].strip())
+            if any(anchor in prev_norm for anchor in _REACTION_ANCHORS):
+                cut_idx -= 1
+            else:
+                break
+        lines = lines[:cut_idx]
+
+    # Secondary: peel off trailing boilerplate lines one at a time.
+    while lines:
+        last = lines[-1].strip()
+        if not last:
+            lines.pop()
+            continue
+        last_norm = normalize_for_matching(last)
+        if any(pat in last_norm for pat in _FOOTER_LINE_PATTERNS):
+            lines.pop()
+        elif len(last) <= 3 and not last[0].isalpha():
+            lines.pop()
+        else:
+            break
+
+    # Inline contamination on the final surviving line (single-line OCR noise).
+    if lines:
+        last_line = lines[-1]
+        for anchor in _INLINE_ANCHORS:
+            pos = last_line.find(anchor)
+            if pos > 0:
+                lines[-1] = last_line[:pos].rstrip()
+                break
+
+    return '\n'.join(lines).strip()
+
+
 def split_contact_vs_essay(raw_text: str) -> tuple[str, str]:
     """
     Splits OCR text into contact block and essay block.
@@ -37,19 +136,30 @@ def split_contact_vs_essay(raw_text: str) -> tuple[str, str]:
         # Very short text, return as-is
         return raw_text, ""
     
-    # Anchor words that suggest contact/form section (bilingual, with or without colons)
-    contact_keywords = [
-        'name', 'nombre', 'student', 'estudiante',
+    # Keywords that reliably indicate form labels regardless of line length
+    contact_keywords_strict = [
+        'student', 'estudiante',
         'school', 'escuela',
         'grade', 'grado',
         'teacher', 'maestro',
         'phone', 'telefono', 'teléfono',
         'email', 'correo',
-        'father', 'padre', 'figure', 'figura',
-        'location', 'ciudad', 'city',
-        'deadline', 'writing', 'escribiendo',
-        'about', 'sobre', 'contest', 'concurso'
+        'location', 'ciudad',
+        'deadline',
     ]
+
+    # Keywords that appear in both form labels AND essay content (e.g. "father",
+    # "about", "writing").  Only treat these as contact-block markers on short
+    # lines that look like form labels, not on long essay paragraphs.
+    contact_keywords_ambiguous = [
+        'name', 'nombre',
+        'father', 'padre', 'figure', 'figura',
+        'writing', 'escribiendo',
+        'about', 'sobre', 'contest', 'concurso',
+        'city',
+    ]
+
+    LABEL_LINE_MAX_LENGTH = 80
     
     # Markers that suggest the essay is starting or essay prompt area
     essay_start_markers = [
@@ -99,8 +209,11 @@ def split_contact_vs_essay(raw_text: str) -> tuple[str, str]:
             consecutive_long_lines = 0
             continue
         
-        # Check if line contains contact keywords
-        contains_contact_keyword = any(keyword in line_norm for keyword in contact_keywords)
+        # Check if line contains contact keywords.
+        # Strict keywords match on any line; ambiguous keywords only on short label-like lines.
+        contains_contact_keyword = any(keyword in line_norm for keyword in contact_keywords_strict)
+        if not contains_contact_keyword and len(line_stripped) <= LABEL_LINE_MAX_LENGTH:
+            contains_contact_keyword = any(keyword in line_norm for keyword in contact_keywords_ambiguous)
         
         # After seeing essay prompt section, long lines without contact keywords are essay
         if seen_essay_prompt_section and not contains_contact_keyword and len(line_stripped) > 30:
@@ -142,6 +255,8 @@ def split_contact_vs_essay(raw_text: str) -> tuple[str, str]:
     
     contact_block = '\n'.join(contact_lines).strip()
     essay_block = '\n'.join(essay_lines).strip()
+
+    essay_block = strip_footer_boilerplate(essay_block)
     
     return contact_block, essay_block
 
