@@ -67,6 +67,8 @@ def parse_and_validate_reader_emails(raw_value: Any) -> tuple[list[str], list[st
 
 def _is_approved_submission_row(row: dict[str, Any]) -> bool:
     """Mirror admin dashboard approval logic for consistency."""
+    if row.get("is_container_parent"):
+        return False
     has_all_data = bool(row.get("student_name") and row.get("school_name") and row.get("grade") is not None)
     raw_reason_codes = str(row.get("review_reason_codes") or "").strip()
     if raw_reason_codes in {"[]", "{}", "null", "None"}:
@@ -158,7 +160,7 @@ def _standardized_school_label(canonical_school: str) -> str | None:
     if "mundelein" in value or "munderein" in value:
         return "Mundelein HS"
     if "st mary" in value or "saint mary" in value or "st many" in value or "smarys" in value or "stmarys" in value or "marys pontiac" in value or "st marils" in value:
-        return "St Mary Pontiac"
+        return "St. Mary's Pontiac"
     return None
 
 
@@ -166,7 +168,7 @@ STANDARD_SCHOOL_OPTIONS = (
     "De La Salle Institute",
     "Rachel Carson Elementary School",
     "Mundelein HS",
-    "St Mary Pontiac",
+    "St. Mary's Pontiac",
 )
 
 

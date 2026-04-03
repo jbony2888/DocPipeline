@@ -1938,12 +1938,7 @@ def update_submission_metadata(submission_id: str):
     if "student_name" in payload:
         updates["student_name"] = (str(payload.get("student_name") or "").strip() or None)
     if "school_name" in payload:
-        raw_school_name = (str(payload.get("school_name") or "").strip() or None)
-        if raw_school_name:
-            normalized_school = normalize_school_to_standard(raw_school_name)
-            updates["school_name"] = normalized_school or raw_school_name
-        else:
-            updates["school_name"] = None
+        updates["school_name"] = (str(payload.get("school_name") or "").strip() or None)
     if "grade" in payload:
         updates["grade"] = _normalize_grade_value(payload.get("grade"))
 
@@ -2218,21 +2213,18 @@ def bulk_update_selected():
     if "student_name" in payload:
         updates["student_name"] = (str(payload["student_name"]).strip() or None)
     if "school_name" in payload:
-        raw = (str(payload["school_name"]).strip() or None)
-        if raw:
-            normalized = normalize_school_to_standard(raw)
-            updates["school_name"] = normalized or raw
-        else:
-            updates["school_name"] = None
+        updates["school_name"] = (str(payload["school_name"]).strip() or None)
     if "grade" in payload:
         updates["grade"] = _normalize_grade_value(payload["grade"])
     if "teacher_name" in payload:
         updates["teacher_name"] = (str(payload["teacher_name"]).strip() or None)
     if "city_or_location" in payload:
         updates["city_or_location"] = (str(payload["city_or_location"]).strip() or None)
+    if "father_figure_name" in payload:
+        updates["father_figure_name"] = (str(payload["father_figure_name"]).strip() or None)
 
     if not updates:
-        return jsonify({"error": "Provide at least one field to update (student_name, school_name, grade, teacher_name, city_or_location)"}), 400
+        return jsonify({"error": "Provide at least one field to update"}), 400
 
     sb = _get_service_role_client()
     if not sb:
@@ -2294,7 +2286,7 @@ def bulk_rename_field():
     old_value = str(payload.get("old_value") or "").strip()
     new_value = str(payload.get("new_value") or "").strip()
 
-    allowed_fields = {"school_name", "teacher_name", "city_or_location"}
+    allowed_fields = {"student_name", "school_name", "teacher_name", "city_or_location", "father_figure_name"}
     if field not in allowed_fields:
         return jsonify({"error": f"Field must be one of: {', '.join(sorted(allowed_fields))}"}), 400
     if not old_value:
@@ -2321,10 +2313,6 @@ def bulk_rename_field():
             return jsonify({"error": f'No submissions found with {field} = "{old_value}"', "updated_count": 0}), 404
 
         update_payload = {field: new_value}
-        if field == "school_name":
-            normalized = normalize_school_to_standard(new_value)
-            if normalized:
-                update_payload["school_name"] = normalized
 
         (
             sb.table("submissions")

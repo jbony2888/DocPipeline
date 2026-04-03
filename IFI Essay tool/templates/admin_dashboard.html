@@ -308,9 +308,11 @@
                     <div class="mb-3">
                         <label class="form-label small fw-semibold">Field</label>
                         <select id="renameField" class="form-select">
+                            <option value="student_name">Student Name</option>
                             <option value="school_name">School Name</option>
                             <option value="teacher_name">Teacher Name</option>
                             <option value="city_or_location">City / Location</option>
+                            <option value="father_figure_name">Father Figure Name</option>
                         </select>
                     </div>
                     <div class="mb-3">
@@ -362,6 +364,10 @@
                     <div class="mb-3">
                         <label class="form-label small fw-semibold">City / Location</label>
                         <input type="text" id="bulkSelCity" class="form-control" placeholder="Leave blank to keep current">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small fw-semibold">Father Figure Name</label>
+                        <input type="text" id="bulkSelFatherFigure" class="form-control" placeholder="Leave blank to keep current">
                     </div>
                     <div id="bulkUpdateSelResult" class="small"></div>
                 </div>
@@ -656,14 +662,16 @@
                 const grade = document.getElementById('bulkSelGrade').value.trim();
                 const teacherName = document.getElementById('bulkSelTeacherName').value.trim();
                 const city = document.getElementById('bulkSelCity').value.trim();
+                const fatherFigure = document.getElementById('bulkSelFatherFigure').value.trim();
 
                 if (studentName) payload.student_name = studentName;
                 if (schoolName) payload.school_name = schoolName;
                 if (grade) payload.grade = grade;
                 if (teacherName) payload.teacher_name = teacherName;
                 if (city) payload.city_or_location = city;
+                if (fatherFigure) payload.father_figure_name = fatherFigure;
 
-                const fieldCount = [studentName, schoolName, grade, teacherName, city].filter(Boolean).length;
+                const fieldCount = [studentName, schoolName, grade, teacherName, city, fatherFigure].filter(Boolean).length;
                 if (!fieldCount) {
                     resultEl.innerHTML = '<span class="text-danger">Fill in at least one field to apply.</span>';
                     return;
@@ -714,7 +722,7 @@
                     return;
                 }
 
-                const fieldLabels = { school_name: 'School Name', teacher_name: 'Teacher Name', city_or_location: 'City / Location' };
+                const fieldLabels = { student_name: 'Student Name', school_name: 'School Name', teacher_name: 'Teacher Name', city_or_location: 'City / Location', father_figure_name: 'Father Figure Name' };
                 if (!confirm(`Rename all submissions where ${fieldLabels[field] || field} is exactly "${oldVal}" to "${newVal}"?`)) return;
 
                 const btn = this;
