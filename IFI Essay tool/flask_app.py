@@ -935,6 +935,15 @@ def review():
         selected_grade_filter = (request.args.get("grade") or "").strip()
         selected_reason_filter = (request.args.get("reason") or "").strip()
 
+        _MISSING_SCHOOL_SENTINEL = "__missing__"
+        _MISSING_GRADE_SENTINEL = "__missing__"
+
+        has_missing_school = any(not str(r.get("school_name", "")).strip() for r in records)
+        has_missing_grade = any(
+            r.get("grade") is None or str(r.get("grade", "")).strip() == ""
+            for r in records
+        )
+
         school_filter_options = sorted(
             {
                 str(r.get("school_name", "")).strip()
@@ -961,17 +970,29 @@ def review():
         )
 
         if selected_school_filter:
-            school_key = normalize_key(selected_school_filter)
-            records = [
-                r for r in records
-                if normalize_key(r.get("school_name")) == school_key
-            ]
+            if selected_school_filter == _MISSING_SCHOOL_SENTINEL:
+                records = [
+                    r for r in records
+                    if not str(r.get("school_name", "")).strip()
+                ]
+            else:
+                school_key = normalize_key(selected_school_filter)
+                records = [
+                    r for r in records
+                    if normalize_key(r.get("school_name")) == school_key
+                ]
         if selected_grade_filter:
-            grade_key = normalize_key(selected_grade_filter)
-            records = [
-                r for r in records
-                if normalize_key(str(r.get("grade", ""))) == grade_key
-            ]
+            if selected_grade_filter == _MISSING_GRADE_SENTINEL:
+                records = [
+                    r for r in records
+                    if r.get("grade") is None or str(r.get("grade", "")).strip() == ""
+                ]
+            else:
+                grade_key = normalize_key(selected_grade_filter)
+                records = [
+                    r for r in records
+                    if normalize_key(str(r.get("grade", ""))) == grade_key
+                ]
         if selected_reason_filter:
             records = [
                 r for r in records
@@ -1140,6 +1161,8 @@ def review():
                          approved_ungrouped=approved_ungrouped,
                          school_filter_options=school_filter_options,
                          grade_filter_options=grade_filter_options,
+                         has_missing_school=has_missing_school if review_mode == "needs_review" else False,
+                         has_missing_grade=has_missing_grade if review_mode == "needs_review" else False,
                          batch_filter_options=batch_filter_options if review_mode == "approved" else [],
                          selected_school_filter=selected_school_filter,
                          selected_grade_filter=selected_grade_filter,

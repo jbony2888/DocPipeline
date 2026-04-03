@@ -103,6 +103,9 @@
                     <label class="form-label mb-1"><strong>School</strong></label>
                     <select class="form-select form-select-sm" name="school">
                         <option value="">All schools</option>
+                        {% if has_missing_school %}
+                        <option value="__missing__" {% if selected_school_filter == '__missing__' %}selected{% endif %}>(No School Name)</option>
+                        {% endif %}
                         {% for school in school_filter_options %}
                         <option value="{{ school }}" {% if selected_school_filter == school %}selected{% endif %}>{{ school }}</option>
                         {% endfor %}
@@ -112,6 +115,9 @@
                     <label class="form-label mb-1"><strong>Grade</strong></label>
                     <select class="form-select form-select-sm" name="grade">
                         <option value="">All grades</option>
+                        {% if has_missing_grade %}
+                        <option value="__missing__" {% if selected_grade_filter == '__missing__' %}selected{% endif %}>(No Grade)</option>
+                        {% endif %}
                         {% for grade in grade_filter_options %}
                         <option value="{{ grade }}" {% if selected_grade_filter == grade %}selected{% endif %}>{{ grade }}</option>
                         {% endfor %}
