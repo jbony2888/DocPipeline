@@ -20,8 +20,9 @@ from flask import Blueprint, abort, current_app, jsonify, redirect, render_templ
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from werkzeug.utils import secure_filename
 
+from pipeline.grouping import normalize_key
 from pipeline.supabase_db import _get_service_role_client
-from pipeline.supabase_storage import BUCKET_NAME, download_original_with_service_role
+from pipeline.supabase_storage import BUCKET_NAME, delete_artifact_dir, download_original_with_service_role
 from pipeline.validate import ALLOWED_REASON_CODES
 from pipeline.grouping import normalize_key
 from auth.app_admin import is_app_admin_email
@@ -250,23 +251,39 @@ def _fetch_all_submissions(limit: int = 1000) -> list:
         return []
 
     cap = min(max(int(limit), 1), 2000)
+    select_full = (
+        "submission_id, student_name, school_name, grade, filename, "
+        "artifact_dir, needs_review, review_reason_codes, created_at, owner_user_id, "
+        "parent_submission_id, chunk_index, chunk_page_start, chunk_page_end, "
+        "is_chunk, is_container_parent, essay_linked_from_submission_id"
+    )
+    select_fallback = (
+        "submission_id, student_name, school_name, grade, filename, "
+        "artifact_dir, needs_review, review_reason_codes, created_at, owner_user_id, "
+        "parent_submission_id, chunk_index, chunk_page_start, chunk_page_end, "
+        "is_chunk, is_container_parent"
+    )
     try:
         result = (
             sb.table("submissions")
-            .select(
-                "submission_id, student_name, school_name, grade, filename, "
-                "artifact_dir, needs_review, review_reason_codes, created_at, owner_user_id, "
-                "parent_submission_id, chunk_index, chunk_page_start, chunk_page_end, "
-                "is_chunk, is_container_parent"
-            )
+            .select(select_full)
             .order("created_at", desc=True)
             .limit(cap)
             .execute()
         )
-        rows = result.data if result.data else []
-        return [row for row in rows if not _is_excluded_submission_row(row)]
     except Exception:
-        return []
+        try:
+            result = (
+                sb.table("submissions")
+                .select(select_fallback)
+                .order("created_at", desc=True)
+                .limit(cap)
+                .execute()
+            )
+        except Exception:
+            return []
+    rows = result.data if result.data else []
+    return [row for row in rows if not _is_excluded_submission_row(row)]
 
 
 def _apply_school_grade_filters(
@@ -321,6 +338,121 @@ def _apply_school_grade_filters(
             continue
         out.append(r)
     return out
+
+
+def _apply_multi_entry_only_filter(all_rows: list, submissions: list, multi_entry_only: bool) -> list:
+    """When multi_entry_only, keep only rows whose filename appears more than once in all_rows."""
+    if not multi_entry_only:
+        return submissions
+    fn_counts: Counter[str] = Counter()
+    for r in all_rows:
+        fn = (r.get("filename") or "").strip()
+        if fn:
+            fn_counts[fn] += 1
+    multi_filenames = {fn for fn, n in fn_counts.items() if n > 1}
+    return [s for s in submissions if (s.get("filename") or "").strip() in multi_filenames]
+
+
+def _duplicate_fingerprint(row: dict) -> tuple[str, str, str, str]:
+    stud = normalize_key((row.get("student_name") or "").strip())
+    school_raw = row.get("school_name")
+    school = normalize_key(normalize_school_to_standard(school_raw) or (school_raw or "").strip())
+    grade = normalize_key(str(row.get("grade") or "").strip())
+    fn = normalize_key((row.get("filename") or "").strip())
+    return (stud, school, grade, fn)
+
+
+def _eligible_for_duplicate_scan(row: dict) -> bool:
+    """Standalone uploads only — not chunks, linked essays, or multi-entry container parents."""
+    if row.get("parent_submission_id") or row.get("is_chunk"):
+        return False
+    if row.get("essay_linked_from_submission_id"):
+        return False
+    if row.get("is_container_parent"):
+        return False
+    if not (row.get("filename") or "").strip():
+        return False
+    return True
+
+
+def _parse_created_at_ts(row: dict) -> float:
+    try:
+        raw = row.get("created_at")
+        if not raw:
+            return 0.0
+        normalized = str(raw).replace("Z", "+00:00")
+        dt = datetime.fromisoformat(normalized)
+        return float(dt.timestamp())
+    except Exception:
+        return 0.0
+
+
+def _plan_duplicate_removals(rows: list) -> tuple[list[dict], list[dict]]:
+    """
+    Group by student + school + grade + filename; keep newest created_at, mark older rows for deletion.
+    Returns (group_summaries, rows_to_delete).
+    """
+    groups: dict[tuple[str, str, str, str], list[dict]] = {}
+    for row in rows:
+        if not _eligible_for_duplicate_scan(row):
+            continue
+        fp = _duplicate_fingerprint(row)
+        if not fp[3]:
+            continue
+        groups.setdefault(fp, []).append(row)
+
+    summaries: list[dict] = []
+    to_delete: list[dict] = []
+    for fp, members in groups.items():
+        if len(members) < 2:
+            continue
+        sorted_members = sorted(members, key=_parse_created_at_ts, reverse=True)
+        keep = sorted_members[0]
+        dupes = sorted_members[1:]
+        to_delete.extend(dupes)
+        summaries.append(
+            {
+                "kept_submission_id": keep.get("submission_id"),
+                "kept_created_at": keep.get("created_at"),
+                "deleted_submission_ids": [d.get("submission_id") for d in dupes],
+                "deleted_count": len(dupes),
+                "filename": (keep.get("filename") or "").strip(),
+            }
+        )
+    return summaries, to_delete
+
+
+def _admin_delete_submission_row(sb, row: dict) -> tuple[bool, str | None]:
+    """Remove storage files then DB row (service role)."""
+    sid = str(row.get("submission_id") or "").strip()
+    if not sid:
+        return False, "missing submission_id"
+    ad = (row.get("artifact_dir") or "").strip()
+    if ad and not delete_artifact_dir(ad, sb):
+        return False, "storage delete failed"
+    try:
+        sb.table("submissions").delete().eq("submission_id", sid).execute()
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+
+def _submissions_for_duplicate_scan(
+    *,
+    limit: int,
+    school: str,
+    grade: str,
+    status: str,
+    submission_id: str,
+    multi_entry: str,
+) -> tuple[list, list]:
+    """Return (all_rows, filtered_submissions) using the same rules as the dashboard."""
+    cap = min(max(int(limit), 1), 2000)
+    all_rows = _fetch_all_submissions(limit=cap)
+    submissions = _apply_school_grade_filters(all_rows, school, grade, status, submission_id)
+    multi_entry_only = (multi_entry or "").strip().lower() in ("1", "true", "yes", "on")
+    submissions = _apply_multi_entry_only_filter(all_rows, submissions, multi_entry_only)
+    return all_rows, submissions
 
 
 # Max originals in one ZIP (memory + timeout safety during contest)
@@ -674,14 +806,7 @@ def admin_dashboard():
         selected_status,
         selected_submission_id,
     )
-    if multi_entry_only:
-        fn_counts: Counter[str] = Counter()
-        for r in all_rows:
-            fn = (r.get("filename") or "").strip()
-            if fn:
-                fn_counts[fn] += 1
-        multi_filenames = {fn for fn, n in fn_counts.items() if n > 1}
-        submissions = [s for s in submissions if (s.get("filename") or "").strip() in multi_filenames]
+    submissions = _apply_multi_entry_only_filter(all_rows, submissions, multi_entry_only)
     for s in submissions:
         has_all = bool(
             (s.get("student_name") or "").strip()
@@ -706,6 +831,98 @@ def admin_dashboard():
         selected_multi_entry=selected_multi_entry,
         fetch_limit=fetch_limit,
         format_review_reasons=_format_review_reasons,
+    )
+
+
+@admin_bp.route("/submissions/duplicate-report", methods=["POST"])
+def admin_duplicate_report():
+    """JSON: count duplicate groups and rows that would be removed (same filters as dashboard)."""
+    _require_admin()
+    payload = request.get_json(silent=True) or {}
+    limit = min(int(payload.get("limit", 1000)), 2000)
+    school = (payload.get("school") or "").strip()
+    grade = (payload.get("grade") or "").strip()
+    status = (payload.get("status") or "").strip()
+    submission_id = (payload.get("submission_id") or "").strip()
+    multi_entry = (payload.get("multi_entry") or "").strip()
+
+    _, submissions = _submissions_for_duplicate_scan(
+        limit=limit,
+        school=school,
+        grade=grade,
+        status=status,
+        submission_id=submission_id,
+        multi_entry=multi_entry,
+    )
+    summaries, to_delete = _plan_duplicate_removals(submissions)
+    preview = summaries[:40]
+    return jsonify(
+        {
+            "duplicate_groups": len(summaries),
+            "rows_to_delete": len(to_delete),
+            "preview_groups": preview,
+            "preview_truncated": len(summaries) > len(preview),
+        }
+    )
+
+
+@admin_bp.route("/submissions/delete-duplicates", methods=["POST"])
+def admin_delete_duplicates():
+    """
+    Delete older duplicate uploads: same student + school + grade + filename, keep newest by created_at.
+    Respects dashboard filters and scan limit. Skips chunk rows and multi-entry container parents.
+    """
+    _require_admin()
+    payload = request.get_json(silent=True) or {}
+    dry_run = bool(payload.get("dry_run"))
+    limit = min(int(payload.get("limit", 1000)), 2000)
+    school = (payload.get("school") or "").strip()
+    grade = (payload.get("grade") or "").strip()
+    status = (payload.get("status") or "").strip()
+    submission_id = (payload.get("submission_id") or "").strip()
+    multi_entry = (payload.get("multi_entry") or "").strip()
+
+    _, submissions = _submissions_for_duplicate_scan(
+        limit=limit,
+        school=school,
+        grade=grade,
+        status=status,
+        submission_id=submission_id,
+        multi_entry=multi_entry,
+    )
+    summaries, to_delete = _plan_duplicate_removals(submissions)
+    if dry_run:
+        return jsonify(
+            {
+                "dry_run": True,
+                "duplicate_groups": len(summaries),
+                "would_delete": len(to_delete),
+                "groups": summaries,
+            }
+        )
+
+    sb = _get_service_role_client()
+    if not sb:
+        return jsonify({"error": "Database not configured"}), 500
+
+    deleted_ids: list[str] = []
+    errors: list[dict] = []
+    for row in to_delete:
+        sid = str(row.get("submission_id") or "").strip()
+        ok, err = _admin_delete_submission_row(sb, row)
+        if ok:
+            deleted_ids.append(sid)
+        else:
+            errors.append({"submission_id": sid, "error": err or "delete failed"})
+
+    return jsonify(
+        {
+            "success": not errors,
+            "deleted_count": len(deleted_ids),
+            "deleted_submission_ids": deleted_ids,
+            "duplicate_groups_resolved": len(summaries),
+            "errors": errors,
+        }
     )
 
 
@@ -1727,16 +1944,12 @@ def get_submissions():
     selected_grade = (request.args.get("grade") or "").strip()
     selected_status = (request.args.get("status") or "").strip()
     selected_multi_entry = (request.args.get("multi_entry") or "").strip()
+    selected_submission_id = (request.args.get("submission_id") or "").strip()
     multi_entry_only = selected_multi_entry in ("1", "true", "yes", "on")
-    submissions = _apply_school_grade_filters(all_rows, selected_school, selected_grade, selected_status)
-    if multi_entry_only:
-        fn_counts: Counter[str] = Counter()
-        for r in all_rows:
-            fn = (r.get("filename") or "").strip()
-            if fn:
-                fn_counts[fn] += 1
-        multi_filenames = {fn for fn, n in fn_counts.items() if n > 1}
-        submissions = [s for s in submissions if (s.get("filename") or "").strip() in multi_filenames]
+    submissions = _apply_school_grade_filters(
+        all_rows, selected_school, selected_grade, selected_status, selected_submission_id
+    )
+    submissions = _apply_multi_entry_only_filter(all_rows, submissions, multi_entry_only)
 
     def _display_status(s):
         if s.get("is_container_parent"):
@@ -1860,10 +2073,11 @@ def view_submission_file(submission_id: str):
     essay_text = (record.get("essay_text") or "").strip()
     student_name = (record.get("student_name") or "").strip()
 
-    def _render_essay_fallback(message: str):
+    def _render_essay_text_only_fallback() -> tuple:
+        """When the PDF is missing but essay_text exists — single clear page (no empty essay placeholder)."""
         title_bits = [b for b in [student_name, filename] if b]
         title = " - ".join(title_bits) if title_bits else submission_id
-        body = html.escape(essay_text) if essay_text else "<em>No essay text stored for this submission.</em>"
+        body = html.escape(essay_text)
         fallback_html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1872,15 +2086,15 @@ def view_submission_file(submission_id: str):
   <title>{html.escape(title)}</title>
   <style>
     body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 0; background: #f8fafc; color: #0f172a; }}
-    .wrap {{ padding: 24px; }}
-    .meta {{ color: #64748b; margin-bottom: 16px; }}
+    .wrap {{ padding: 24px; max-width: 52rem; }}
+    .meta {{ color: #64748b; margin-bottom: 16px; font-size: 14px; }}
     .essay {{ white-space: pre-wrap; background: white; border: 1px solid #cbd5e1; border-radius: 8px; padding: 16px; line-height: 1.5; }}
   </style>
 </head>
 <body>
   <div class="wrap">
-    <h1 style="margin:0 0 8px 0; font-size: 20px;">Essay Preview</h1>
-    <div class="meta">{html.escape(message)}</div>
+    <h1 style="margin:0 0 8px 0; font-size: 18px;">Essay text only</h1>
+    <div class="meta">Original upload is not available in storage; showing extracted essay text from the database.</div>
     <div class="essay">{body}</div>
   </div>
 </body>
@@ -1888,11 +2102,21 @@ def view_submission_file(submission_id: str):
         return fallback_html, 200, {"Content-Type": "text/html; charset=utf-8"}
 
     if not artifact_dir:
-        return _render_essay_fallback("Original file is not stored for this submission. Showing saved essay text instead.")
+        if essay_text:
+            return _render_essay_text_only_fallback()
+        abort(
+            404,
+            description="No original file in storage for this submission and no essay text on file.",
+        )
 
     file_bytes, used_path = download_original_with_service_role(sb, artifact_dir, filename)
     if not file_bytes or not used_path:
-        return _render_essay_fallback("Original file was not found in storage for this submission. Showing saved essay text instead.")
+        if essay_text:
+            return _render_essay_text_only_fallback()
+        abort(
+            404,
+            description="Original file not found in storage for this submission and no essay text on file.",
+        )
 
     safe_name = secure_filename(filename) or "original"
     mimetype = _mimetype_for_storage_path(used_path)
