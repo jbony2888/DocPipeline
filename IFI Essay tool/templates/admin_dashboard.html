@@ -149,8 +149,11 @@
                         <button type="button" class="btn btn-sm btn-outline-warning" id="btnBulkSendReview">
                             <i class="bi bi-arrow-counterclockwise"></i> Send Selected to Review
                         </button>
+                        <button type="button" class="btn btn-sm btn-outline-danger" id="btnDeleteSelectedDuplicates" title="Removes only checked rows. Newest copy per student/school/grade/file is never deleted.">
+                            <i class="bi bi-trash"></i> Delete selected duplicate rows
+                        </button>
                         <span class="text-muted small" id="selCount">0 selected</span>
-                        <span class="text-muted small ms-auto">Max 50 files per ZIP · row edits save directly to DB</span>
+                        <span class="text-muted small ms-auto">Max 50 files per ZIP · duplicate delete uses checkboxes only · row edits save directly to DB</span>
                     </div>
                     <div class="card-body pt-0 d-flex flex-wrap align-items-center gap-2 border-top">
                         <span class="small text-muted fw-semibold pt-2">Database tools:</span>
@@ -172,8 +175,8 @@
                         <a href="{{ url_for('admin.admin_export_csv', status='all') }}" class="btn btn-sm btn-outline-secondary mt-2">
                             <i class="bi bi-file-earmark-spreadsheet"></i> Export All incl. Review (CSV)
                         </a>
-                        <button type="button" class="btn btn-sm btn-outline-danger mt-2" data-bs-toggle="modal" data-bs-target="#duplicateDeleteModal" id="btnOpenDuplicateModal">
-                            <i class="bi bi-files"></i> Remove duplicate uploads
+                        <button type="button" class="btn btn-sm btn-outline-secondary mt-2" data-bs-toggle="modal" data-bs-target="#duplicateDeleteModal" id="btnOpenDuplicateModal">
+                            <i class="bi bi-files"></i> Scan for duplicates (preview)
                         </button>
                     </div>
                     <div class="card-body pt-0">
@@ -331,29 +334,29 @@
         </div>
     </main>
 
-    <!-- Duplicate uploads: scan + delete older copies (same filters as dashboard) -->
+    <!-- Duplicate uploads: scan preview only — deletion uses toolbar “Delete selected duplicate rows” -->
     <div class="modal fade" id="duplicateDeleteModal" tabindex="-1" aria-labelledby="duplicateDeleteLabel" aria-hidden="true">
         <div class="modal-dialog modal-lg modal-dialog-scrollable">
             <div class="modal-content">
                 <div class="modal-header">
-                    <h5 class="modal-title" id="duplicateDeleteLabel"><i class="bi bi-files"></i> Remove duplicate uploads</h5>
+                    <h5 class="modal-title" id="duplicateDeleteLabel"><i class="bi bi-files"></i> Duplicate scan (preview)</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <div class="modal-body">
                     <p class="text-muted small mb-2">
-                        Keeps the <strong>newest</strong> submission for each matching student, school, grade, and filename.
-                        Older duplicate rows are removed along with their storage files.
-                        Chunk rows from multi-entry PDFs and container parents are not included.
-                        Only the <strong>up to {{ fetch_limit }} most recent</strong> submissions in the database are scanned (same as this table).
+                        This scan only <strong>lists</strong> duplicate groups in the current table window (up to <strong>{{ fetch_limit }}</strong> most recent submissions). It does not delete anything.
                     </p>
-                    <p class="text-muted small mb-3">Current filters (school, grade, status, etc.) apply to which rows are considered.</p>
+                    <p class="text-muted small mb-2">
+                        To delete: check the duplicate rows you want removed, then click <strong>Delete selected duplicate rows</strong> above the table. Only checked rows are deleted. The <strong>newest</strong> submission per student/school/grade/file is <strong>never</strong> deleted (one copy always remains). You cannot delete the only remaining row for that file.
+                    </p>
+                    <p class="text-muted small mb-2">
+                        The ID under <strong>Storage / link</strong> is the submission ID — it matches the “kept” row below (the newest in that group).
+                    </p>
+                    <p class="text-muted small mb-3">Current filters (school, grade, status, etc.) apply to this scan.</p>
                     <div id="dupReportContent" class="small">Open this dialog to scan.</div>
                 </div>
                 <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                    <button type="button" class="btn btn-danger" id="btnConfirmDeleteDuplicates" disabled>
-                        <i class="bi bi-trash"></i> Delete older duplicates
-                    </button>
+                    <button type="button" class="btn btn-primary" data-bs-dismiss="modal">Close</button>
                 </div>
             </div>
         </div>
@@ -689,12 +692,17 @@
 
             const dupModal = document.getElementById('duplicateDeleteModal');
             const dupReportContent = document.getElementById('dupReportContent');
-            const btnConfirmDeleteDuplicates = document.getElementById('btnConfirmDeleteDuplicates');
+
+            function dupEsc(s) {
+                if (s === null || s === undefined) return '';
+                const d = document.createElement('div');
+                d.textContent = String(s);
+                return d.innerHTML;
+            }
 
             dupModal?.addEventListener('show.bs.modal', async function() {
-                if (!dupReportContent || !btnConfirmDeleteDuplicates) return;
+                if (!dupReportContent) return;
                 dupReportContent.innerHTML = '<span class="text-muted">Scanning for duplicates…</span>';
-                btnConfirmDeleteDuplicates.disabled = true;
                 const payload = Object.assign({}, window.__adminDashboardFilters || {});
                 try {
                     const r = await fetch('{{ url_for("admin.admin_duplicate_report") }}', {
@@ -708,51 +716,77 @@
                         dupReportContent.innerHTML = '<span class="text-danger">Scan failed: ' + (data.error || r.status) + '</span>';
                         return;
                     }
-                    if (!data.rows_to_delete) {
+                    if (!data.rows_to_delete && !data.duplicate_groups) {
                         dupReportContent.innerHTML = '<span class="text-muted">No duplicate groups found for the current filters and scan window.</span>';
                         return;
                     }
-                    let html = '<p class="mb-2"><strong>' + data.duplicate_groups + '</strong> duplicate group(s); <strong>' + data.rows_to_delete + '</strong> older row(s) will be removed.</p>';
+                    let html = '<p class="mb-2"><strong>' + data.duplicate_groups + '</strong> duplicate group(s) in this window; <strong>' + data.rows_to_delete + '</strong> older row(s) exist (not deleted until you select them).</p>';
                     if (data.preview_truncated) {
                         html += '<p class="text-muted small mb-2">Preview shows up to 40 groups.</p>';
                     }
-                    html += '<ul class="list-unstyled mb-0 border rounded p-2 bg-light" style="max-height: 14rem; overflow: auto;">';
-                    (data.preview_groups || []).forEach(function(g) {
-                        const keep = g.kept_submission_id || '';
-                        const fn = g.filename || '';
+                    html += '<div class="border rounded p-2 bg-light" style="max-height: 16rem; overflow: auto;">';
+                    const prevGroups = data.preview_groups || [];
+                    prevGroups.forEach(function(g, i) {
+                        const student = g.student_name || '—';
+                        const school = g.school_name || '—';
+                        const grade = g.grade !== undefined && g.grade !== null && g.grade !== '' ? g.grade : '—';
+                        const fn = g.filename || '—';
+                        const when = g.kept_date_display || '';
+                        const keepId = g.kept_submission_id || '';
                         const n = g.deleted_count || 0;
-                        html += '<li class="mb-1 text-break"><span class="text-success">Keep</span> <code>' + keep + '</code> · remove ' + n + ' older · <span class="text-muted">' + fn + '</span></li>';
+                        const notLast = i < prevGroups.length - 1;
+                        html += '<div class="' + (notLast ? 'mb-3 pb-3 border-bottom' : '') + '">';
+                        html += '<div class="fw-semibold">' + dupEsc(student) + ' · ' + dupEsc(school) + ' · Grade ' + dupEsc(grade) + '</div>';
+                        html += '<div class="text-muted small">' + dupEsc(fn) + '</div>';
+                        html += '<div class="small mt-1"><span class="text-success">Newest (kept automatically)</span> — <strong>' + n + '</strong> older duplicate' + (n === 1 ? '' : 's') + ' in this window can be removed by checking those rows and using <strong>Delete selected duplicate rows</strong>.</div>';
+                        if (when) {
+                            html += '<div class="small text-muted">Newest row submitted: <strong>' + dupEsc(when) + '</strong></div>';
+                        }
+                        html += '<div class="small text-muted mt-1">Submission ID (matches <strong>Storage / link</strong> on the kept row): <code class="user-select-all">' + dupEsc(keepId) + '</code></div>';
+                        html += '</div>';
                     });
-                    html += '</ul>';
+                    html += '</div>';
                     dupReportContent.innerHTML = html;
-                    btnConfirmDeleteDuplicates.disabled = false;
                 } catch (err) {
                     dupReportContent.innerHTML = '<span class="text-danger">Network error: ' + err + '</span>';
                 }
             });
 
-            btnConfirmDeleteDuplicates?.addEventListener('click', async function() {
-                if (!confirm('Permanently delete the older duplicate rows and their files in storage? This cannot be undone.')) return;
+            document.getElementById('btnDeleteSelectedDuplicates')?.addEventListener('click', async function() {
+                const ids = rows().filter(c => c.checked).map(c => c.value);
+                if (!ids.length) {
+                    alert('Select at least one row with a checkbox. Rows without storage cannot be selected.');
+                    return;
+                }
+                if (!confirm(
+                    'Delete exactly ' + ids.length + ' selected row(s)?\n\n' +
+                    'Only checked rows are removed. The newest submission for each student/school/grade/file is never deleted (one copy stays). If you select that newest row, it will be skipped.\n\nThis cannot be undone.'
+                )) return;
                 const btn = this;
                 btn.disabled = true;
-                const payload = Object.assign({}, window.__adminDashboardFilters || {}, { dry_run: false });
                 try {
                     const r = await fetch('{{ url_for("admin.admin_delete_duplicates") }}', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         credentials: 'same-origin',
-                        body: JSON.stringify(payload)
+                        body: JSON.stringify({ submission_ids: ids })
                     });
                     const data = await r.json().catch(() => ({}));
                     if (!r.ok) {
                         alert('Delete failed: ' + (data.error || r.status));
                         return;
                     }
-                    if (data.errors && data.errors.length) {
-                        alert('Deleted ' + (data.deleted_count || 0) + ' row(s). Some errors: ' + JSON.stringify(data.errors));
-                    } else {
-                        alert('Deleted ' + (data.deleted_count || 0) + ' duplicate submission(s).');
+                    let msg = 'Deleted ' + (data.deleted_count || 0) + ' submission(s).';
+                    if (data.skipped && data.skipped.length) {
+                        msg += '\n\nSkipped (' + data.skipped.length + '):\n' +
+                            data.skipped.map(function(s) {
+                                return (s.submission_id || '—') + ': ' + (s.reason || '');
+                            }).join('\n');
                     }
+                    if (data.errors && data.errors.length) {
+                        msg += '\n\nErrors:\n' + JSON.stringify(data.errors);
+                    }
+                    alert(msg);
                     window.location.reload();
                 } catch (err) {
                     alert('Network error: ' + err);

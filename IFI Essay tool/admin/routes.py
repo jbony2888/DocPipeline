@@ -11,7 +11,7 @@ import re
 import uuid
 import zipfile
 import hashlib
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Thread
@@ -437,10 +437,23 @@ def _plan_duplicate_removals(rows: list) -> tuple[list[dict], list[dict]]:
         keep = sorted_members[0]
         dupes = sorted_members[1:]
         to_delete.extend(dupes)
+        created_raw = keep.get("created_at")
+        kept_date_display = ""
+        if created_raw:
+            kept_date_display = str(created_raw).replace("Z", "+00:00")
+            try:
+                dt = datetime.fromisoformat(kept_date_display)
+                kept_date_display = dt.strftime("%Y-%m-%d %H:%M:%S")
+            except Exception:
+                kept_date_display = str(created_raw)[:19].replace("T", " ")
         summaries.append(
             {
                 "kept_submission_id": keep.get("submission_id"),
                 "kept_created_at": keep.get("created_at"),
+                "kept_date_display": kept_date_display,
+                "student_name": (keep.get("student_name") or "").strip(),
+                "school_name": (keep.get("school_name") or "").strip(),
+                "grade": "" if keep.get("grade") is None else str(keep.get("grade")).strip(),
                 "deleted_submission_ids": [d.get("submission_id") for d in dupes],
                 "deleted_count": len(dupes),
                 "filename": (keep.get("filename") or "").strip(),
@@ -462,6 +475,179 @@ def _admin_delete_submission_row(sb, row: dict) -> tuple[bool, str | None]:
         return True, None
     except Exception as e:
         return False, str(e)
+
+
+_MAX_PEER_FETCH = 5000
+_PEER_SELECT = (
+    "submission_id, student_name, school_name, grade, filename, created_at, "
+    "artifact_dir, parent_submission_id, is_chunk, essay_linked_from_submission_id, is_container_parent"
+)
+
+
+def _fetch_submission_by_id(sb, submission_id: str) -> dict | None:
+    sid = str(submission_id or "").strip()
+    if not sid:
+        return None
+    try:
+        res = (
+            sb.table("submissions")
+            .select(_PEER_SELECT)
+            .eq("submission_id", sid)
+            .limit(1)
+            .execute()
+        )
+        if res.data:
+            return res.data[0]
+    except Exception:
+        pass
+    return None
+
+
+def _fetch_peer_rows_same_fingerprint(sb, sample_row: dict) -> list:
+    """
+    All DB rows that share the same duplicate fingerprint as sample_row (by filename query + filter).
+    Uses exact filename match first, then case-insensitive match if fewer than two peers.
+    """
+    fn = (sample_row.get("filename") or "").strip()
+    if not fn:
+        return []
+    target_fp = _duplicate_fingerprint(sample_row)
+    merged: dict[str, dict] = {}
+
+    def _merge_from_rows(rows: list | None) -> None:
+        for r in rows or []:
+            sid = str(r.get("submission_id") or "").strip()
+            if sid:
+                merged[sid] = r
+
+    try:
+        res = (
+            sb.table("submissions")
+            .select(_PEER_SELECT)
+            .eq("filename", fn)
+            .limit(_MAX_PEER_FETCH)
+            .execute()
+        )
+        _merge_from_rows(res.data)
+    except Exception:
+        pass
+
+    matched = [
+        r
+        for r in merged.values()
+        if _duplicate_fingerprint(r) == target_fp and _eligible_for_duplicate_scan(r)
+    ]
+    if len(matched) >= 2:
+        return matched
+
+    try:
+        res2 = (
+            sb.table("submissions")
+            .select(_PEER_SELECT)
+            .ilike("filename", fn)
+            .limit(_MAX_PEER_FETCH)
+            .execute()
+        )
+        _merge_from_rows(res2.data)
+    except Exception:
+        pass
+
+    return [
+        r
+        for r in merged.values()
+        if _duplicate_fingerprint(r) == target_fp and _eligible_for_duplicate_scan(r)
+    ]
+
+
+def _selected_duplicate_deletes_for_group(
+    peers: list[dict],
+    selected_ids_in_group: set[str],
+) -> tuple[list[str], list[dict]]:
+    """
+    peers: all rows sharing a fingerprint. selected_ids_in_group: submission IDs the user checked.
+    Returns (submission_ids safe to delete, skipped with reason).
+    Never deletes the newest row (keeper); requires at least two peers to delete anything.
+    """
+    skipped: list[dict] = []
+    if len(peers) < 2:
+        for sid in selected_ids_in_group:
+            skipped.append(
+                {
+                    "submission_id": sid,
+                    "reason": "not a duplicate (no other matching row for this student/school/grade/file)",
+                }
+            )
+        return [], skipped
+
+    peers_sorted = sorted(peers, key=_parse_created_at_ts, reverse=True)
+    keeper_id = str(peers_sorted[0].get("submission_id") or "").strip()
+    peer_ids = {str(p.get("submission_id") or "").strip() for p in peers_sorted}
+
+    to_delete: list[str] = []
+    for sid in selected_ids_in_group:
+        sid = str(sid).strip()
+        if sid not in peer_ids:
+            skipped.append({"submission_id": sid, "reason": "submission not in duplicate set"})
+            continue
+        if sid == keeper_id:
+            skipped.append(
+                {
+                    "submission_id": sid,
+                    "reason": "cannot delete (newest submission — one copy must remain; unselect this row)",
+                }
+            )
+            continue
+        to_delete.append(sid)
+
+    return to_delete, skipped
+
+
+def _resolve_delete_selected_duplicates(sb, selected_ids: list[str]) -> tuple[list[dict], list[dict]]:
+    """
+    Resolve which selected rows may be deleted. Returns (rows_to_delete, skipped).
+    Only deletes older duplicate rows; never the newest per fingerprint; never if only one peer exists.
+    """
+    cleaned = sorted({str(s).strip() for s in selected_ids if str(s).strip()})
+    if not cleaned:
+        return [], [{"submission_id": "", "reason": "no submission_ids provided"}]
+
+    rows_by_id: dict[str, dict] = {}
+    skipped: list[dict] = []
+
+    for sid in cleaned:
+        row = _fetch_submission_by_id(sb, sid)
+        if not row:
+            skipped.append({"submission_id": sid, "reason": "submission not found"})
+            continue
+        if not _eligible_for_duplicate_scan(row):
+            skipped.append(
+                {
+                    "submission_id": sid,
+                    "reason": "not eligible (chunk, linked essay, container parent, or missing filename)",
+                }
+            )
+            continue
+        rows_by_id[sid] = row
+
+    by_fp: dict[tuple, list[str]] = defaultdict(list)
+    for sid, row in rows_by_id.items():
+        by_fp[_duplicate_fingerprint(row)].append(sid)
+
+    to_delete_rows: list[dict] = []
+    seen_delete: set[str] = set()
+
+    for _fp, sids in by_fp.items():
+        sample = rows_by_id[sids[0]]
+        peers = _fetch_peer_rows_same_fingerprint(sb, sample)
+        selected_set = set(sids)
+        ids_ok, part_skipped = _selected_duplicate_deletes_for_group(peers, selected_set)
+        skipped.extend(part_skipped)
+        for did in ids_ok:
+            if did not in seen_delete:
+                seen_delete.add(did)
+                to_delete_rows.append(rows_by_id[did])
+
+    return to_delete_rows, skipped
 
 
 def _submissions_for_duplicate_scan(
@@ -886,6 +1072,12 @@ def admin_duplicate_report():
         multi_entry=multi_entry,
     )
     summaries, to_delete = _plan_duplicate_removals(submissions)
+    summaries.sort(
+        key=lambda s: (
+            (s.get("student_name") or "").casefold(),
+            (s.get("filename") or "").casefold(),
+        )
+    )
     preview = summaries[:40]
     return jsonify(
         {
@@ -900,41 +1092,35 @@ def admin_duplicate_report():
 @admin_bp.route("/submissions/delete-duplicates", methods=["POST"])
 def admin_delete_duplicates():
     """
-    Delete older duplicate uploads: same student + school + grade + filename, keep newest by created_at.
-    Respects dashboard filters and scan limit. Skips chunk rows and multi-entry container parents.
+    Delete only checked duplicate rows: requires submission_ids.
+    Never deletes the newest submission for a student/school/grade/file (one copy always remains).
+    Skips chunks, linked rows, and container parents.
     """
     _require_admin()
     payload = request.get_json(silent=True) or {}
-    dry_run = bool(payload.get("dry_run"))
-    limit = min(int(payload.get("limit", 1000)), 2000)
-    school = (payload.get("school") or "").strip()
-    grade = (payload.get("grade") or "").strip()
-    status = (payload.get("status") or "").strip()
-    submission_id = (payload.get("submission_id") or "").strip()
-    multi_entry = (payload.get("multi_entry") or "").strip()
+    raw_ids = payload.get("submission_ids")
+    if not isinstance(raw_ids, list):
+        return jsonify({"error": "submission_ids is required (array of submission IDs to delete)."}), 400
+    submission_ids = [str(x).strip() for x in raw_ids if str(x).strip()]
+    if not submission_ids:
+        return jsonify({"error": "Select at least one submission (checkbox) to delete."}), 400
 
-    _, submissions = _submissions_for_duplicate_scan(
-        limit=limit,
-        school=school,
-        grade=grade,
-        status=status,
-        submission_id=submission_id,
-        multi_entry=multi_entry,
-    )
-    summaries, to_delete = _plan_duplicate_removals(submissions)
+    dry_run = bool(payload.get("dry_run"))
+    sb = _get_service_role_client()
+    if not sb:
+        return jsonify({"error": "Database not configured"}), 500
+
+    to_delete, skipped = _resolve_delete_selected_duplicates(sb, submission_ids)
+
     if dry_run:
         return jsonify(
             {
                 "dry_run": True,
-                "duplicate_groups": len(summaries),
-                "would_delete": len(to_delete),
-                "groups": summaries,
+                "would_delete_count": len(to_delete),
+                "would_delete_ids": [str(r.get("submission_id") or "").strip() for r in to_delete],
+                "skipped": skipped,
             }
         )
-
-    sb = _get_service_role_client()
-    if not sb:
-        return jsonify({"error": "Database not configured"}), 500
 
     deleted_ids: list[str] = []
     errors: list[dict] = []
@@ -951,7 +1137,7 @@ def admin_delete_duplicates():
             "success": not errors,
             "deleted_count": len(deleted_ids),
             "deleted_submission_ids": deleted_ids,
-            "duplicate_groups_resolved": len(summaries),
+            "skipped": skipped,
             "errors": errors,
         }
     )

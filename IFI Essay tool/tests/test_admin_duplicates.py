@@ -1,6 +1,10 @@
 """Tests for admin duplicate-upload detection (standalone rows only)."""
 
-from admin.routes import _apply_duplicates_only_filter, _plan_duplicate_removals
+from admin.routes import (
+    _apply_duplicates_only_filter,
+    _plan_duplicate_removals,
+    _selected_duplicate_deletes_for_group,
+)
 
 
 def _base_row(**kwargs):
@@ -28,6 +32,9 @@ def test_keeps_newest_duplicate():
     summaries, to_delete = _plan_duplicate_removals(rows)
     assert len(summaries) == 1
     assert summaries[0]["kept_submission_id"] == "new"
+    assert summaries[0]["student_name"] == "Jane"
+    assert summaries[0]["filename"] == "Essay.pdf"
+    assert summaries[0]["kept_date_display"]
     assert [r["submission_id"] for r in to_delete] == ["old"]
 
 
@@ -69,3 +76,20 @@ def test_duplicates_only_filter_off_passes_through():
         _base_row(submission_id="b"),
     ]
     assert _apply_duplicates_only_filter(rows, False) == rows
+
+
+def test_selection_never_deletes_newest():
+    peers = [
+        _base_row(submission_id="new", created_at="2026-01-03T10:00:00Z"),
+        _base_row(submission_id="old", created_at="2026-01-01T10:00:00Z"),
+    ]
+    to_del, skipped = _selected_duplicate_deletes_for_group(peers, {"new", "old"})
+    assert set(to_del) == {"old"}
+    assert any(s["submission_id"] == "new" and "newest" in s["reason"] for s in skipped)
+
+
+def test_selection_skips_when_only_one_peer():
+    peers = [_base_row(submission_id="only", created_at="2026-01-01T10:00:00Z")]
+    to_del, skipped = _selected_duplicate_deletes_for_group(peers, {"only"})
+    assert to_del == []
+    assert len(skipped) == 1
