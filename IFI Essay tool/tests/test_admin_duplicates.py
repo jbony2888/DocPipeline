@@ -1,6 +1,6 @@
 """Tests for admin duplicate-upload detection (standalone rows only)."""
 
-from admin.routes import _plan_duplicate_removals
+from admin.routes import _apply_duplicates_only_filter, _plan_duplicate_removals
 
 
 def _base_row(**kwargs):
@@ -50,3 +50,22 @@ def test_container_parent_not_grouped():
     summaries, to_delete = _plan_duplicate_removals(rows)
     assert summaries == []
     assert to_delete == []
+
+
+def test_duplicates_only_filter_shows_both_rows_in_group():
+    rows = [
+        _base_row(submission_id="a", created_at="2026-01-01T10:00:00Z"),
+        _base_row(submission_id="b", created_at="2026-01-03T10:00:00Z"),
+        _base_row(submission_id="other", student_name="Bob", created_at="2026-01-02T10:00:00Z"),
+    ]
+    filtered = _apply_duplicates_only_filter(rows, True)
+    ids = {r["submission_id"] for r in filtered}
+    assert ids == {"a", "b"}
+
+
+def test_duplicates_only_filter_off_passes_through():
+    rows = [
+        _base_row(submission_id="a"),
+        _base_row(submission_id="b"),
+    ]
+    assert _apply_duplicates_only_filter(rows, False) == rows

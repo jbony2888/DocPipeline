@@ -81,6 +81,9 @@
                             {% if total != total_loaded %}
                             (filtered from <strong>{{ total_loaded }}</strong> loaded)
                             {% endif %}
+                            {% if selected_duplicates in ("1", "true", "yes", "on") %}
+                            · <strong>Duplicates only</strong> (same student, school, grade, filename as another row in this window)
+                            {% endif %}
                             · up to <strong>{{ fetch_limit }}</strong> most recent by date
                         </p>
                         <form method="get" action="{{ url_for('admin.admin_dashboard') }}" class="row g-2 align-items-end filter-bar" id="filterForm">
@@ -115,6 +118,13 @@
                                 <select name="multi_entry" class="form-select" onchange="this.form.submit()">
                                     <option value="" {% if not selected_multi_entry %}selected{% endif %}>All files</option>
                                     <option value="1" {% if selected_multi_entry in ("1", "true", "yes", "on") %}selected{% endif %}>Multi-entry only</option>
+                                </select>
+                            </div>
+                            <div class="col-md-3 col-lg-2">
+                                <label class="form-label small text-muted mb-0" title="Same student, school, grade, and filename as another row (within loaded rows)">Duplicates</label>
+                                <select name="duplicates" class="form-select" onchange="this.form.submit()">
+                                    <option value="" {% if not selected_duplicates %}selected{% endif %}>All rows</option>
+                                    <option value="1" {% if selected_duplicates in ("1", "true", "yes", "on") %}selected{% endif %}>Duplicates only</option>
                                 </select>
                             </div>
                             <div class="col-md-4 col-lg-3">
@@ -443,7 +453,8 @@
             grade: {{ selected_grade|tojson }},
             status: {{ selected_status|tojson }},
             submission_id: {{ selected_submission_id|tojson }},
-            multi_entry: {{ selected_multi_entry|tojson }}
+            multi_entry: {{ selected_multi_entry|tojson }},
+            duplicates: {{ selected_duplicates|tojson }}
         };
     </script>
     <script>

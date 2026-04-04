@@ -353,6 +353,33 @@ def _apply_multi_entry_only_filter(all_rows: list, submissions: list, multi_entr
     return [s for s in submissions if (s.get("filename") or "").strip() in multi_filenames]
 
 
+def _apply_duplicates_only_filter(submissions: list, duplicates_only: bool) -> list:
+    """
+    When True, keep only rows that share the same duplicate fingerprint as at least one other
+    eligible standalone row (same logic as Remove duplicate uploads). Chunk rows and container
+    parents are excluded from grouping.
+    """
+    if not duplicates_only:
+        return submissions
+    groups: dict[tuple[str, str, str, str], list[dict]] = {}
+    for row in submissions:
+        if not _eligible_for_duplicate_scan(row):
+            continue
+        fp = _duplicate_fingerprint(row)
+        if not fp[3]:
+            continue
+        groups.setdefault(fp, []).append(row)
+    dup_ids: set[str] = set()
+    for members in groups.values():
+        if len(members) < 2:
+            continue
+        for m in members:
+            sid = str(m.get("submission_id") or "").strip()
+            if sid:
+                dup_ids.add(sid)
+    return [r for r in submissions if str(r.get("submission_id") or "").strip() in dup_ids]
+
+
 def _duplicate_fingerprint(row: dict) -> tuple[str, str, str, str]:
     stud = normalize_key((row.get("student_name") or "").strip())
     school_raw = row.get("school_name")
@@ -797,6 +824,8 @@ def admin_dashboard():
     selected_submission_id = (request.args.get("submission_id") or "").strip()
     selected_multi_entry = (request.args.get("multi_entry") or "").strip()
     multi_entry_only = selected_multi_entry in ("1", "true", "yes", "on")
+    selected_duplicates = (request.args.get("duplicates") or "").strip()
+    duplicates_only = selected_duplicates in ("1", "true", "yes", "on")
 
     school_options, grade_options = _distinct_schools_and_grades(all_rows)
     submissions = _apply_school_grade_filters(
@@ -807,6 +836,7 @@ def admin_dashboard():
         selected_submission_id,
     )
     submissions = _apply_multi_entry_only_filter(all_rows, submissions, multi_entry_only)
+    submissions = _apply_duplicates_only_filter(submissions, duplicates_only)
     for s in submissions:
         has_all = bool(
             (s.get("student_name") or "").strip()
@@ -829,6 +859,7 @@ def admin_dashboard():
         selected_status=selected_status,
         selected_submission_id=selected_submission_id,
         selected_multi_entry=selected_multi_entry,
+        selected_duplicates=selected_duplicates,
         fetch_limit=fetch_limit,
         format_review_reasons=_format_review_reasons,
     )
@@ -1950,6 +1981,9 @@ def get_submissions():
         all_rows, selected_school, selected_grade, selected_status, selected_submission_id
     )
     submissions = _apply_multi_entry_only_filter(all_rows, submissions, multi_entry_only)
+    selected_duplicates = (request.args.get("duplicates") or "").strip()
+    duplicates_only = selected_duplicates in ("1", "true", "yes", "on")
+    submissions = _apply_duplicates_only_filter(submissions, duplicates_only)
 
     def _display_status(s):
         if s.get("is_container_parent"):
@@ -1981,6 +2015,7 @@ def get_submissions():
             "count": len(submissions),
             "loaded": len(all_rows),
             "limit": fetch_limit,
+            "duplicates_only": duplicates_only,
         },
     })
 
