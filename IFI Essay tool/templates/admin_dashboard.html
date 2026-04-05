@@ -89,11 +89,13 @@
                         <form method="get" action="{{ url_for('admin.admin_dashboard') }}" class="row g-2 align-items-end filter-bar" id="filterForm">
                             <div class="col-md-4 col-lg-3">
                                 <label class="form-label small text-muted mb-0">School</label>
-                                <select name="school" class="form-select" onchange="this.form.submit()">
+                                <select name="school" id="schoolFilter" class="form-select" onchange="handleSchoolFilterChange(this)">
                                     <option value="">All schools</option>
                                     {% for s in school_options %}
                                     <option value="{{ s }}" {% if s == selected_school %}selected{% endif %}>{{ s }}</option>
                                     {% endfor %}
+                                    <option disabled>──────────</option>
+                                    <option value="__add_new__">+ Add new school…</option>
                                 </select>
                             </div>
                             <div class="col-md-3 col-lg-2">
@@ -932,6 +934,25 @@
                 }
             });
         })();
+
+        function handleSchoolFilterChange(sel) {
+            if (sel.value !== '__add_new__') {
+                sel.form.submit();
+                return;
+            }
+            const name = prompt('Enter the new school name:');
+            if (!name || !name.trim()) {
+                sel.value = '';
+                return;
+            }
+            const trimmed = name.trim();
+            const opt = document.createElement('option');
+            opt.value = trimmed;
+            opt.textContent = trimmed;
+            const sep = sel.querySelector('option[disabled]');
+            sel.insertBefore(opt, sep);
+            sel.value = '';
+        }
     </script>
 </body>
 </html>

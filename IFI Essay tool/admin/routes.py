@@ -331,8 +331,9 @@ def _apply_school_grade_filters(
             continue
         if submission_key and str(r.get("submission_id") or "").strip().lower() != submission_key:
             continue
-        normalized_school = normalize_school_to_standard(r.get("school_name"))
-        if school_key and normalize_key(normalized_school or "") != school_key:
+        raw_school = str(r.get("school_name") or "").strip()
+        normalized_school = normalize_school_to_standard(raw_school) or raw_school
+        if school_key and normalize_key(normalized_school) != school_key:
             continue
         if grade_key and normalize_key(str(r.get("grade") or "")) != grade_key:
             continue
@@ -987,8 +988,19 @@ def _duplicate_filename_hints(rows: list, top_n: int = 12) -> list[dict]:
     return out
 
 
+def _merged_school_options(rows: list) -> list[str]:
+    """STANDARD_SCHOOL_OPTIONS + distinct non-empty school_name values from loaded rows."""
+    db_schools = {
+        str(r.get("school_name") or "").strip()
+        for r in rows
+        if str(r.get("school_name") or "").strip()
+    }
+    merged = set(STANDARD_SCHOOL_OPTIONS) | db_schools
+    return sorted(merged, key=str.casefold)
+
+
 def _distinct_schools_and_grades(rows: list) -> tuple[list[str], list[str]]:
-    schools = list(STANDARD_SCHOOL_OPTIONS)
+    schools = _merged_school_options(rows)
     grades = sorted(
         {str(r.get("grade") or "").strip() for r in rows if str(r.get("grade") or "").strip()},
         key=lambda g: (not str(g).isdigit(), str(g).casefold()),
@@ -2774,6 +2786,14 @@ def bulk_rename_field():
         })
     except Exception as exc:
         return jsonify({"error": f"Bulk rename failed: {exc}"}), 500
+
+
+@admin_bp.route("/school-names", methods=["GET"])
+def list_school_names():
+    """Return the merged list of canonical + DB-sourced school names."""
+    _require_admin()
+    all_rows = _fetch_all_submissions(limit=2000)
+    return jsonify({"schools": _merged_school_options(all_rows)})
 
 
 @admin_bp.route("/export/csv", methods=["GET"])
