@@ -30,6 +30,8 @@ class OcrResult(BaseModel):
     lines: List[str] = []
     # When PDF has AcroForm widgets, field_name -> value (e.g. "Student's Name" -> "Test Student Garcia")
     form_field_values: Optional[Dict[str, str]] = None
+    # One string per PDF page (0-based order) when OCR ran per page; used for multi-page form+essay split.
+    per_page_texts: Optional[List[str]] = None
 
 
 class SubmissionRecord(BaseModel):

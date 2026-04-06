@@ -170,6 +170,7 @@ def get_ocr_result_from_pdf_text_layer(pdf_path: str) -> OcrResult | None:
         low_conf_page_count=0,
         lines=lines,
         form_field_values=form_field_values,
+        per_page_texts=texts,
     )
 
 
@@ -414,7 +415,8 @@ class GoogleVisionOcrProvider:
             confidence_min=min_conf,
             confidence_p10=p10_conf,
             low_conf_page_count=low_conf,
-            lines=lines
+            lines=lines,
+            per_page_texts=extracted_texts if file_path.suffix.lower() == ".pdf" else None,
         )
     
     def _render_pdf_pages_to_png(self, pdf_path: str) -> list[bytes]:

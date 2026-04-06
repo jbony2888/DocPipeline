@@ -13,7 +13,7 @@ from typing import Tuple
 
 from pipeline.schema import SubmissionRecord
 from pipeline.ocr import get_ocr_provider, ocr_pdf_pages, get_ocr_result_from_pdf_text_layer, extract_pdf_text_layer
-from pipeline.segment import split_contact_vs_essay
+from pipeline.segment import split_contact_vs_essay, split_multipage_ifi_form_first_page_rest_essay
 from pipeline.extract import extract_fields_rules, compute_essay_metrics
 from pipeline.validate import validate_record, _is_effectively_missing_student_name, _is_effectively_missing_school_name
 from pipeline.normalize import normalize_grade, normalize_school_name, sanitize_grade
@@ -472,6 +472,29 @@ def process_submission(
         # Stage 2: Segmentation
         segmentation_stage_start = time.perf_counter()
         contact_block, essay_block = split_contact_vs_essay(ocr_result.text)
+
+        chunk_meta_pre = chunk_metadata or {}
+        multipage_form_first_rest_essay = False
+        ppt = getattr(ocr_result, "per_page_texts", None)
+        if (
+            ppt
+            and len(ppt) >= 2
+            and doc_format in ("image_only", "hybrid")
+            and not chunk_meta_pre.get("is_chunk")
+            and str(image_path).lower().endswith(".pdf")
+        ):
+            alt = split_multipage_ifi_form_first_page_rest_essay(ppt)
+            if alt is not None:
+                cb_new, eb_new = alt
+                ew_old = len((essay_block or "").split())
+                ew_new = len((eb_new or "").split())
+                if ew_new >= 25 and (ew_new > ew_old or ew_old < 30):
+                    contact_block, essay_block = cb_new, eb_new
+                    multipage_form_first_rest_essay = True
+                    logger.info(
+                        "Multi-page IFI scan: page 1 = form metadata, pages 2+ = essay (%d words)",
+                        ew_new,
+                    )
         
         # Write segmentation artifacts (initial segmentation)
         with open(artifact_path / "contact_block.txt", "w", encoding="utf-8") as f:
@@ -485,7 +508,9 @@ def process_submission(
         # or from "Father/Father-Figure Name" (e.g. record showed "Kimberly Ortega" but PDF had "Katelyn Colin").
         extraction_contact_block = contact_block
         extraction_raw_text = ocr_result.text
-        chunk_meta_pre = chunk_metadata or {}
+        if multipage_form_first_rest_essay and ppt and ppt[0]:
+            extraction_contact_block, _ = split_contact_vs_essay((ppt[0] or "").strip())
+            extraction_raw_text = (ppt[0] or "").strip()
         if chunk_meta_pre.get("is_chunk") and str(image_path).lower().endswith(".pdf"):
             try:
                 per_page_stats, _ = extract_pdf_text_layer(
@@ -808,7 +833,8 @@ def process_submission(
             "essay_lines": len(final_essay_text.split('\n')),
             "essay_source": essay_source,
             "initial_essay_words": len(essay_block.split()),
-            "final_essay_words": len(final_essay_text.split())
+            "final_essay_words": len(final_essay_text.split()),
+            "multipage_form_first_rest_essay": multipage_form_first_rest_essay,
         }
         processing_report["timing_ms"]["segmentation"] = round((time.perf_counter() - segmentation_stage_start) * 1000, 2)
         
@@ -822,8 +848,9 @@ def process_submission(
                 f"Essay extraction yielded 0 words for image submission {submission_id} "
                 f"(format={doc_format}). Consider re-uploading or check image quality."
             )
-        # Canonical validation text is the full OCR/text-layer aggregation.
-        canonical_validation_text = ocr_result.text or final_essay_text or ""
+        # Use the extracted essay body for word_count so SHORT_ESSAY validation
+        # reflects actual essay content, not form headers / footer boilerplate.
+        canonical_validation_text = final_essay_text or ""
         canonical_validation_word_count = compute_essay_metrics(canonical_validation_text)["word_count"]
         canonical_validation_char_count = len(canonical_validation_text)
 

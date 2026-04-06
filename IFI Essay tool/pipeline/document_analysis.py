@@ -770,22 +770,64 @@ def get_paired_metadata_essay_ranges(page_count: int) -> List[ChunkRange]:
     ]
 
 
+def _chunk_ranges_partition_document(page_count: int, ranges: List[ChunkRange]) -> bool:
+    """
+    True when ranges are contiguous, non-overlapping, and cover [0, page_count-1] exactly.
+    """
+    if not ranges or page_count < 1:
+        return False
+    sorted_ranges = sorted(ranges, key=lambda c: c.start_page)
+    if sorted_ranges[0].start_page != 0:
+        return False
+    if sorted_ranges[-1].end_page != page_count - 1:
+        return False
+    for i, r in enumerate(sorted_ranges):
+        if r.start_page > r.end_page:
+            return False
+        if i + 1 < len(sorted_ranges) and sorted_ranges[i + 1].start_page != r.end_page + 1:
+            return False
+    return True
+
+
 def get_batch_iter_ranges(analysis: DocumentAnalysis) -> List[ChunkRange]:
     """
-    Return chunk ranges for BULK_SCANNED_BATCH. Uses paired metadata+essay chunks
-    when the alternating pattern is detected; otherwise one chunk per page.
+    Return chunk ranges for BULK_SCANNED_BATCH.
+
+    Prefer ``analysis.chunk_ranges`` from page-level header detection when they partition
+    the PDF and include multi-page segments (metadata page + one or more essay pages, or
+    one student block like "Kendra" spanning several pages). Otherwise, if an even/odd
+    metadata+essay rhythm is detected, use fixed pairs (0,1), (2,3), ...; else one chunk
+    per page.
     """
     if analysis.doc_class != DocClass.BULK_SCANNED_BATCH:
         return analysis.chunk_ranges
-    if _is_metadata_essay_alternating_pattern(
-        analysis.page_count, analysis.pages, analysis.format
-    ):
+
+    page_count = analysis.page_count
+    cr = list(analysis.chunk_ranges or [])
+
+    if cr and _chunk_ranges_partition_document(page_count, cr):
+        # One contiguous chunk for the whole file: do not split into artificial pairs.
+        if len(cr) == 1:
+            logger.info(
+                "BULK: using single analysis.chunk_range covering all %s pages (no forced pairing)",
+                page_count,
+            )
+            return cr
+        # Variable-length segments (e.g. 1 form + N essay pages, or mixed block sizes).
+        if any(c.end_page > c.start_page for c in cr):
+            logger.info(
+                "BULK: using analysis.chunk_ranges with multi-page spans "
+                "(metadata + multi-page essay or mixed segment sizes)"
+            )
+            return cr
+
+    if _is_metadata_essay_alternating_pattern(page_count, analysis.pages, analysis.format):
         logger.info(
             "BULK: detected metadata+essay alternating pattern, using paired chunks "
             "(0,1), (2,3), ... instead of one per page"
         )
-        return get_paired_metadata_essay_ranges(analysis.page_count)
-    return get_page_level_ranges_for_batch(analysis.page_count)
+        return get_paired_metadata_essay_ranges(page_count)
+    return get_page_level_ranges_for_batch(page_count)
 
 
 def make_chunk_submission_id(base_submission_id: str, chunk_index: int) -> str:

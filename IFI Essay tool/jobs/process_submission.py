@@ -267,7 +267,7 @@ def process_submission_job(
             # This keeps the original PDF available in Admin review even when some child chunks
             # have weak OCR/extraction.
             try:
-                from pipeline.schema import SubmissionRecord, DocClass
+                from pipeline.schema import SubmissionRecord
                 parent_record = SubmissionRecord(
                     submission_id=ingest_data["submission_id"],
                     doc_class=DocClass.MULTI_ENTRY_PARENT,

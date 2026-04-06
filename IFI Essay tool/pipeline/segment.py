@@ -260,3 +260,26 @@ def split_contact_vs_essay(raw_text: str) -> tuple[str, str]:
     
     return contact_block, essay_block
 
+
+def split_multipage_ifi_form_first_page_rest_essay(per_page_texts: list[str]) -> tuple[str, str] | None:
+    """
+    IFI uploads often use page 1 for the official form (metadata) and pages 2+ for the essay.
+    Full-document split_contact_vs_essay() can mis-attribute lines when the form is only on page 1.
+
+    Returns (contact_block, essay_block) or None if this split should not apply.
+    """
+    if not per_page_texts or len(per_page_texts) < 2:
+        return None
+    pages = [(t or "").strip() for t in per_page_texts]
+    if not any(pages):
+        return None
+    p0 = pages[0]
+    tail = "\n\n".join(p for p in pages[1:] if p)
+    if len(tail.strip()) < 40:
+        return None
+    contact_block, _ = split_contact_vs_essay(p0)
+    essay_block = strip_footer_boilerplate(tail.strip())
+    if not essay_block:
+        return None
+    return contact_block, essay_block
+

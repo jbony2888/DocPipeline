@@ -1257,6 +1257,105 @@ class TestBatchPageLevelSplitting:
         assert get_page_level_ranges_for_batch(0) == []
 
 
+class TestGetBatchIterRanges:
+    """BULK_SCANNED_BATCH: prefer analysis.chunk_ranges when they partition the PDF with multi-page spans."""
+
+    def test_prefers_variable_length_chunk_ranges(self):
+        """Metadata + multi-page essay per student: do not force strict (0,1),(2,3) pairs."""
+        from pipeline.document_analysis import (
+            DocumentAnalysis,
+            ChunkRange,
+            PageAnalysis,
+            get_batch_iter_ranges,
+        )
+        from pipeline.schema import DocClass
+
+        header = "IFI Fatherhood Essay Contest\nStudent Name: X\nIllinois Fatherhood Initiative"
+        essay = "My fatherhood essay body continues"
+        pages = [
+            PageAnalysis(1, 0, 1, 20, 0.5, 0.35, header, []),
+            PageAnalysis(2, 0, 1, 15, 0.1, 0.05, essay, []),
+            PageAnalysis(3, 0, 1, 15, 0.1, 0.05, essay, []),
+            PageAnalysis(4, 0, 1, 20, 0.5, 0.35, header, []),
+            PageAnalysis(5, 0, 1, 15, 0.1, 0.05, essay, []),
+        ]
+        analysis = DocumentAnalysis(
+            page_count=5,
+            format="image_only",
+            structure="multi",
+            format_confidence=0.9,
+            structure_confidence=0.9,
+            chunk_ranges=[
+                ChunkRange(start_page=0, end_page=2),
+                ChunkRange(start_page=3, end_page=4),
+            ],
+            start_page_indices=[0, 3],
+            pages=pages,
+            doc_class=DocClass.BULK_SCANNED_BATCH,
+        )
+        out = get_batch_iter_ranges(analysis)
+        assert len(out) == 2
+        assert out[0].start_page == 0 and out[0].end_page == 2
+        assert out[1].start_page == 3 and out[1].end_page == 4
+
+    def test_single_chunk_covering_full_pdf_not_split_into_pairs(self):
+        """One contiguous segment (e.g. one student block) must not be split into artificial pairs."""
+        from pipeline.document_analysis import (
+            DocumentAnalysis,
+            ChunkRange,
+            PageAnalysis,
+            get_batch_iter_ranges,
+        )
+        from pipeline.schema import DocClass
+
+        header = "IFI Fatherhood Essay Contest\nStudent Name: Kendra\nIllinois Fatherhood Initiative"
+        pages = [
+            PageAnalysis(i, 0, 1, 20, 0.5, 0.35, header if i < 2 else "essay text", [])
+            for i in range(1, 7)
+        ]
+        analysis = DocumentAnalysis(
+            page_count=6,
+            format="image_only",
+            structure="multi",
+            format_confidence=0.9,
+            structure_confidence=0.9,
+            chunk_ranges=[ChunkRange(start_page=0, end_page=5)],
+            start_page_indices=[0],
+            pages=pages,
+            doc_class=DocClass.BULK_SCANNED_BATCH,
+        )
+        out = get_batch_iter_ranges(analysis)
+        assert len(out) == 1
+        assert out[0].start_page == 0 and out[0].end_page == 5
+
+    def test_empty_chunk_ranges_falls_back_to_page_level_when_not_alternating(self):
+        """No partition from analysis: odd page count -> no alternating pairs -> one chunk per page."""
+        from pipeline.document_analysis import (
+            DocumentAnalysis,
+            PageAnalysis,
+            get_batch_iter_ranges,
+        )
+        from pipeline.schema import DocClass
+
+        h = "IFI Fatherhood Essay Contest\nStudent Name: A\nIllinois Fatherhood Initiative"
+        pages = [PageAnalysis(i, 0, 1, 20, 0.5, 0.35, h, []) for i in range(1, 14)]
+        analysis = DocumentAnalysis(
+            page_count=13,
+            format="image_only",
+            structure="multi",
+            format_confidence=0.9,
+            structure_confidence=0.9,
+            chunk_ranges=[],
+            start_page_indices=[],
+            pages=pages,
+            doc_class=DocClass.BULK_SCANNED_BATCH,
+        )
+        out = get_batch_iter_ranges(analysis)
+        assert len(out) == 13
+        assert out[0].start_page == 0 and out[0].end_page == 0
+        assert out[12].end_page == 12
+
+
 # ---------------------------------------------------------------------------
 # 7. Pipeline Runner Tests (end-to-end with stub OCR)
 # ---------------------------------------------------------------------------
