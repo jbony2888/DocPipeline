@@ -201,12 +201,91 @@ def iter_original_object_paths(artifact_dir: str, filename: str) -> List[str]:
     return out
 
 
+def _extension_candidates(filename: str) -> List[str]:
+    suffix = Path(filename or "").suffix.lower()
+    exts: List[str] = []
+    if suffix:
+        exts.append(suffix)
+    for e in (".pdf", ".png", ".jpg", ".jpeg", ".doc", ".docx"):
+        if e not in exts:
+            exts.append(e)
+    return exts
+
+
+def _scan_owner_for_chunk_original_by_submission_id(
+    supabase_client,
+    artifact_dir: str,
+    filename: str,
+    submission_id: str,
+) -> Tuple[Optional[bytes], Optional[str]]:
+    """
+    When artifact_dir in the DB points at a missing prefix (wrong run_id, moved bucket, etc.),
+    find ``chunk_*_{submission_id}/original.*`` under the same owner_user_id prefix.
+
+    This is bounded to one owner folder and typical run/artifacts layout from ingest.
+    """
+    sid = str(submission_id or "").strip()
+    parts = [p for p in str(artifact_dir or "").strip().split("/") if p]
+    if len(parts) < 1 or len(sid) < 8:
+        return None, None
+    owner_id = parts[0]
+    exts = _extension_candidates(filename)
+
+    try:
+        runs = supabase_client.storage.from_(BUCKET_NAME).list(owner_id, {"limit": 1000})
+    except Exception:
+        return None, None
+
+    for run in runs or []:
+        rn = run.get("name")
+        if not rn:
+            continue
+        arts = f"{owner_id}/{rn}/artifacts"
+        try:
+            subs = supabase_client.storage.from_(BUCKET_NAME).list(arts, {"limit": 1000})
+        except Exception:
+            continue
+        for sub in subs or []:
+            sn = sub.get("name")
+            if not sn:
+                continue
+            base = f"{arts}/{sn}"
+            try:
+                chunks = supabase_client.storage.from_(BUCKET_NAME).list(base, {"limit": 1000})
+            except Exception:
+                continue
+            for ch in chunks or []:
+                cn = ch.get("name")
+                if not cn or not str(cn).startswith("chunk_"):
+                    continue
+                if not str(cn).endswith(sid):
+                    continue
+                for ext in exts:
+                    p = f"{base}/{cn}/original{ext}"
+                    try:
+                        data = supabase_client.storage.from_(BUCKET_NAME).download(p)
+                        if data:
+                            return data, p
+                    except StorageApiError:
+                        continue
+                    except Exception:
+                        continue
+    return None, None
+
+
 def download_original_with_service_role(
-    supabase_client, artifact_dir: str, filename: str
+    supabase_client,
+    artifact_dir: str,
+    filename: str,
+    submission_id: str | None = None,
 ) -> Tuple[Optional[bytes], Optional[str]]:
     """
     Download the original submission bytes using a service-role client.
     Tries the same path candidates as the /pdf route (chunk vs top-level).
+
+    If ``submission_id`` is provided and direct paths fail, scans storage under the owner
+    prefix for a chunk folder whose name ends with that submission id (fixes stale/wrong
+    artifact_dir rows).
     """
     if not supabase_client or not artifact_dir:
         return None, None
@@ -221,6 +300,11 @@ def download_original_with_service_role(
             continue
         except Exception:
             continue
+
+    if submission_id:
+        return _scan_owner_for_chunk_original_by_submission_id(
+            supabase_client, artifact_dir, filename, submission_id
+        )
     return None, None
 
 

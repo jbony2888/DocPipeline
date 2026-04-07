@@ -758,7 +758,9 @@ def _build_zip_for_submission_rows(
             if not submission_id or not artifact_dir:
                 skipped.append(submission_id or "(missing-id)")
                 continue
-            file_bytes, used_path = download_original_with_service_role(sb, artifact_dir, filename)
+            file_bytes, used_path = download_original_with_service_role(
+                sb, artifact_dir, filename, submission_id=submission_id
+            )
             if not file_bytes:
                 skipped.append(submission_id)
                 continue
@@ -2142,7 +2144,9 @@ def reader_assignment_submission_view(assignment_id: int, submission_id: str):
     if not artifact_dir:
         abort(404, description="Original file is not stored for this submission.")
 
-    file_bytes, used_path = download_original_with_service_role(sb, artifact_dir, filename)
+    file_bytes, used_path = download_original_with_service_role(
+        sb, artifact_dir, filename, submission_id=str(submission_id or "").strip()
+    )
     if not file_bytes or not used_path:
         abort(404, description="Original file not found in storage for this submission.")
 
@@ -2173,7 +2177,9 @@ def reader_assignment_submission_download(assignment_id: int, submission_id: str
     if not artifact_dir:
         abort(404, description="Original file is not stored for this submission.")
 
-    file_bytes, used_path = download_original_with_service_role(sb, artifact_dir, filename)
+    file_bytes, used_path = download_original_with_service_role(
+        sb, artifact_dir, filename, submission_id=str(submission_id or "").strip()
+    )
     if not file_bytes or not used_path:
         abort(404, description="Original file not found in storage for this submission.")
 
@@ -2285,6 +2291,52 @@ def _mimetype_for_storage_path(path: str) -> str:
     return "application/octet-stream"
 
 
+def _render_missing_original_html(
+    submission_id: str,
+    artifact_dir: str,
+    filename: str,
+) -> tuple:
+    """
+    Inline HTML for the admin iframe when the DB points at a storage path that has no object
+    (deleted upload, wrong artifact_dir, or never uploaded). Returns 200 so the iframe is not blank.
+    """
+    sid = html.escape(str(submission_id or ""))
+    ad = html.escape(str(artifact_dir or ""))
+    fn = html.escape(str(filename or ""))
+    page = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Original file not in storage</title>
+  <style>
+    body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 0; background: #f8fafc; color: #0f172a; }}
+    .wrap {{ padding: 24px; max-width: 42rem; }}
+    h1 {{ font-size: 18px; margin: 0 0 12px 0; }}
+    p {{ line-height: 1.5; color: #334155; }}
+    code {{ background: #e2e8f0; padding: 2px 6px; border-radius: 4px; font-size: 13px; }}
+    .box {{ background: white; border: 1px solid #cbd5e1; border-radius: 8px; padding: 16px; margin-top: 12px; font-size: 14px; }}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Original file not available</h1>
+    <p>
+      The database path for this submission does not match any file in Supabase Storage (missing object,
+      or <code>artifact_dir</code> is stale after a re-upload or split). The preview cannot load a PDF.
+    </p>
+    <div class="box">
+      <div><strong>Submission ID</strong> <code>{sid}</code></div>
+      <div style="margin-top:8px;"><strong>Filename</strong> {fn}</div>
+      <div style="margin-top:8px;"><strong>artifact_dir</strong> <code>{ad}</code></div>
+    </div>
+    <p style="margin-top:16px;">Re-upload the PDF for this student, or run a storage repair script if you still have the file locally.</p>
+  </div>
+</body>
+</html>"""
+    return page, 200, {"Content-Type": "text/html; charset=utf-8"}
+
+
 @admin_bp.route("/submissions/<submission_id>/download", methods=["GET"])
 def download_submission(submission_id: str):
     """Download original file (service role + same path resolution as /pdf)."""
@@ -2312,7 +2364,9 @@ def download_submission(submission_id: str):
     if not artifact_dir:
         abort(404, description="No file path for this submission")
 
-    file_bytes, used_path = download_original_with_service_role(sb, artifact_dir, filename)
+    file_bytes, used_path = download_original_with_service_role(
+        sb, artifact_dir, filename, submission_id=str(submission_id or "").strip()
+    )
     if not file_bytes or not used_path:
         abort(404, description="Original file not found in storage for this submission.")
 
@@ -2396,10 +2450,7 @@ def view_submission_file(submission_id: str):
     if not artifact_dir:
         if essay_text:
             return _render_essay_text_only_fallback()
-        abort(
-            404,
-            description="No original file in storage for this submission and no essay text on file.",
-        )
+        return _render_missing_original_html(submission_id, "", filename)
 
     # If this is a chunk row, prefer rendering ONLY its page-range from the parent PDF.
     # This prevents "multiple essays" showing up when the underlying PDF is multi-entry.
@@ -2423,7 +2474,9 @@ def view_submission_file(submission_id: str):
                 parent = parent_res.data[0]
                 parent_ad = (parent.get("artifact_dir") or "").strip()
                 parent_fn = parent.get("filename") or filename
-                parent_bytes, parent_used_path = download_original_with_service_role(sb, parent_ad, parent_fn)
+                parent_bytes, parent_used_path = download_original_with_service_role(
+                    sb, parent_ad, parent_fn, submission_id=str(parent_submission_id or "").strip()
+                )
                 if parent_bytes and parent_used_path and str(parent_used_path).lower().endswith(".pdf"):
                     import fitz  # PyMuPDF
 
@@ -2454,14 +2507,13 @@ def view_submission_file(submission_id: str):
             # Fall back to normal storage resolution below.
             pass
 
-    file_bytes, used_path = download_original_with_service_role(sb, artifact_dir, filename)
+    file_bytes, used_path = download_original_with_service_role(
+        sb, artifact_dir, filename, submission_id=str(submission_id or "").strip()
+    )
     if not file_bytes or not used_path:
         if essay_text:
             return _render_essay_text_only_fallback()
-        abort(
-            404,
-            description="Original file not found in storage for this submission and no essay text on file.",
-        )
+        return _render_missing_original_html(submission_id, artifact_dir, filename)
 
     safe_name = secure_filename(filename) or "original"
     mimetype = _mimetype_for_storage_path(used_path)
@@ -2866,7 +2918,9 @@ def bulk_download_submissions():
             if not artifact_dir:
                 skipped.append(submission_id)
                 continue
-            file_bytes, used_path = download_original_with_service_role(sb, artifact_dir, filename)
+            file_bytes, used_path = download_original_with_service_role(
+                sb, artifact_dir, filename, submission_id=submission_id
+            )
             if not file_bytes:
                 skipped.append(submission_id)
                 continue
