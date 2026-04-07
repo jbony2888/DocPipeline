@@ -3006,6 +3006,64 @@ def list_school_names():
     return jsonify({"schools": _merged_school_options(all_rows)})
 
 
+@admin_bp.route("/school-variants", methods=["GET"])
+def list_school_variants():
+    """
+    Report raw `school_name` variants grouped under standard contest school labels.
+
+    Intended for cleanup auditing + one-click bulk rename to a standard label.
+    """
+    _require_admin()
+
+    cap = min(int(request.args.get("limit", 10000)), 20000)
+    all_rows = _fetch_all_submissions(limit=cap)
+
+    # standard_school -> raw_variant -> count
+    counts: dict[str, dict[str, int]] = {s: {} for s in STANDARD_SCHOOL_OPTIONS}
+    unmapped: dict[str, int] = {}
+
+    for r in all_rows:
+        raw = str(r.get("school_name") or "").strip()
+        if not raw:
+            continue
+        standard = normalize_school_to_standard(raw)
+        if not standard:
+            unmapped[raw] = unmapped.get(raw, 0) + 1
+            continue
+        bucket = counts.setdefault(standard, {})
+        bucket[raw] = bucket.get(raw, 0) + 1
+
+    def _sorted_variants(bucket: dict[str, int]) -> list[dict[str, Any]]:
+        items = [{"name": k, "count": int(v)} for k, v in bucket.items()]
+        items.sort(key=lambda x: (-x["count"], str(x["name"]).casefold()))
+        return items
+
+    standards_out: list[dict[str, Any]] = []
+    for standard in sorted(set(STANDARD_SCHOOL_OPTIONS), key=str.casefold):
+        variants = _sorted_variants(counts.get(standard, {}))
+        # Exclude perfect/clean values from the "needs cleanup" signal, but still return totals.
+        mismatches = [v for v in variants if str(v["name"]).strip() != standard]
+        standards_out.append(
+            {
+                "standard": standard,
+                "totalCount": int(sum(v["count"] for v in variants)),
+                "variantCount": int(len(variants)),
+                "mismatchCount": int(sum(v["count"] for v in mismatches)),
+                "mismatches": mismatches,
+                "variants": variants,
+            }
+        )
+
+    return jsonify(
+        {
+            "limit": cap,
+            "standards": standards_out,
+            "unmapped": _sorted_variants(unmapped),
+            "unmappedCount": int(sum(unmapped.values())),
+        }
+    )
+
+
 @admin_bp.route("/export/csv", methods=["GET"])
 def admin_export_csv():
     """Export approved submissions to CSV for certificate mail merge."""
