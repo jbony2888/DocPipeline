@@ -1017,14 +1017,14 @@ def _duplicate_filename_hints(rows: list, top_n: int = 12) -> list[dict]:
 
 
 def _merged_school_options(rows: list) -> list[str]:
-    """STANDARD_SCHOOL_OPTIONS + distinct non-empty school_name values from loaded rows."""
-    db_schools = {
-        str(r.get("school_name") or "").strip()
-        for r in rows
-        if str(r.get("school_name") or "").strip()
-    }
-    merged = set(STANDARD_SCHOOL_OPTIONS) | db_schools
-    return sorted(merged, key=str.casefold)
+    """
+    Return the standard contest school options only.
+
+    This is intentionally *not* DB-driven: the admin bulk-update workflow should present only
+    the standardized school buckets, not OCR/AI variants or one-off strings that appear in rows.
+    """
+    _ = rows  # intentionally unused
+    return sorted(set(STANDARD_SCHOOL_OPTIONS), key=str.casefold)
 
 
 def _distinct_schools_and_grades(rows: list) -> tuple[list[str], list[str]]:
