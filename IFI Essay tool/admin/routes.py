@@ -492,8 +492,13 @@ def _admin_delete_submission_row(sb, row: dict) -> tuple[bool, str | None]:
     if not sid:
         return False, "missing submission_id"
     ad = (row.get("artifact_dir") or "").strip()
-    if ad and not delete_artifact_dir(ad, sb):
-        return False, "storage delete failed"
+    # Storage cleanup is best-effort. If it fails (permissions/transient errors),
+    # still delete the DB row so admin can clear duplicates from the queue.
+    if ad:
+        try:
+            delete_artifact_dir(ad, sb)
+        except Exception:
+            pass
     try:
         sb.table("submissions").delete().eq("submission_id", sid).execute()
         return True, None
@@ -2334,7 +2339,10 @@ def view_submission_file(submission_id: str):
 
     result = (
         sb.table("submissions")
-        .select("artifact_dir, filename, essay_text, student_name")
+        .select(
+            "artifact_dir, filename, essay_text, student_name, "
+            "is_chunk, parent_submission_id, chunk_page_start, chunk_page_end"
+        )
         .eq("submission_id", submission_id)
         .limit(1)
         .execute()
@@ -2347,6 +2355,10 @@ def view_submission_file(submission_id: str):
     filename = record.get("filename", "original.pdf")
     essay_text = (record.get("essay_text") or "").strip()
     student_name = (record.get("student_name") or "").strip()
+    is_chunk = bool(record.get("is_chunk"))
+    parent_submission_id = str(record.get("parent_submission_id") or "").strip()
+    chunk_page_start = record.get("chunk_page_start")
+    chunk_page_end = record.get("chunk_page_end")
 
     def _render_essay_text_only_fallback() -> tuple:
         """When the PDF is missing but essay_text exists — single clear page (no empty essay placeholder)."""
@@ -2383,6 +2395,59 @@ def view_submission_file(submission_id: str):
             404,
             description="No original file in storage for this submission and no essay text on file.",
         )
+
+    # If this is a chunk row, prefer rendering ONLY its page-range from the parent PDF.
+    # This prevents "multiple essays" showing up when the underlying PDF is multi-entry.
+    if (
+        is_chunk
+        and parent_submission_id
+        and chunk_page_start
+        and chunk_page_end
+        and int(chunk_page_start) >= 1
+        and int(chunk_page_end) >= int(chunk_page_start)
+    ):
+        try:
+            parent_res = (
+                sb.table("submissions")
+                .select("artifact_dir, filename")
+                .eq("submission_id", parent_submission_id)
+                .limit(1)
+                .execute()
+            )
+            if parent_res.data:
+                parent = parent_res.data[0]
+                parent_ad = (parent.get("artifact_dir") or "").strip()
+                parent_fn = parent.get("filename") or filename
+                parent_bytes, parent_used_path = download_original_with_service_role(sb, parent_ad, parent_fn)
+                if parent_bytes and parent_used_path and str(parent_used_path).lower().endswith(".pdf"):
+                    import fitz  # PyMuPDF
+
+                    src = fitz.open(stream=parent_bytes, filetype="pdf")
+                    out = fitz.open()
+                    start_i = int(chunk_page_start) - 1
+                    end_i = int(chunk_page_end) - 1
+                    # Clamp to document bounds
+                    start_i = max(0, min(start_i, len(src) - 1))
+                    end_i = max(0, min(end_i, len(src) - 1))
+                    if end_i < start_i:
+                        start_i, end_i = end_i, start_i
+                    out.insert_pdf(src, from_page=start_i, to_page=end_i, widgets=0)
+                    sliced_bytes = out.tobytes()
+                    out.close()
+                    src.close()
+
+                    safe_name = secure_filename(filename) or "original"
+                    response = send_file(
+                        io.BytesIO(sliced_bytes),
+                        mimetype="application/pdf",
+                        as_attachment=False,
+                        download_name=safe_name,
+                    )
+                    response.headers["Content-Disposition"] = f'inline; filename="{safe_name}"'
+                    return response
+        except Exception:
+            # Fall back to normal storage resolution below.
+            pass
 
     file_bytes, used_path = download_original_with_service_role(sb, artifact_dir, filename)
     if not file_bytes or not used_path:
