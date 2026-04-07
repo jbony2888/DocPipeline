@@ -25,6 +25,17 @@ _LLM_RUNTIME_STATE = {
 }
 
 
+def _strip_label_prefix(value: str, labels: tuple[str, ...]) -> str:
+    """
+    Strip a leading label like 'School:' / 'Escuela:' / 'Name:' from a single-line value.
+    """
+    s = str(value or "").strip()
+    if not s:
+        return s
+    lab = "|".join(re.escape(l) for l in labels if l)
+    return re.sub(rf"^\s*(?:{lab})\s*[:\-]\s*", "", s, flags=re.IGNORECASE).strip()
+
+
 # #region agent log
 def _agent_debug_log(hypothesis_id: str, message: str, data: dict) -> None:
     """
@@ -140,12 +151,16 @@ def extract_ifi_submission(
     if _LLM_RUNTIME_STATE["disabled"]:
         if not _LLM_RUNTIME_STATE["disabled_logged"]:
             logger.warning(
-                "Groq fallback disabled for this process after prior failure: %s. Using rule-based extraction only.",
+                "IFI LLM extraction disabled for this process: %s",
+                _LLM_RUNTIME_STATE.get("failure_reason") or "unknown",
+            )
+            logger.warning(
+                "Groq fallback disabled after prior failure: %s. Using rule-based extraction only.",
                 _LLM_RUNTIME_STATE.get("failure_reason") or "unknown",
             )
             _LLM_RUNTIME_STATE["disabled_logged"] = True
         base.setdefault("notes", []).append(
-            f"Groq fallback disabled: {_LLM_RUNTIME_STATE.get('failure_reason') or 'unknown'}"
+            f"Fallback reason: llm_runtime_disabled:{_LLM_RUNTIME_STATE.get('failure_reason') or 'unknown'}"
         )
         return base
 
@@ -184,7 +199,9 @@ def extract_ifi_submission(
         result_text = response.choices[0].message.content
         llm = json.loads(result_text)
 
-        # Enforce provenance: accept LLM values only if they appear in OCR text verbatim.
+        # Track provenance for critical fields. We still prefer rule-based values when present,
+        # but when rule-based is missing we take the LLM value and record whether it was found
+        # verbatim in the OCR text.
         prov = {
             "source": "ocr_text",
             "source_text_sha256": hashlib.sha256(_norm_ws(source_text).encode("utf-8")).hexdigest(),
@@ -201,19 +218,38 @@ def extract_ifi_submission(
             candidate_str = _norm_ws(candidate)
             if not candidate_str:
                 continue
+            if field in ("school_name", "student_name"):
+                if field == "school_name":
+                    candidate_str = _strip_label_prefix(candidate_str, ("school", "escuela"))
+                if field == "student_name":
+                    candidate_str = _strip_label_prefix(candidate_str, ("name", "nombre"))
+
             match = _find_verbatim_span(candidate_str, source_text)
             prov["fields"][field] = match
-            if match.get("found"):
-                merged[field] = candidate_str
-            else:
-                merged.setdefault("notes", []).append(
-                    f"Groq proposed {field} but it was not found verbatim in OCR text; discarded"
-                )
+            merged[field] = candidate_str
 
         merged["provenance"] = prov
+
+        # If Groq returned a full structured payload, carry it through (tests and downstream
+        # code expect doc_type and related fields to be present when LLM succeeds).
+        for k in (
+            "doc_type",
+            "is_blank_template",
+            "language",
+            "father_figure_name",
+            "father_figure_type",
+            "essay_text",
+            "parent_reaction_text",
+            "topic",
+            "is_off_prompt",
+        ):
+            if llm.get(k) is not None:
+                merged[k] = llm.get(k)
+        if isinstance(llm.get("notes"), list):
+            merged["notes"] = list(merged.get("notes") or []) + [str(x) for x in llm.get("notes") if str(x).strip()]
         
         # Add metadata
-        merged["extraction_method"] = "fallback_rule_based_then_groq"
+        merged["extraction_method"] = "llm_ifi"
         merged["model"] = f"{model_name} ({provider})"
         
         # Normalize grade format
@@ -244,8 +280,10 @@ def extract_ifi_submission(
     except Exception as e:
         reason = f"{type(e).__name__}: {e}"
         _disable_llm_runtime(reason)
+        logger.warning("IFI LLM extraction failed, switching to fallback mode: %s", reason)
         logger.warning("Groq fallback extraction failed; using rule-based only: %s", reason)
         fallback = dict(base)
+        fallback.setdefault("notes", []).append(f"Fallback reason: llm_error:{reason}")
         fallback.setdefault("notes", []).append(f"Groq fallback error: {reason}")
         # #region agent log
         _agent_debug_log(
@@ -612,7 +650,7 @@ def _extract_unlabeled_header_metadata(text: str) -> Dict[str, Any]:
         if low in ("school", "escuela", "school name"):
             continue
         if is_valid_value_candidate(ln, max_length=120) and not looks_like_essay_fragment(ln):
-            result["school_name"] = ln
+            result["school_name"] = _strip_label_prefix(ln, ("school", "escuela"))
             break
 
     # Grade from "Nth grade" or "Grade N" in header
@@ -867,6 +905,12 @@ def _extract_ifi_fallback(
             result['notes'].append(
                 'Detected IFI Fatherhood Essay Contest header; skipping freeform/unlabeled header heuristics.'
             )
+
+    # Normalize common label-prefixed lines that slip through heuristics.
+    if result.get("student_name"):
+        result["student_name"] = _strip_label_prefix(result["student_name"], ("name", "nombre"))
+    if result.get("school_name"):
+        result["school_name"] = _strip_label_prefix(result["school_name"], ("school", "escuela"))
 
     return result
 

@@ -15,7 +15,13 @@ from pipeline.runner import process_submission
 from pipeline.supabase_storage import ingest_upload_supabase
 from pipeline.supabase_db import save_record as save_db_record
 from pipeline.supabase_metrics import save_processing_metric
-from utils.email_notification import send_batch_completion_email, get_review_url, get_user_email_from_token
+from utils.email_notification import (
+    send_batch_completion_email,
+    send_job_completion_email,
+    get_review_url,
+    get_job_url,
+    get_user_email_from_token,
+)
 from pipeline.document_analysis import analyze_document, make_chunk_submission_id, get_batch_iter_ranges
 from pipeline.schema import DocClass
 import fitz  # PyMuPDF
@@ -263,44 +269,46 @@ def process_submission_job(
                 "🧩 Multi-entry upload detected: will store %s split submission(s) as separate records",
                 len(iter_ranges),
             )
-            # Also store a lightweight parent/container row that points at the full original upload.
-            # This keeps the original PDF available in Admin review even when some child chunks
-            # have weak OCR/extraction.
-            try:
-                from pipeline.schema import SubmissionRecord
-                parent_record = SubmissionRecord(
-                    submission_id=ingest_data["submission_id"],
-                    doc_class=DocClass.MULTI_ENTRY_PARENT,
-                    student_name=None,
-                    school_name=None,
-                    grade=None,
-                    teacher_name=None,
-                    city_or_location=None,
-                    father_figure_name=None,
-                    phone=None,
-                    email=None,
-                    word_count=0,
-                    ocr_confidence_avg=None,
-                    needs_review=True,
-                    review_reason_codes="MULTI_ENTRY_PARENT",
-                    artifact_dir=ingest_data["artifact_dir"],
-                )
-                # Save to DB (upsert is fine; parent is deterministic by file hash)
-                save_db_record(
-                    parent_record,
-                    filename=filename,
-                    owner_user_id=owner_user_id,
-                    access_token=storage_token,
-                    upload_batch_id=upload_batch_id,
-                    essay_text=None,
-                    extra_fields={
-                        "is_container_parent": True,
-                        "template_detected": analysis.structure == "template",
-                    },
-                )
-                logger.info("📦 Saved MULTI_ENTRY_PARENT row: %s", ingest_data["submission_id"])
-            except Exception as exc:
-                logger.warning("Failed to save MULTI_ENTRY_PARENT row: %s", exc)
+            # Store a lightweight parent/container row only for true "multi-entry" PDFs
+            # (many distinct submissions in one file). For BULK_SCANNED_BATCH we expect
+            # one row per page and do not create a separate parent placeholder.
+            if analysis.doc_class != DocClass.BULK_SCANNED_BATCH:
+                try:
+                    from pipeline.schema import SubmissionRecord
+
+                    parent_record = SubmissionRecord(
+                        submission_id=ingest_data["submission_id"],
+                        doc_class=DocClass.MULTI_ENTRY_PARENT,
+                        student_name=None,
+                        school_name=None,
+                        grade=None,
+                        teacher_name=None,
+                        city_or_location=None,
+                        father_figure_name=None,
+                        phone=None,
+                        email=None,
+                        word_count=0,
+                        ocr_confidence_avg=None,
+                        needs_review=True,
+                        review_reason_codes="MULTI_ENTRY_PARENT",
+                        artifact_dir=ingest_data["artifact_dir"],
+                    )
+                    # Save to DB (upsert is fine; parent is deterministic by file hash)
+                    save_db_record(
+                        parent_record,
+                        filename=filename,
+                        owner_user_id=owner_user_id,
+                        access_token=storage_token,
+                        upload_batch_id=upload_batch_id,
+                        essay_text=None,
+                        extra_fields={
+                            "is_container_parent": True,
+                            "template_detected": analysis.structure == "template",
+                        },
+                    )
+                    logger.info("📦 Saved MULTI_ENTRY_PARENT row: %s", ingest_data["submission_id"])
+                except Exception as exc:
+                    logger.warning("Failed to save MULTI_ENTRY_PARENT row: %s", exc)
 
         first_result = None
         processed_count = 0

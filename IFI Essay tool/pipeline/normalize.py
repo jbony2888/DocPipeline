@@ -233,5 +233,10 @@ def normalize_school_name(school_raw: Optional[str]) -> Tuple[Optional[str], Opt
     if key_lower in SCHOOL_TYPOS:
         key_lower = SCHOOL_TYPOS[key_lower]
     canonical = SCHOOL_MAP.get(key_lower)
-    school_norm = SCHOOL_DISPLAY_BY_KEY.get(canonical, _format_school_display(key_lower))
+    # Prefer preserving "Escuela ..." / "School ..." prefixes in the display name when present,
+    # even if the canonical key maps to a shorter display label.
+    if key_lower.startswith(("escuela ", "school ")):
+        school_norm = _format_school_display(key_lower)
+    else:
+        school_norm = SCHOOL_DISPLAY_BY_KEY.get(canonical, _format_school_display(key_lower))
     return school_norm, canonical

@@ -248,7 +248,14 @@ def _layout_repeats_in_first_3_pages(pages: List[PageAnalysis], doc_format: str)
     for p in check:
         header_chars = p.text_layer_chars if p.text_layer_chars > 0 else p.ocr_top_strip_chars
         score = _header_signature_score_relaxed(p.top_text) if use_relaxed else p.header_signature_score
-        has_contest = "ifi" in (p.top_text or "").lower() and "father" in (p.top_text or "").lower()
+        top_lower = (p.top_text or "").lower()
+        # Contest branding can vary in OCR: sometimes "IFI", sometimes "Illinois Fatherhood Initiative".
+        has_contest = (
+            ("ifi" in top_lower and ("father" in top_lower or "fatherhood" in top_lower))
+            or ("illinois" in top_lower and "fatherhood" in top_lower)
+            or ("fatherhood" in top_lower and "initiative" in top_lower)
+            or ("essay" in top_lower and ("father" in top_lower or "fatherhood" in top_lower))
+        )
         if score >= score_threshold and header_chars >= chars_threshold and has_contest:
             pages_with_header += 1
     return pages_with_header >= 2
@@ -271,6 +278,16 @@ def _is_bulk_scanned_batch_heuristic(
     total_anchors = sum(anchor_counts)
     pages_with_anchor = sum(1 for c in anchor_counts if c > 0)
     if total_anchors < 2 or pages_with_anchor < 2:
+        # When Google OCR cannot run (e.g. credentials/network issues), scanned PDFs may have
+        # no text layer and empty OCR top strips. In that case, rely on visual layout cues
+        # (dark horizontal separator bands) to avoid misclassifying known bulk batches.
+        if doc_format in ("image_only", "hybrid"):
+            top_text_empty = all(not (p.top_text or "").strip() for p in pages)
+            if top_text_empty:
+                first = pages[: min(3, len(pages))]
+                pages_with_bands = sum(1 for p in first if (p.dark_bands or []))
+                if pages_with_bands >= 2:
+                    return True, "dark_bands_repeat_no_ocr"
         return False, f"anchors total={total_anchors} pages_with_anchor={pages_with_anchor}"
     if not _layout_repeats_in_first_3_pages(pages, doc_format):
         return False, "layout_does_not_repeat_in_first_3"

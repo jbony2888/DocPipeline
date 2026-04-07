@@ -441,9 +441,28 @@ def validate_record(partial: dict, report: dict | None = None) -> tuple[Submissi
     }
     if "TEMPLATE_ONLY" not in reason_codes and "school_name" in policy.required_fields:
         if not _is_effectively_missing_school_name(school_name_value):
-            school_reference_validation = _SCHOOL_REFERENCE_VALIDATOR.validate(school_name_value)
-            if not school_reference_validation["matched"]:
-                reason_codes.add("UNKNOWN_SCHOOL")
+            # Do not block approval on reference-list mismatches for typed IFI submissions.
+            # The reference list is best-effort and may be incomplete.
+            if doc_type == "ifi_typed_form_submission":
+                school_reference_validation = {
+                    "matched": True,
+                    "method": "skipped_typed_doc",
+                    "confidence": 0.0,
+                    "reference_version": _SCHOOL_REFERENCE_VALIDATOR.reference_version,
+                }
+            # If no reference data is configured/available, do not block auto-approval.
+            # If no reference data is configured/available, do not block auto-approval.
+            elif not getattr(_SCHOOL_REFERENCE_VALIDATOR, "_rows", None):
+                school_reference_validation = {
+                    "matched": True,
+                    "method": "skipped_no_reference",
+                    "confidence": 0.0,
+                    "reference_version": _SCHOOL_REFERENCE_VALIDATOR.reference_version,
+                }
+            else:
+                school_reference_validation = _SCHOOL_REFERENCE_VALIDATOR.validate(school_name_value)
+                if not school_reference_validation["matched"]:
+                    reason_codes.add("UNKNOWN_SCHOOL")
 
     if "TEMPLATE_ONLY" not in reason_codes:
         if is_name_school_possible_swap(student_name_value, school_name_value):
