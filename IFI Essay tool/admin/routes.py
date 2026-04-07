@@ -321,6 +321,10 @@ def _apply_school_grade_filters(
         if _row_is_excluded_from_review(r):
             return "excluded"
         if r.get("is_container_parent"):
+            # Container parents are placeholders, not real submissions.
+            # If they're no longer flagged for review, treat them as excluded/hidden.
+            if not r.get("needs_review"):
+                return "excluded"
             return "needs_review"
         has_all = bool(
             (r.get("student_name") or "").strip()
@@ -2560,7 +2564,14 @@ def update_submission_metadata(submission_id: str):
 
 @admin_bp.route("/submissions/<submission_id>/force-approve", methods=["POST"])
 def force_approve_submission(submission_id: str):
-    """Admin override: approve a submission if required metadata is present."""
+    """
+    Admin override: approve a submission if required metadata is present.
+
+    Special case:
+    - Container/parent rows (multi-entry placeholders) are not real submissions and should not
+      be "approved" (they usually have no student/school/grade). For these, we mark the row as
+      EXCLUDED_FROM_REVIEW so it disappears from the active review queue.
+    """
     _require_admin()
 
     sb = _get_service_role_client()
@@ -2569,7 +2580,7 @@ def force_approve_submission(submission_id: str):
 
     result = (
         sb.table("submissions")
-        .select("submission_id, student_name, school_name, grade")
+        .select("submission_id, student_name, school_name, grade, is_container_parent, review_reason_codes")
         .eq("submission_id", submission_id)
         .limit(1)
         .execute()
@@ -2577,6 +2588,26 @@ def force_approve_submission(submission_id: str):
     if not result.data:
         return jsonify({"error": "Submission not found"}), 404
     rec = result.data[0]
+
+    # Container parents: exclude instead of approve.
+    if rec.get("is_container_parent"):
+        existing_codes = _coerce_reason_codes(rec.get("review_reason_codes"))
+        existing_codes.add("EXCLUDED_FROM_REVIEW")
+        sb.table("submissions").update(
+            {
+                "needs_review": True,
+                "review_reason_codes": ";".join(sorted(existing_codes)) if existing_codes else "EXCLUDED_FROM_REVIEW",
+            }
+        ).eq("submission_id", submission_id).execute()
+        return jsonify(
+            {
+                "success": True,
+                "submission_id": submission_id,
+                "status": "excluded",
+                "review_reason_codes": ";".join(sorted(existing_codes)) if existing_codes else "EXCLUDED_FROM_REVIEW",
+                "review_reasons": "—",
+            }
+        )
 
     missing = []
     if not (rec.get("student_name") or "").strip():
@@ -2606,6 +2637,7 @@ def force_approve_submission(submission_id: str):
             "submission_id": submission_id,
             "status": "approved",
             "review_reasons": "—",
+            "review_reason_codes": "",
         }
     )
 

@@ -626,6 +626,18 @@ def analyze_document(pdf_path: str, ocr_provider_name: str = "google") -> Docume
             if len(refined) >= 2:
                 start_indices = refined
 
+    # Typed/native multi-page documents can repeat the same header on every page (e.g. exports or
+    # forms with the contest title). In that case, page-level header detection incorrectly marks
+    # *every* page as a new submission. For native_text docs, treat this as a single submission.
+    if (
+        doc_format == "native_text"
+        and not is_template
+        and not blocked_low_conf
+        and page_count >= 2
+        and len(start_indices) == page_count
+    ):
+        start_indices = [0]
+
     if blocked_low_conf:
         structure = "single"
         struct_conf = 0.5
@@ -688,6 +700,16 @@ def analyze_document(pdf_path: str, ocr_provider_name: str = "google") -> Docume
             "doc_class=%s (bulk_heuristic=False: %s) page_count=%s structure=%s chunk_count=%s",
             doc_class.value, bulk_reason, page_count, structure, len(chunk_ranges),
         )
+
+    # IFI official forms (typed/scanned) are often multi-page for a single student. Each page can
+    # contain the same contest header, which makes page-level header detection over-split into
+    # per-page "submissions". When we confidently detect an IFI official form layout, force the
+    # document to be treated as a single submission chunk unless it is a true bulk-scanned batch.
+    if not is_bulk_heuristic and form_layout in {"ifi_official_typed", "ifi_official_scanned"} and page_count >= 2:
+        structure = "single"
+        struct_conf = max(struct_conf, 0.9)
+        start_indices = [0]
+        chunk_ranges = [ChunkRange(start_page=0, end_page=page_count - 1)]
 
     return DocumentAnalysis(
         page_count=page_count,

@@ -282,6 +282,8 @@
                                     <td data-role="status">
                                         {% if s.status == 'approved' %}
                                         <span class="badge badge-approved">Approved</span>
+                                        {% elif s.status == 'excluded' %}
+                                        <span class="badge bg-secondary">Excluded</span>
                                         {% else %}
                                         <span class="badge badge-needs-review">Needs review</span>
                                         {% endif %}
@@ -570,9 +572,12 @@
                 const statusCell = tr.querySelector('[data-role="status"]');
                 if (!statusCell) return;
                 const approved = status === 'approved';
+                const excluded = status === 'excluded';
                 statusCell.innerHTML = approved
                     ? '<span class="badge badge-approved">Approved</span>'
-                    : '<span class="badge badge-needs-review">Needs review</span>';
+                    : (excluded
+                        ? '<span class="badge bg-secondary">Excluded</span>'
+                        : '<span class="badge badge-needs-review">Needs review</span>');
             }
 
             async function saveRow(tr, button) {
@@ -607,14 +612,7 @@
                         });
                         const approveData = await approveResp.json().catch(() => ({}));
                         if (approveResp.ok && approveData.success) {
-                            finalData = {
-                                ...data,
-                                ...approveData,
-                                needs_review: false,
-                                review_reason_codes: '',
-                                review_reasons: '—',
-                                status: 'approved'
-                            };
+                            finalData = { ...data, ...approveData };
                         } else if (approveData && approveData.missing_fields) {
                             finalData = data;
                         } else if (!approveResp.ok && approveData.error) {

@@ -20,6 +20,15 @@ from pipeline.validate import ALLOWED_REASON_CODES
 # Stored in assignments.school_name for cross-school grade batches (must match exactly everywhere).
 GRADE_LEVEL_ASSIGNMENT_SCHOOL_LABEL = "All schools (grade-level)"
 
+# Doc types that represent an actual contest submission (not templates, rules pages, etc.).
+# This is used as an extra safety check at assignment time.
+ASSIGNMENT_ALLOWED_DOC_TYPES = {
+    "IFI_OFFICIAL_FORM_FILLED",
+    "ESSAY_WITH_HEADER_METADATA",
+    # NOTE: "ESSAY_ONLY" intentionally excluded because those rows usually lack required metadata
+    # (student/school/grade) and should remain in review.
+}
+
 
 def is_grade_level_assignment_school(school: str | None) -> bool:
     """True when this school_name value denotes a grade-wide (all schools) assignment."""
@@ -69,6 +78,9 @@ def _is_approved_submission_row(row: dict[str, Any]) -> bool:
     """Mirror admin dashboard approval logic for consistency."""
     if row.get("is_container_parent"):
         return False
+    # Safety gate: exclude known non-submission templates if that flag exists.
+    if bool(row.get("is_blank_template")):
+        return False
     has_all_data = bool(row.get("student_name") and row.get("school_name") and row.get("grade") is not None)
     raw_reason_codes = str(row.get("review_reason_codes") or "").strip()
     if raw_reason_codes in {"[]", "{}", "null", "None"}:
@@ -84,7 +96,39 @@ def _is_approved_submission_row(row: dict[str, Any]) -> bool:
         return False
     if row.get("needs_review"):
         return False
+    # Safety gate: ensure we're assigning actual contest essays (when doc_type exists on the row).
+    doc_type = str(row.get("doc_type") or "").strip()
+    if doc_type:
+        if doc_type not in ASSIGNMENT_ALLOWED_DOC_TYPES:
+            return False
     return has_all_data
+
+
+def _select_submissions_with_optional_doc_type(sb: Any, select_columns: str):
+    """
+    Some deployments may not have newer columns like doc_type/is_blank_template yet.
+    Try selecting them; if the query fails due to missing columns, fall back to the caller's
+    provided columns list without doc_type fields.
+    """
+    try:
+        return sb.table("submissions").select(select_columns)
+    except Exception:
+        # Supabase client typically doesn't fail until execute(), but keep this defensive anyway.
+        return sb.table("submissions").select(select_columns)
+
+
+def _execute_submissions_query_with_fallback(query_builder: Any, fallback_query_builder: Any):
+    """
+    Execute a Supabase query, retrying with a fallback selector if missing-column errors occur.
+    """
+    try:
+        return query_builder.execute()
+    except Exception as exc:
+        msg = str(exc or "").lower()
+        # Common patterns when a column isn't present (PostgREST).
+        if "column" in msg and ("doc_type" in msg or "is_blank_template" in msg):
+            return fallback_query_builder.execute()
+        raise
 
 
 def _grade_query_value(grade: str) -> Any:
@@ -248,13 +292,21 @@ def get_batch_bounds(batch_number: int, total_items: int) -> tuple[int, int]:
 def count_approved_essays_for_grade_level(sb: Any, grade: str) -> int:
     """Count approved submissions for one grade across all schools."""
     query_value = _grade_query_value(grade)
-    result = (
+    select_with_doc_type = "student_name, school_name, grade, needs_review, review_reason_codes, doc_type, is_blank_template, is_container_parent"
+    select_fallback = "student_name, school_name, grade, needs_review, review_reason_codes, is_container_parent"
+    q1 = (
         sb.table("submissions")
-        .select("student_name, school_name, grade, needs_review, review_reason_codes")
+        .select(select_with_doc_type)
         .eq("grade", query_value)
         .limit(10000)
-        .execute()
     )
+    q2 = (
+        sb.table("submissions")
+        .select(select_fallback)
+        .eq("grade", query_value)
+        .limit(10000)
+    )
+    result = _execute_submissions_query_with_fallback(q1, q2)
     rows = result.data or []
     count = 0
     for row in rows:
@@ -266,13 +318,17 @@ def count_approved_essays_for_grade_level(sb: Any, grade: str) -> int:
 def list_approved_submissions_for_grade_level(sb: Any, grade: str) -> list[dict[str, Any]]:
     """Return approved submissions for one grade across all schools, stable-sorted for batching."""
     query_value = _grade_query_value(grade)
-    result = (
-        sb.table("submissions")
-        .select("submission_id, filename, artifact_dir, created_at, grade, school_name, student_name, needs_review, review_reason_codes")
-        .eq("grade", query_value)
-        .limit(10000)
-        .execute()
+    select_with_doc_type = (
+        "submission_id, filename, artifact_dir, created_at, grade, school_name, student_name, "
+        "needs_review, review_reason_codes, doc_type, is_blank_template, is_container_parent"
     )
+    select_fallback = (
+        "submission_id, filename, artifact_dir, created_at, grade, school_name, student_name, "
+        "needs_review, review_reason_codes, is_container_parent"
+    )
+    q1 = sb.table("submissions").select(select_with_doc_type).eq("grade", query_value).limit(10000)
+    q2 = sb.table("submissions").select(select_fallback).eq("grade", query_value).limit(10000)
+    result = _execute_submissions_query_with_fallback(q1, q2)
     rows = result.data or []
     filtered: list[dict[str, Any]] = []
     for row in rows:
@@ -297,13 +353,11 @@ def count_approved_essays_for_batch(sb: Any, school: str, grade: str) -> int:
     except Exception:
         validator = None
 
-    result = (
-        sb.table("submissions")
-        .select("grade, school_name, student_name, needs_review, review_reason_codes")
-        .eq("grade", query_value)
-        .limit(10000)
-        .execute()
-    )
+    select_with_doc_type = "grade, school_name, student_name, needs_review, review_reason_codes, doc_type, is_blank_template, is_container_parent"
+    select_fallback = "grade, school_name, student_name, needs_review, review_reason_codes, is_container_parent"
+    q1 = sb.table("submissions").select(select_with_doc_type).eq("grade", query_value).limit(10000)
+    q2 = sb.table("submissions").select(select_fallback).eq("grade", query_value).limit(10000)
+    result = _execute_submissions_query_with_fallback(q1, q2)
     rows = result.data or []
     count = 0
     for row in rows:
@@ -332,13 +386,17 @@ def list_approved_submissions_for_batch(sb: Any, school: str, grade: str) -> lis
     except Exception:
         validator = None
 
-    result = (
-        sb.table("submissions")
-        .select("submission_id, filename, artifact_dir, created_at, grade, school_name, student_name, needs_review, review_reason_codes")
-        .eq("grade", query_value)
-        .limit(10000)
-        .execute()
+    select_with_doc_type = (
+        "submission_id, filename, artifact_dir, created_at, grade, school_name, student_name, "
+        "needs_review, review_reason_codes, doc_type, is_blank_template, is_container_parent"
     )
+    select_fallback = (
+        "submission_id, filename, artifact_dir, created_at, grade, school_name, student_name, "
+        "needs_review, review_reason_codes, is_container_parent"
+    )
+    q1 = sb.table("submissions").select(select_with_doc_type).eq("grade", query_value).limit(10000)
+    q2 = sb.table("submissions").select(select_fallback).eq("grade", query_value).limit(10000)
+    result = _execute_submissions_query_with_fallback(q1, q2)
     rows = result.data or []
     filtered: list[dict[str, Any]] = []
     for row in rows:
@@ -396,7 +454,10 @@ def list_assignment_finalist_rows(sb: Any, *, assignment_id: int) -> list[dict[s
 
     submissions = (
         sb.table("submissions")
-        .select("submission_id, filename, artifact_dir, created_at, grade, school_name, student_name, needs_review, review_reason_codes")
+        .select(
+            "submission_id, filename, artifact_dir, created_at, grade, school_name, student_name, "
+            "needs_review, review_reason_codes, doc_type, is_blank_template, is_container_parent"
+        )
         .in_("submission_id", ordered_ids)
         .limit(max(1, len(ordered_ids)))
         .execute()
