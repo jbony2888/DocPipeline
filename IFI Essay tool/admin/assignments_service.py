@@ -163,8 +163,6 @@ def _standardized_school_label(canonical_school: str) -> str | None:
         return "Mundelein HS"
     if "st mary" in value or "saint mary" in value or "st many" in value or "smarys" in value or "stmarys" in value or "marys pontiac" in value or "st marils" in value:
         return "St. Mary's Pontiac"
-    if "edwards" in value and ("richard" in value or value.startswith("edwards")) and "rachel" not in value:
-        return "Richard Edwards"
     return None
 
 
@@ -172,7 +170,6 @@ STANDARD_SCHOOL_OPTIONS = (
     "De La Salle Institute",
     "Rachel Edwards Elementary School",
     "Mundelein HS",
-    "Richard Edwards",
     "St. Mary's Pontiac",
 )
 
