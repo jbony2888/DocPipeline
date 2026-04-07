@@ -1268,6 +1268,7 @@
             var oldEl = document.getElementById('renameOldValue');
             var newEl = document.getElementById('renameNewValue');
             var resultEl = document.getElementById('renameResult');
+            var renameUrl = '{{ url_for("admin.bulk_rename_field") }}';
 
             function esc(s) {
                 return String(s || '')
@@ -1289,6 +1290,34 @@
                     bulk.show();
                 } catch (e) {
                     // no-op
+                }
+            }
+
+            async function runBulkRename(rawVariant, standard, statusEl) {
+                var oldValue = String(rawVariant || '').trim();
+                var newValue = String(standard || '').trim();
+                if (!oldValue || !newValue) return;
+                if (!confirm('Rename all submissions where school_name is exactly:\n\n"' + oldValue + '"\n\nto:\n\n"' + newValue + '"\n\nThis updates the database for all matching submissions.')) {
+                    return;
+                }
+                if (statusEl) statusEl.innerHTML = '<span class="text-muted">Renaming…</span>';
+                try {
+                    var r = await fetch(renameUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        credentials: 'same-origin',
+                        body: JSON.stringify({ field: 'school_name', old_value: oldValue, new_value: newValue })
+                    });
+                    var data = await r.json().catch(function () { return {}; });
+                    if (r.ok && data.success) {
+                        if (statusEl) statusEl.innerHTML = '<span class="text-success"><strong>' + Number(data.updated_count || 0) + '</strong> updated.</span>';
+                        // Refresh counts so the variant disappears (or its count drops) immediately.
+                        await load();
+                        return;
+                    }
+                    if (statusEl) statusEl.innerHTML = '<span class="text-danger">' + esc(data.error || ('Rename failed (HTTP ' + r.status + ')')) + '</span>';
+                } catch (e) {
+                    if (statusEl) statusEl.innerHTML = '<span class="text-danger">Network error: ' + esc(e) + '</span>';
                 }
             }
 
@@ -1332,13 +1361,19 @@
                             var v = mismatches[j] || {};
                             var name = String(v.name || '').trim();
                             var cnt = Number(v.count || 0);
-                            html += '<button type="button" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center btn-variant-rename" data-raw="' + esc(name) + '" data-standard="' + esc(standard) + '">';
-                            html +=   '<span class="text-break"><code>' + esc(name) + '</code></span>';
-                            html +=   '<span class="badge text-bg-secondary">' + cnt + '</span>';
-                            html += '</button>';
+                            html += '<div class="list-group-item d-flex justify-content-between align-items-center gap-2">';
+                            html +=   '<button type="button" class="btn btn-sm btn-link p-0 text-decoration-none text-start flex-grow-1 btn-variant-prefill" data-raw="' + esc(name) + '" data-standard="' + esc(standard) + '" title="Prefill Bulk Rename">';
+                            html +=     '<span class="text-break"><code>' + esc(name) + '</code></span>';
+                            html +=   '</button>';
+                            html +=   '<div class="d-flex align-items-center gap-2 flex-shrink-0">';
+                            html +=     '<span class="badge text-bg-secondary">' + cnt + '</span>';
+                            html +=     '<button type="button" class="btn btn-sm btn-outline-warning btn-variant-run" data-raw="' + esc(name) + '" data-standard="' + esc(standard) + '">Bulk edit</button>';
+                            html +=   '</div>';
+                            html += '</div>';
+                            html += '<div class="small text-muted ms-2 mb-2"><span class="variant-status" data-status-for="' + esc(name) + '"></span></div>';
                         }
                         html += '</div>';
-                        html += '<div class="text-muted small mt-2">Click a variant to prefill Bulk Rename to <strong>' + esc(standard) + '</strong>.</div>';
+                        html += '<div class="text-muted small mt-2">Use <strong>Bulk edit</strong> to rename immediately, or click the variant text to prefill Bulk Rename.</div>';
                     }
 
                     html +=     '</div>';
@@ -1368,11 +1403,21 @@
 
                 contentEl.innerHTML = html;
 
-                contentEl.querySelectorAll('.btn-variant-rename').forEach(function (btn) {
+                contentEl.querySelectorAll('.btn-variant-prefill').forEach(function (btn) {
                     btn.addEventListener('click', function () {
                         var raw = btn.getAttribute('data-raw') || '';
                         var standard = btn.getAttribute('data-standard') || '';
                         openBulkRename(raw, standard);
+                    });
+                });
+
+                contentEl.querySelectorAll('.btn-variant-run').forEach(function (btn) {
+                    btn.addEventListener('click', function () {
+                        var raw = btn.getAttribute('data-raw') || '';
+                        var standard = btn.getAttribute('data-standard') || '';
+                        // Status line is directly after the list-group-item wrapper.
+                        var statusEl = btn.closest('.list-group-item')?.nextElementSibling?.querySelector?.('.variant-status') || null;
+                        runBulkRename(raw, standard, statusEl);
                     });
                 });
             }
