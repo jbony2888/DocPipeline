@@ -77,7 +77,12 @@
                 <div class="card mb-3">
                     <div class="card-body py-3">
                         <p class="text-muted small mb-2">
+                            {% if selected_status == "needs_review" and essay_total is not none %}
+                            Showing <strong>{{ essay_total }}</strong> essay{{ 's' if essay_total != 1 else '' }} in review
+                            <span class="text-muted">({{ total }} row{{ 's' if total != 1 else '' }})</span>
+                            {% else %}
                             Showing <strong>{{ total }}</strong> submission{{ 's' if total != 1 else '' }}
+                            {% endif %}
                             {% if total != total_loaded %}
                             (filtered from <strong>{{ total_loaded }}</strong> loaded)
                             {% endif %}

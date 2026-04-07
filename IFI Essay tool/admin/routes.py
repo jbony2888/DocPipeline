@@ -1079,10 +1079,18 @@ def admin_dashboard():
         s["has_reason"] = has_reason
         s["status"] = "approved" if (has_all and not has_reason and not s.get("needs_review")) else "needs_review"
 
+    # For the Needs review filter, users typically want the number of *essays* that
+    # require review (actionable child/standalone rows), not container-parent placeholders.
+    status_key = (selected_status or "").strip().lower()
+    essay_total = None
+    if status_key == "needs_review":
+        essay_total = len([s for s in submissions if not s.get("is_container_parent")])
+
     return render_template(
         "admin_dashboard.html",
         submissions=submissions,
         total=len(submissions),
+        essay_total=essay_total,
         total_loaded=len(all_rows),
         school_options=school_options,
         grade_options=grade_options,
