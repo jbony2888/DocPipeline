@@ -260,6 +260,7 @@ def test_batches_endpoint_groups_by_school_and_grade(client):
     assert len(data["schools"]) == len(STANDARD_SCHOOL_OPTIONS)
     by_school = {row["school"]: row for row in data["schools"]}
     assert "De La Salle Institute" in by_school
+    assert "Rachel Carson Elementary School" in by_school
     assert "Rachel Edwards Elementary School" in by_school
     assert "Mundelein HS" in by_school
     assert len(by_school["De La Salle Institute"]["grades"]) == 2

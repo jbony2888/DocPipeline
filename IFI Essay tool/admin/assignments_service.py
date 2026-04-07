@@ -153,9 +153,9 @@ def _standardized_school_label(canonical_school: str) -> str | None:
     if not raw_value:
         return None
     value = _normalize_school_text(raw_value)
-    # NOTE: "Carson" is an observed variant for Rachel Edwards Elementary School in our data.
-    # Keep this mapping broad enough to catch OCR/AI drift, but avoid conflating with Richard Edwards.
-    if "carson" in value or "cavan" in value or ("rachel" in value and "edwards" in value):
+    if "carson" in value or "cavan" in value:
+        return "Rachel Carson Elementary School"
+    if "rachel" in value and "edwards" in value:
         return "Rachel Edwards Elementary School"
     if "la salle" in value or "lasalle" in value or "delasalle" in value:
         return "De La Salle Institute"
@@ -168,6 +168,7 @@ def _standardized_school_label(canonical_school: str) -> str | None:
 
 STANDARD_SCHOOL_OPTIONS = (
     "De La Salle Institute",
+    "Rachel Carson Elementary School",
     "Rachel Edwards Elementary School",
     "Mundelein HS",
     "St. Mary's Pontiac",
