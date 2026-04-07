@@ -1059,6 +1059,17 @@ def admin_dashboard():
     submissions = _apply_multi_entry_only_filter(all_rows, submissions, multi_entry_only)
     submissions = _apply_duplicates_only_filter(submissions, duplicates_only)
     for s in submissions:
+        # IMPORTANT: status shown in the table must match the same status logic used
+        # by the filter (see _apply_school_grade_filters). Otherwise, rows can appear
+        # in "Needs review" while displaying "Approved" (notably container parents).
+        if _row_is_excluded_from_review(s):
+            s["status"] = "excluded"
+            s["has_reason"] = True
+            continue
+        if s.get("is_container_parent"):
+            s["status"] = "needs_review"
+            s["has_reason"] = _row_has_reason_codes(s)
+            continue
         has_all = bool(
             (s.get("student_name") or "").strip()
             and (s.get("school_name") or "").strip()
