@@ -131,11 +131,19 @@ def _coerce_reason_codes(reason_codes: str | None) -> set[str]:
     raw = (reason_codes or "").strip()
     if raw in {"[]", "{}", "null", "None"}:
         return set()
-    return {
-        c.strip()
-        for c in (reason_codes or "").split(";")
-        if c.strip() and c.strip() in ALLOWED_REASON_CODES
-    }
+    # Accept both modern semicolon-separated codes and legacy JSON-string arrays.
+    # Legacy rows can contain strings like '["MISSING_FILE"]' which should still
+    # count as "has a reason", even if the token is not in ALLOWED_REASON_CODES.
+    if raw.startswith("["):
+        try:
+            import json
+
+            arr = json.loads(raw)
+            return {str(x).strip() for x in (arr or []) if str(x).strip()}
+        except Exception:
+            # Fall back to treating the raw string as an opaque token
+            return {raw}
+    return {c.strip() for c in raw.split(";") if c.strip() and c.strip() in ALLOWED_REASON_CODES}
 
 
 def _row_has_reason_codes(row: dict) -> bool:
@@ -151,8 +159,9 @@ def _is_excluded_submission_row(row: dict) -> bool:
     # Exclude rows that are not actionable review work:
     # - CONTENT_MISMATCH: usually mis-split / wrong page linkage; handled via separate tools
     # - BLANK_SUBMISSION: empty uploads
-    # - TEMPLATE_ONLY: instructions/blank template exports (not real submissions)
-    return bool(codes & {"CONTENT_MISMATCH", "BLANK_SUBMISSION", "TEMPLATE_ONLY"})
+    # NOTE: TEMPLATE_ONLY rows should remain visible so admins can explicitly move
+    # them into the Excluded batch (Status → Excluded) rather than disappearing.
+    return bool(codes & {"CONTENT_MISMATCH", "BLANK_SUBMISSION"})
 
 
 def _format_human_datetime(value: str | None) -> str:
