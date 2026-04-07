@@ -8,6 +8,7 @@ Phase 2: Extract structured data based on document type
 import os
 import json
 import re
+import hashlib
 from typing import Dict, Any, Optional, List
 import logging
 import json
@@ -87,50 +88,89 @@ def extract_ifi_submission(
     Returns:
         Dictionary with classification, extraction, and metadata
     """
-    # Groq is used for normalization (OpenAI is not used)
-    groq_key = os.environ.get("GROQ_API_KEY")
+    def _norm_ws(s: str) -> str:
+        return re.sub(r"\s+", " ", str(s or "")).strip()
 
+    def _find_verbatim_span(value: str, source_text: str) -> dict:
+        """
+        Prove the extracted value appears in the OCR text.
+        Returns a dict with match offsets and an evidence snippet.
+        """
+        v = _norm_ws(value)
+        src = _norm_ws(source_text)
+        if not v or not src:
+            return {"found": False}
+        # Case-insensitive search over normalized whitespace
+        idx = src.casefold().find(v.casefold())
+        if idx < 0:
+            return {"found": False}
+        start = idx
+        end = idx + len(v)
+        ctx_lo = max(0, start - 60)
+        ctx_hi = min(len(src), end + 60)
+        return {
+            "found": True,
+            "start": start,
+            "end": end,
+            "quote": src[start:end],
+            "context": src[ctx_lo:ctx_hi],
+        }
+
+    # Start with rule-based extraction. Groq is used only as fallback to fill missing fields.
+    base = _extract_ifi_fallback(
+        raw_ocr_text,
+        original_filename,
+        fallback_reason="rule_based_first",
+    )
+
+    def _missing_critical_fields(r: dict) -> bool:
+        return not (_norm_ws(r.get("student_name")) and _norm_ws(r.get("school_name")) and _norm_ws(r.get("grade")))
+
+    if not _missing_critical_fields(base):
+        return base
+
+    groq_key = os.environ.get("GROQ_API_KEY")
     if not groq_key:
         if not _LLM_RUNTIME_STATE["no_key_warned"]:
-            logger.warning("GROQ_API_KEY not set - falling back to rule-based extraction")
+            logger.warning("GROQ_API_KEY not set - cannot run Groq fallback; using rule-based extraction only")
             _LLM_RUNTIME_STATE["no_key_warned"] = True
-        return _extract_ifi_fallback(
-            raw_ocr_text,
-            original_filename,
-            fallback_reason="no_groq_api_key",
-        )
+        base.setdefault("notes", []).append("Groq fallback unavailable: GROQ_API_KEY not set")
+        return base
 
     if _LLM_RUNTIME_STATE["disabled"]:
         if not _LLM_RUNTIME_STATE["disabled_logged"]:
             logger.warning(
-                "IFI LLM extraction disabled for this process after prior failure: %s. "
-                "Using fallback extraction.",
+                "Groq fallback disabled for this process after prior failure: %s. Using rule-based extraction only.",
                 _LLM_RUNTIME_STATE.get("failure_reason") or "unknown",
             )
             _LLM_RUNTIME_STATE["disabled_logged"] = True
-        return _extract_ifi_fallback(
-            raw_ocr_text,
-            original_filename,
-            fallback_reason=f"llm_runtime_disabled:{_LLM_RUNTIME_STATE.get('failure_reason') or 'unknown'}",
+        base.setdefault("notes", []).append(
+            f"Groq fallback disabled: {_LLM_RUNTIME_STATE.get('failure_reason') or 'unknown'}"
         )
-    
+        return base
+
     try:
-        # Groq for normalization (schema-aligned extraction from OCR text)
+        # Groq fallback: attempt to fill missing fields, with provenance enforcement.
         from groq import Groq
         client = Groq(api_key=groq_key)
         model_name = "llama-3.3-70b-versatile"
         provider = "groq"
 
-        # Build comprehensive prompt
-        prompt = _build_ifi_extraction_prompt(raw_ocr_text, original_filename)
+        # Build prompt. Ask for verbatim evidence strings so we can verify.
+        source_text = (contact_block or "") + "\n" + (raw_ocr_text or "")
+        prompt = _build_ifi_extraction_prompt(source_text, original_filename)
         
-        # Call LLM (Groq) to normalize OCR text to schema
+        # Call LLM (Groq) to fill missing fields. Temperature low; JSON-only.
         response = client.chat.completions.create(
             model=model_name,
             messages=[
                 {
                     "role": "system",
-                    "content": "You normalize OCR text from scanned documents into structured fields per the SubmissionRecord schema. Return only valid JSON."
+                    "content": (
+                        "You extract structured fields from OCR text. "
+                        "CRITICAL: Only return values that appear verbatim in the OCR TEXT provided. "
+                        "If unsure, return null. Return only valid JSON."
+                    )
                 },
                 {
                     "role": "user",
@@ -142,46 +182,75 @@ def extract_ifi_submission(
         )
         
         result_text = response.choices[0].message.content
-        result = json.loads(result_text)
+        llm = json.loads(result_text)
+
+        # Enforce provenance: accept LLM values only if they appear in OCR text verbatim.
+        prov = {
+            "source": "ocr_text",
+            "source_text_sha256": hashlib.sha256(_norm_ws(source_text).encode("utf-8")).hexdigest(),
+            "model": f"{model_name} ({provider})",
+            "fields": {},
+        }
+        merged = dict(base)
+        for field in ("student_name", "school_name", "grade"):
+            if _norm_ws(merged.get(field)):
+                continue  # don't overwrite rule-based value
+            candidate = llm.get(field)
+            if candidate is None:
+                continue
+            candidate_str = _norm_ws(candidate)
+            if not candidate_str:
+                continue
+            match = _find_verbatim_span(candidate_str, source_text)
+            prov["fields"][field] = match
+            if match.get("found"):
+                merged[field] = candidate_str
+            else:
+                merged.setdefault("notes", []).append(
+                    f"Groq proposed {field} but it was not found verbatim in OCR text; discarded"
+                )
+
+        merged["provenance"] = prov
         
         # Add metadata
-        result['extraction_method'] = 'llm_ifi'
-        result['model'] = f"{model_name} ({provider})"
+        merged["extraction_method"] = "fallback_rule_based_then_groq"
+        merged["model"] = f"{model_name} ({provider})"
         
         # Normalize grade format
-        if result.get('grade'):
-            result['grade'] = _normalize_grade(result['grade'])
+        if merged.get("grade"):
+            merged["grade"] = _normalize_grade(merged["grade"])
         
-        logger.info(f"IFI extraction complete: doc_type={result.get('doc_type')}, "
-                   f"student={result.get('student_name')}, grade={result.get('grade')}")
+        logger.info(
+            "IFI extraction complete (Groq fallback): doc_type=%s student=%s grade=%s",
+            merged.get("doc_type"),
+            merged.get("student_name"),
+            merged.get("grade"),
+        )
         # #region agent log
         _agent_debug_log(
             hypothesis_id="H1",
             message="LLM extraction result",
             data={
-                "doc_type": result.get("doc_type"),
-                "student_name": result.get("student_name"),
-                "school_name": result.get("school_name"),
-                "grade": result.get("grade"),
+                "doc_type": merged.get("doc_type"),
+                "student_name": merged.get("student_name"),
+                "school_name": merged.get("school_name"),
+                "grade": merged.get("grade"),
             },
         )
         # #endregion agent log
         
-        return result
+        return merged
     
     except Exception as e:
         reason = f"{type(e).__name__}: {e}"
         _disable_llm_runtime(reason)
-        logger.warning("IFI LLM extraction failed, switching to fallback mode: %s", reason)
-        fallback = _extract_ifi_fallback(
-            raw_ocr_text,
-            original_filename,
-            fallback_reason=f"llm_error:{reason}",
-        )
+        logger.warning("Groq fallback extraction failed; using rule-based only: %s", reason)
+        fallback = dict(base)
+        fallback.setdefault("notes", []).append(f"Groq fallback error: {reason}")
         # #region agent log
         _agent_debug_log(
             hypothesis_id="H2",
-            message="Fallback IFI extraction (LLM error)",
+            message="Fallback IFI extraction (Groq error)",
             data={
                 "reason": reason,
                 "student_name": fallback.get("student_name"),
@@ -206,6 +275,9 @@ OCR TEXT:
 FILENAME: {filename if filename else "unknown"}
 
 TASK: Classify the document, then extract fields. Return JSON only.
+CRITICAL REQUIREMENT: For any non-null field you return (student_name, school_name, grade, etc.),
+the value must appear verbatim somewhere in the OCR TEXT above (ignoring extra whitespace).
+If you cannot find a verbatim match, return null for that field.
 
 ===== PHASE 1: CLASSIFICATION =====
 

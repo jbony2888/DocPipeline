@@ -141,10 +141,18 @@ def _coerce_reason_codes(reason_codes: str | None) -> set[str]:
 def _row_has_reason_codes(row: dict) -> bool:
     return bool(_coerce_reason_codes(row.get("review_reason_codes")))
 
+def _row_is_excluded_from_review(row: dict) -> bool:
+    codes = _coerce_reason_codes(row.get("review_reason_codes"))
+    return "EXCLUDED_FROM_REVIEW" in codes
+
 
 def _is_excluded_submission_row(row: dict) -> bool:
     codes = _coerce_reason_codes(row.get("review_reason_codes"))
-    return bool(codes & {"CONTENT_MISMATCH", "BLANK_SUBMISSION"})
+    # Exclude rows that are not actionable review work:
+    # - CONTENT_MISMATCH: usually mis-split / wrong page linkage; handled via separate tools
+    # - BLANK_SUBMISSION: empty uploads
+    # - TEMPLATE_ONLY: instructions/blank template exports (not real submissions)
+    return bool(codes & {"CONTENT_MISMATCH", "BLANK_SUBMISSION", "TEMPLATE_ONLY"})
 
 
 def _format_human_datetime(value: str | None) -> str:
@@ -300,6 +308,8 @@ def _apply_school_grade_filters(
     submission_key = str(submission_id or "").strip().lower()
 
     def _row_status(r: dict) -> str:
+        if _row_is_excluded_from_review(r):
+            return "excluded"
         if r.get("is_container_parent"):
             return "needs_review"
         has_all = bool(
@@ -319,6 +329,8 @@ def _apply_school_grade_filters(
                 continue
             if status_key == "needs_review" and _row_status(r) != "needs_review":
                 continue
+            if status_key == "excluded" and _row_status(r) != "excluded":
+                continue
             if submission_key and str(r.get("submission_id") or "").strip().lower() != submission_key:
                 continue
             out.append(r)
@@ -328,6 +340,8 @@ def _apply_school_grade_filters(
         if status_key == "approved" and _row_status(r) != "approved":
             continue
         if status_key == "needs_review" and _row_status(r) != "needs_review":
+            continue
+        if status_key == "excluded" and _row_status(r) != "excluded":
             continue
         if submission_key and str(r.get("submission_id") or "").strip().lower() != submission_key:
             continue
@@ -2576,6 +2590,109 @@ def bulk_send_to_review():
         "error_count": len(errors),
         "errors": errors[:20] if errors else [],
     })
+
+
+@admin_bp.route("/submissions/bulk-exclude-from-review", methods=["POST"])
+def bulk_exclude_from_review():
+    """Admin: move multiple submissions out of active review into an excluded batch."""
+    _require_admin()
+
+    payload = request.get_json(silent=True) or {}
+    submission_ids = payload.get("submission_ids")
+    if not isinstance(submission_ids, list) or not submission_ids:
+        return jsonify({"error": "submission_ids (non-empty list) is required"}), 400
+
+    sb = _get_service_role_client()
+    if not sb:
+        return jsonify({"error": "Database not configured"}), 500
+
+    clean_ids = [str(sid).strip() for sid in submission_ids if str(sid).strip()][:500]
+    updated_count = 0
+    errors = []
+
+    for sid in clean_ids:
+        try:
+            current = (
+                sb.table("submissions")
+                .select("review_reason_codes")
+                .eq("submission_id", sid)
+                .limit(1)
+                .execute()
+            )
+            if not current.data:
+                continue
+            codes = _coerce_reason_codes(current.data[0].get("review_reason_codes"))
+            codes.add("EXCLUDED_FROM_REVIEW")
+            sb.table("submissions").update(
+                {
+                    "needs_review": False,
+                    "review_reason_codes": ";".join(sorted(codes)) if codes else "",
+                }
+            ).eq("submission_id", sid).execute()
+            updated_count += 1
+        except Exception as exc:
+            errors.append(f"{sid}: {exc}")
+
+    return jsonify(
+        {
+            "success": updated_count > 0,
+            "updated_count": updated_count,
+            "error_count": len(errors),
+            "errors": errors[:20] if errors else [],
+        }
+    )
+
+
+@admin_bp.route("/submissions/bulk-restore-from-excluded", methods=["POST"])
+def bulk_restore_from_excluded():
+    """Admin: restore excluded submissions back into the needs_review queue."""
+    _require_admin()
+
+    payload = request.get_json(silent=True) or {}
+    submission_ids = payload.get("submission_ids")
+    if not isinstance(submission_ids, list) or not submission_ids:
+        return jsonify({"error": "submission_ids (non-empty list) is required"}), 400
+
+    sb = _get_service_role_client()
+    if not sb:
+        return jsonify({"error": "Database not configured"}), 500
+
+    clean_ids = [str(sid).strip() for sid in submission_ids if str(sid).strip()][:500]
+    updated_count = 0
+    errors = []
+
+    for sid in clean_ids:
+        try:
+            current = (
+                sb.table("submissions")
+                .select("review_reason_codes")
+                .eq("submission_id", sid)
+                .limit(1)
+                .execute()
+            )
+            if not current.data:
+                continue
+            codes = _coerce_reason_codes(current.data[0].get("review_reason_codes"))
+            if "EXCLUDED_FROM_REVIEW" in codes:
+                codes.discard("EXCLUDED_FROM_REVIEW")
+            sb.table("submissions").update(
+                {
+                    "needs_review": True,
+                    "review_reason_codes": ";".join(sorted(codes)) if codes else "",
+                }
+            ).eq("submission_id", sid).execute()
+            updated_count += 1
+        except Exception as exc:
+            errors.append(f"{sid}: {exc}")
+
+    return jsonify(
+        {
+            "success": updated_count > 0,
+            "updated_count": updated_count,
+            "error_count": len(errors),
+            "errors": errors[:20] if errors else [],
+        }
+    )
 
 
 @admin_bp.route("/submissions/bulk-download", methods=["POST"])

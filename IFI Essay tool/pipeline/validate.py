@@ -389,9 +389,19 @@ def validate_record(partial: dict, report: dict | None = None) -> tuple[Submissi
         assert record.needs_review == (len(review_reason_codes_list) > 0)
         return record, validation_report
 
-    # Template short-circuit
+    # Template marker (guarded): only treat as TEMPLATE_ONLY when the record truly has
+    # no substantive essay content. Misclassification here can hide real essays.
     if doc_type == "template":
-        reason_codes.add("TEMPLATE_ONLY")
+        # word_count is computed later from partial; use the same source here.
+        # If there is substantial text, do NOT tag as TEMPLATE_ONLY.
+        wc_for_template = int(partial.get("word_count") or 0)
+        # Use policy.min_essay_words when available; fall back to 50 (historic threshold).
+        min_words = int(getattr(get_policy(policy_record, report or {}), "min_essay_words", 50) or 50)
+        if wc_for_template <= 0 or wc_for_template < min_words:
+            reason_codes.add("TEMPLATE_ONLY")
+        else:
+            # Keep doc_type as-is, but treat this as a normal document for review.
+            pass
     else:
         if doc_type == "unknown":
             reason_codes.add("DOC_TYPE_UNKNOWN")
@@ -448,6 +458,11 @@ def validate_record(partial: dict, report: dict | None = None) -> tuple[Submissi
         partial.get("extraction_method")
         or ((report or {}).get("extraction_debug") or {}).get("extraction_method")
     )
+
+    # If TEMPLATE_ONLY was set earlier but we later see substantial essay content,
+    # drop it (prevents instruction/template flag from suppressing essay validation paths).
+    if "TEMPLATE_ONLY" in reason_codes and policy.require_essay and word_count >= policy.min_essay_words:
+        reason_codes.discard("TEMPLATE_ONLY")
 
     if "TEMPLATE_ONLY" not in reason_codes:
         if policy.require_essay:

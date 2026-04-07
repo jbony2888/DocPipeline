@@ -31,6 +31,8 @@ ALLOWED_REASON_CODES = {
     "POSSIBLE_FIELD_SWAP",
     "CONTENT_MISMATCH",
     "BLANK_SUBMISSION",
+    # Admin-only triage: hide from active review queue but keep accessible.
+    "EXCLUDED_FROM_REVIEW",
 }
 
 

@@ -88,15 +88,14 @@
                         </p>
                         <form method="get" action="{{ url_for('admin.admin_dashboard') }}" class="row g-2 align-items-end filter-bar" id="filterForm">
                             <div class="col-md-4 col-lg-3">
-                                <label class="form-label small text-muted mb-0">School</label>
-                                <select name="school" id="schoolFilter" class="form-select" onchange="handleSchoolFilterChange(this)">
-                                    <option value="">All schools</option>
-                                    {% for s in school_options %}
-                                    <option value="{{ s }}" {% if s == selected_school %}selected{% endif %}>{{ s }}</option>
-                                    {% endfor %}
-                                    <option disabled>──────────</option>
-                                    <option value="__add_new__">+ Add new school…</option>
-                                </select>
+                                <div class="d-flex justify-content-between align-items-center flex-wrap gap-1 mb-0">
+                                    <label class="form-label small text-muted mb-0" for="schoolFilter">School</label>
+                                    <button type="button" class="btn btn-link btn-sm p-0 text-decoration-none" data-bs-toggle="modal" data-bs-target="#schoolFilterManageModal" title="Hide names from this dropdown (this browser only). Does not change stored submissions.">
+                                        Manage list
+                                    </button>
+                                </div>
+                                <select name="school" id="schoolFilter" class="form-select" data-selected="{{ selected_school or '' }}" onchange="handleSchoolFilterChange(this)"></select>
+                                <script type="application/json" id="initial-school-options-json">{{ school_options | tojson }}</script>
                             </div>
                             <div class="col-md-3 col-lg-2">
                                 <label class="form-label small text-muted mb-0">Grade</label>
@@ -113,6 +112,7 @@
                                     <option value="" {% if not selected_status %}selected{% endif %}>All</option>
                                     <option value="approved" {% if selected_status == "approved" %}selected{% endif %}>Approved only</option>
                                     <option value="needs_review" {% if selected_status == "needs_review" %}selected{% endif %}>Needs review only</option>
+                                    <option value="excluded" {% if selected_status == "excluded" %}selected{% endif %}>Excluded (not in review)</option>
                                 </select>
                             </div>
                             <div class="col-md-3 col-lg-2">
@@ -150,6 +150,12 @@
                         </button>
                         <button type="button" class="btn btn-sm btn-outline-warning" id="btnBulkSendReview">
                             <i class="bi bi-arrow-counterclockwise"></i> Send Selected to Review
+                        </button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="btnBulkExcludeReview" title="Hide selected submissions from the active review queue (they remain accessible under Status → Excluded).">
+                            <i class="bi bi-folder-x"></i> Exclude Selected
+                        </button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="btnBulkRestoreExcluded" title="Restore excluded submissions back into the active review queue.">
+                            <i class="bi bi-folder-check"></i> Restore Excluded
                         </button>
                         <button type="button" class="btn btn-sm btn-outline-danger" id="btnDeleteSelectedDuplicates" title="Removes only checked rows. Newest copy per student/school/grade/file is never deleted.">
                             <i class="bi bi-trash"></i> Delete selected duplicate rows
@@ -445,6 +451,37 @@
                     <button type="button" class="btn btn-info text-white" id="btnDoBulkUpdateSelected">
                         <i class="bi bi-pencil"></i> Apply to Selected
                     </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" id="schoolFilterManageModal" tabindex="-1" aria-labelledby="schoolFilterManageLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="schoolFilterManageLabel"><i class="bi bi-sliders"></i> School filter list</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="small text-muted">
+                        <strong>Hide</strong> removes a name from the dropdown so you can focus on real schools (typos, duplicates).
+                        Hidden names stay on submissions until you fix them (e.g. Bulk Rename). Settings are saved in <strong>this browser only</strong>.
+                    </p>
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <h6 class="small fw-semibold text-muted mb-2">Shown in dropdown</h6>
+                            <ul class="list-group list-group-flush border rounded" id="schoolFilterVisibleList" style="max-height: 280px; overflow-y: auto;"></ul>
+                        </div>
+                        <div class="col-md-6">
+                            <h6 class="small fw-semibold text-muted mb-2">Hidden</h6>
+                            <ul class="list-group list-group-flush border rounded" id="schoolFilterHiddenList" style="max-height: 280px; overflow-y: auto;"></ul>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer d-flex justify-content-between flex-wrap gap-2">
+                    <button type="button" class="btn btn-outline-danger btn-sm" id="btnSchoolFilterClearHidden">Clear all hidden</button>
+                    <button type="button" class="btn btn-primary" data-bs-dismiss="modal">Done</button>
                 </div>
             </div>
         </div>
@@ -832,6 +869,70 @@
                 }
             });
 
+            // Bulk Exclude Selected from Review
+            document.getElementById('btnBulkExcludeReview')?.addEventListener('click', async function() {
+                const ids = rows().filter(c => c.checked).map(c => c.value);
+                if (!ids.length) {
+                    alert('Select at least one submission first.');
+                    return;
+                }
+                if (!confirm(`Exclude ${ids.length} selected submission(s) from active review?`)) return;
+
+                const btn = this;
+                btn.disabled = true;
+                try {
+                    const r = await fetch('{{ url_for("admin.bulk_exclude_from_review") }}', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        credentials: 'same-origin',
+                        body: JSON.stringify({ submission_ids: ids })
+                    });
+                    const data = await r.json().catch(() => ({}));
+                    if (data.updated_count > 0) {
+                        setSaveFeedback(`${data.updated_count} submission(s) excluded. Use Status → Excluded to view them.`, 'success');
+                        window.location.reload();
+                    } else {
+                        alert(data.error || 'No submissions were updated.');
+                    }
+                } catch (err) {
+                    alert('Network error: ' + err);
+                } finally {
+                    btn.disabled = false;
+                }
+            });
+
+            // Bulk Restore Excluded
+            document.getElementById('btnBulkRestoreExcluded')?.addEventListener('click', async function() {
+                const ids = rows().filter(c => c.checked).map(c => c.value);
+                if (!ids.length) {
+                    alert('Select at least one submission first.');
+                    return;
+                }
+                if (!confirm(`Restore ${ids.length} excluded submission(s) back to review?`)) return;
+
+                const btn = this;
+                btn.disabled = true;
+                try {
+                    const r = await fetch('{{ url_for("admin.bulk_restore_from_excluded") }}', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        credentials: 'same-origin',
+                        body: JSON.stringify({ submission_ids: ids })
+                    });
+                    const data = await r.json().catch(() => ({}));
+                    if (data.updated_count > 0) {
+                        setSaveFeedback(`${data.updated_count} submission(s) restored to review.`, 'success');
+                        window.location.reload();
+                    } else {
+                        alert(data.error || 'No submissions were updated.');
+                    }
+                } catch (err) {
+                    alert('Network error: ' + err);
+                } finally {
+                    btn.disabled = false;
+                }
+            });
+
             // Bulk Update Selected
             document.getElementById('btnDoBulkUpdateSelected')?.addEventListener('click', async function() {
                 const ids = rows().filter(c => c.checked).map(c => c.value);
@@ -935,22 +1036,208 @@
             });
         })();
 
+        (function adminSchoolFilterList() {
+            var STORAGE_KEY = 'ifi_admin_hidden_schools';
+            var fullList = [];
+
+            function parseInitialList() {
+                var el = document.getElementById('initial-school-options-json');
+                if (!el) return [];
+                try {
+                    var arr = JSON.parse(el.textContent);
+                    if (!Array.isArray(arr)) return [];
+                    var out = [];
+                    var seen = {};
+                    for (var i = 0; i < arr.length; i++) {
+                        var s = String(arr[i] || '').trim();
+                        if (s && !seen[s]) {
+                            seen[s] = true;
+                            out.push(s);
+                        }
+                    }
+                    return out;
+                } catch (e) {
+                    return [];
+                }
+            }
+
+            function getHiddenSet() {
+                try {
+                    var raw = localStorage.getItem(STORAGE_KEY);
+                    var arr = raw ? JSON.parse(raw) : [];
+                    if (!Array.isArray(arr)) return new Set();
+                    return new Set(arr.map(function (x) { return String(x); }));
+                } catch (e) {
+                    return new Set();
+                }
+            }
+
+            function saveHiddenSet(set) {
+                var list = Array.from(set).sort(function (a, b) {
+                    return a.localeCompare(b, undefined, { sensitivity: 'base' });
+                });
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
+            }
+
+            function getEffectiveSelected(sel) {
+                var fromData = (sel.getAttribute('data-selected') || '').trim();
+                var cur = (sel.value || '').trim();
+                if (cur && cur !== '__add_new__') return cur;
+                return fromData;
+            }
+
+            function renderDropdown() {
+                var sel = document.getElementById('schoolFilter');
+                if (!sel) return;
+                var hidden = getHiddenSet();
+                var selected = getEffectiveSelected(sel);
+
+                sel.innerHTML = '';
+                var opt0 = document.createElement('option');
+                opt0.value = '';
+                opt0.textContent = 'All schools';
+                if (!selected) opt0.selected = true;
+                sel.appendChild(opt0);
+
+                var sorted = fullList.slice().sort(function (a, b) {
+                    return a.localeCompare(b, undefined, { sensitivity: 'base' });
+                });
+                for (var i = 0; i < sorted.length; i++) {
+                    var name = sorted[i];
+                    if (hidden.has(name) && name !== selected) continue;
+                    var o = document.createElement('option');
+                    o.value = name;
+                    o.textContent = name;
+                    if (name === selected) o.selected = true;
+                    sel.appendChild(o);
+                }
+                var sep = document.createElement('option');
+                sep.disabled = true;
+                sep.textContent = '──────────';
+                sel.appendChild(sep);
+                var addOpt = document.createElement('option');
+                addOpt.value = '__add_new__';
+                addOpt.textContent = '+ Add new school…';
+                sel.appendChild(addOpt);
+                sel.setAttribute('data-selected', selected);
+            }
+
+            function makeRow(name, action) {
+                var li = document.createElement('li');
+                li.className = 'list-group-item d-flex justify-content-between align-items-center gap-2 py-2';
+                var span = document.createElement('span');
+                span.className = 'text-break small';
+                span.textContent = name;
+                li.appendChild(span);
+                var btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = action === 'hide' ? 'btn btn-sm btn-outline-secondary flex-shrink-0' : 'btn btn-sm btn-outline-primary flex-shrink-0';
+                btn.textContent = action === 'hide' ? 'Hide' : 'Restore';
+                btn.addEventListener('click', function () {
+                    var h = getHiddenSet();
+                    var sel = document.getElementById('schoolFilter');
+                    if (action === 'hide') {
+                        if (name === getEffectiveSelected(sel)) {
+                            alert('Change the school filter to something else (or All schools) before hiding this name.');
+                            return;
+                        }
+                        h.add(name);
+                    } else {
+                        h.delete(name);
+                    }
+                    saveHiddenSet(h);
+                    renderDropdown();
+                    refreshModalLists();
+                });
+                li.appendChild(btn);
+                return li;
+            }
+
+            function refreshModalLists() {
+                var hidden = getHiddenSet();
+                var sel = document.getElementById('schoolFilter');
+                var selected = sel ? getEffectiveSelected(sel) : '';
+                var visibleEl = document.getElementById('schoolFilterVisibleList');
+                var hiddenEl = document.getElementById('schoolFilterHiddenList');
+                if (!visibleEl || !hiddenEl) return;
+
+                visibleEl.innerHTML = '';
+                var sorted = fullList.slice().sort(function (a, b) {
+                    return a.localeCompare(b, undefined, { sensitivity: 'base' });
+                });
+                var anyVis = false;
+                for (var i = 0; i < sorted.length; i++) {
+                    var name = sorted[i];
+                    if (hidden.has(name) && name !== selected) continue;
+                    visibleEl.appendChild(makeRow(name, 'hide'));
+                    anyVis = true;
+                }
+                if (!anyVis) {
+                    visibleEl.innerHTML = '<li class="list-group-item text-muted small">None</li>';
+                }
+
+                hiddenEl.innerHTML = '';
+                var hiddenArr = Array.from(hidden).sort(function (a, b) {
+                    return a.localeCompare(b, undefined, { sensitivity: 'base' });
+                });
+                var anyHid = false;
+                for (var j = 0; j < hiddenArr.length; j++) {
+                    hiddenEl.appendChild(makeRow(hiddenArr[j], 'show'));
+                    anyHid = true;
+                }
+                if (!anyHid) {
+                    hiddenEl.innerHTML = '<li class="list-group-item text-muted small">None hidden</li>';
+                }
+            }
+
+            fullList = parseInitialList();
+
+            window.__adminSchoolFilter = {
+                addManualName: function (trimmed) {
+                    if (fullList.indexOf(trimmed) === -1) fullList.push(trimmed);
+                    renderDropdown();
+                },
+                renderDropdown: renderDropdown,
+                refreshModalLists: refreshModalLists
+            };
+
+            function boot() {
+                renderDropdown();
+                var modal = document.getElementById('schoolFilterManageModal');
+                if (modal) {
+                    modal.addEventListener('show.bs.modal', function () {
+                        refreshModalLists();
+                    });
+                }
+                document.getElementById('btnSchoolFilterClearHidden')?.addEventListener('click', function () {
+                    if (!confirm('Show all hidden school names in the dropdown again?')) return;
+                    localStorage.removeItem(STORAGE_KEY);
+                    renderDropdown();
+                    refreshModalLists();
+                });
+            }
+
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', boot);
+            } else {
+                boot();
+            }
+        })();
+
         function handleSchoolFilterChange(sel) {
             if (sel.value !== '__add_new__') {
                 sel.form.submit();
                 return;
             }
-            const name = prompt('Enter the new school name:');
+            var name = prompt('Enter the new school name:');
             if (!name || !name.trim()) {
                 sel.value = '';
                 return;
             }
-            const trimmed = name.trim();
-            const opt = document.createElement('option');
-            opt.value = trimmed;
-            opt.textContent = trimmed;
-            const sep = sel.querySelector('option[disabled]');
-            sel.insertBefore(opt, sep);
+            var trimmed = name.trim();
+            if (window.__adminSchoolFilter) {
+                window.__adminSchoolFilter.addManualName(trimmed);
+            }
             sel.value = '';
         }
     </script>
