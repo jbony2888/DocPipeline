@@ -80,13 +80,17 @@ def normalize_grade(grade_raw: Optional[str]) -> Tuple[Optional[int], str]:
 MIN_SCHOOL_NAME_LENGTH = 3
 
 SCHOOL_MAP = {
-    "rachel carson": "RACHEL_CARSON",
-    "rachel carson school": "RACHEL_CARSON",
-    "rachel carson elementary": "RACHEL_CARSON",
-    "rachel carson elementary school": "RACHEL_CARSON",
-    "carson": "RACHEL_CARSON",
-    "carson elementary school": "RACHEL_CARSON",
-    "carsonelementaryschool": "RACHEL_CARSON",
+    "rachel carson": "RACHEL_EDWARDS",
+    "rachel carson school": "RACHEL_EDWARDS",
+    "rachel carson elementary": "RACHEL_EDWARDS",
+    "rachel carson elementary school": "RACHEL_EDWARDS",
+    "carson": "RACHEL_EDWARDS",
+    "carson elementary school": "RACHEL_EDWARDS",
+    "carsonelementaryschool": "RACHEL_EDWARDS",
+    "rachel edwards": "RACHEL_EDWARDS",
+    "rachel edwards school": "RACHEL_EDWARDS",
+    "rachel edwards elementary": "RACHEL_EDWARDS",
+    "rachel edwards elementary school": "RACHEL_EDWARDS",
     "edwards": "EDWARDS",
     "edwards school": "EDWARDS",
     "escuela edwards": "EDWARDS",
@@ -118,9 +122,9 @@ SCHOOL_MAP = {
     "mundelein high school": "MUNDELEIN_HS",
     "delasalle": "DE_LA_SALLE_INSTITUTE",
     "delasalle institute": "DE_LA_SALLE_INSTITUTE",
-    "rachel cavan": "RACHEL_CARSON",
-    "reachel carson": "RACHEL_CARSON",
-    "reachel carson elementary": "RACHEL_CARSON",
+    "rachel cavan": "RACHEL_EDWARDS",
+    "reachel carson": "RACHEL_EDWARDS",
+    "reachel carson elementary": "RACHEL_EDWARDS",
 }
 
 # Known OCR typos / variants → canonical key for lookup (lowercase, no punctuation)
@@ -156,7 +160,7 @@ SCHOOL_TYPOS = {
 }
 
 SCHOOL_DISPLAY_BY_KEY = {
-    "RACHEL_CARSON": "Rachel Carson Elementary School",
+    "RACHEL_EDWARDS": "Rachel Edwards Elementary School",
     "DE_LA_SALLE_INSTITUTE": "De La Salle Institute",
     "EDWARDS": "Edwards",
     "PS_667_B": "PS 667 B",
