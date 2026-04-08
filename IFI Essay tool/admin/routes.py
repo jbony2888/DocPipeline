@@ -31,13 +31,17 @@ from admin.assignments_service import (
     STANDARD_SCHOOL_OPTIONS,
     GRADE_LEVEL_ASSIGNMENT_SCHOOL_LABEL,
     calculate_assignment_batch_count,
+    coerce_reason_codes,
     compute_ranking_results,
     compute_round2_ranking_results,
     get_grade_batch_progress,
     count_approved_essays_for_batch,
     delete_single_assignment_ranking,
+    derive_submission_status,
     get_batch_bounds,
     get_assignment_with_reader,
+    has_review_reason_codes,
+    is_excluded_submission_row,
     is_grade_level_assignment_school,
     list_approved_batches_by_school,
     list_approved_grade_level_summaries,
@@ -129,26 +133,11 @@ def _format_review_reasons(reason_codes: str) -> str:
 
 
 def _coerce_reason_codes(reason_codes: str | None) -> set[str]:
-    raw = (reason_codes or "").strip()
-    if raw in {"[]", "{}", "null", "None"}:
-        return set()
-    # Accept both modern semicolon-separated codes and legacy JSON-string arrays.
-    # Legacy rows can contain strings like '["MISSING_FILE"]' which should still
-    # count as "has a reason", even if the token is not in ALLOWED_REASON_CODES.
-    if raw.startswith("["):
-        try:
-            import json
-
-            arr = json.loads(raw)
-            return {str(x).strip() for x in (arr or []) if str(x).strip()}
-        except Exception:
-            # Fall back to treating the raw string as an opaque token
-            return {raw}
-    return {c.strip() for c in raw.split(";") if c.strip() and c.strip() in ALLOWED_REASON_CODES}
+    return coerce_reason_codes(reason_codes)
 
 
 def _row_has_reason_codes(row: dict) -> bool:
-    return bool(_coerce_reason_codes(row.get("review_reason_codes")))
+    return has_review_reason_codes(row)
 
 def _row_is_excluded_from_review(row: dict) -> bool:
     codes = _coerce_reason_codes(row.get("review_reason_codes"))
@@ -156,13 +145,7 @@ def _row_is_excluded_from_review(row: dict) -> bool:
 
 
 def _is_excluded_submission_row(row: dict) -> bool:
-    codes = _coerce_reason_codes(row.get("review_reason_codes"))
-    # Exclude rows that are not actionable review work:
-    # - CONTENT_MISMATCH: usually mis-split / wrong page linkage; handled via separate tools
-    # - BLANK_SUBMISSION: empty uploads
-    # NOTE: TEMPLATE_ONLY rows should remain visible so admins can explicitly move
-    # them into the Excluded batch (Status → Excluded) rather than disappearing.
-    return bool(codes & {"CONTENT_MISMATCH", "BLANK_SUBMISSION"})
+    return is_excluded_submission_row(row)
 
 
 def _format_human_datetime(value: str | None) -> str:
@@ -317,33 +300,15 @@ def _apply_school_grade_filters(
     status_key = (status or "").strip().lower()
     submission_key = str(submission_id or "").strip().lower()
 
-    def _row_status(r: dict) -> str:
-        if _row_is_excluded_from_review(r):
-            return "excluded"
-        if r.get("is_container_parent"):
-            # Container parents are placeholders, not real submissions.
-            # If they're no longer flagged for review, treat them as excluded/hidden.
-            if not r.get("needs_review"):
-                return "excluded"
-            return "needs_review"
-        has_all = bool(
-            (r.get("student_name") or "").strip()
-            and (r.get("school_name") or "").strip()
-            and str(r.get("grade") or "").strip()
-        )
-        has_reason = _row_has_reason_codes(r)
-        if has_all and not has_reason and not r.get("needs_review"):
-            return "approved"
-        return "needs_review"
-
     if not school_key and not grade_key:
         out = []
         for r in rows:
-            if status_key == "approved" and _row_status(r) != "approved":
+            row_status = derive_submission_status(r)
+            if status_key == "approved" and row_status != "approved":
                 continue
-            if status_key == "needs_review" and _row_status(r) != "needs_review":
+            if status_key == "needs_review" and row_status != "needs_review":
                 continue
-            if status_key == "excluded" and _row_status(r) != "excluded":
+            if status_key == "excluded" and row_status != "excluded":
                 continue
             if submission_key and str(r.get("submission_id") or "").strip().lower() != submission_key:
                 continue
@@ -351,11 +316,12 @@ def _apply_school_grade_filters(
         return out
     out = []
     for r in rows:
-        if status_key == "approved" and _row_status(r) != "approved":
+        row_status = derive_submission_status(r)
+        if status_key == "approved" and row_status != "approved":
             continue
-        if status_key == "needs_review" and _row_status(r) != "needs_review":
+        if status_key == "needs_review" and row_status != "needs_review":
             continue
-        if status_key == "excluded" and _row_status(r) != "excluded":
+        if status_key == "excluded" and row_status != "excluded":
             continue
         if submission_key and str(r.get("submission_id") or "").strip().lower() != submission_key:
             continue
@@ -973,19 +939,17 @@ def _failure_reason_stats(rows: list) -> dict:
     no_code = 0
     code_counts: Counter[str] = Counter()
     for r in rows:
-        has_all = r.get("student_name") and r.get("school_name") and r.get("grade")
-        raw = (r.get("review_reason_codes") or "").strip()
-        # All data + no reason → approved (even if DB says needs_review)
-        if has_all and not raw:
+        status = derive_submission_status(r)
+        raw_codes = _coerce_reason_codes(r.get("review_reason_codes"))
+        if status == "approved":
             appr += 1
             continue
-        if r.get("needs_review"):
+        if status == "needs_review":
             needs += 1
-            if not raw:
+            if not raw_codes:
                 no_code += 1
             else:
-                for part in raw.split(";"):
-                    c = part.strip()
+                for c in raw_codes:
                     if c in ALLOWED_REASON_CODES:
                         code_counts[c] += 1
         else:
@@ -1071,25 +1035,8 @@ def admin_dashboard():
     submissions = _apply_multi_entry_only_filter(all_rows, submissions, multi_entry_only)
     submissions = _apply_duplicates_only_filter(submissions, duplicates_only)
     for s in submissions:
-        # IMPORTANT: status shown in the table must match the same status logic used
-        # by the filter (see _apply_school_grade_filters). Otherwise, rows can appear
-        # in "Needs review" while displaying "Approved" (notably container parents).
-        if _row_is_excluded_from_review(s):
-            s["status"] = "excluded"
-            s["has_reason"] = True
-            continue
-        if s.get("is_container_parent"):
-            s["status"] = "needs_review"
-            s["has_reason"] = _row_has_reason_codes(s)
-            continue
-        has_all = bool(
-            (s.get("student_name") or "").strip()
-            and (s.get("school_name") or "").strip()
-            and str(s.get("grade") or "").strip()
-        )
-        has_reason = _row_has_reason_codes(s)
-        s["has_reason"] = has_reason
-        s["status"] = "approved" if (has_all and not has_reason and not s.get("needs_review")) else "needs_review"
+        s["status"] = derive_submission_status(s)
+        s["has_reason"] = _row_has_reason_codes(s)
 
     # For the Needs review filter, users typically want the number of *essays* that
     # require review (actionable child/standalone rows), not container-parent placeholders.
@@ -2242,15 +2189,7 @@ def get_submissions():
     submissions = _apply_duplicates_only_filter(submissions, duplicates_only)
 
     def _display_status(s):
-        if s.get("is_container_parent"):
-            return "needs_review"
-        has_all = s.get("student_name") and s.get("school_name") and s.get("grade")
-        has_reason = _row_has_reason_codes(s)
-        if has_all and not has_reason:
-            return "approved"
-        if has_reason:
-            return "needs_review"
-        return "needs_review" if s.get("needs_review") else "approved"
+        return derive_submission_status(s)
 
     return jsonify({
         "data": [
@@ -3173,9 +3112,6 @@ def admin_export_csv():
 
     query = sb.table("submissions").select(select_fields).order("school_name").order("grade").order("student_name")
 
-    if status_filter != "all":
-        query = query.eq("needs_review", False)
-
     if school_filter:
         query = query.eq("school_name", school_filter)
     if grade_filter:
@@ -3187,8 +3123,9 @@ def admin_export_csv():
         abort(500, description=f"Export query failed: {exc}")
 
     rows = result.data or []
+    rows = [r for r in rows if not _is_excluded_submission_row(r)]
     if status_filter != "all":
-        rows = [r for r in rows if not _is_excluded_submission_row(r)]
+        rows = [r for r in rows if derive_submission_status(r) == status_filter]
 
     output = io.StringIO()
     writer = csv.writer(output)

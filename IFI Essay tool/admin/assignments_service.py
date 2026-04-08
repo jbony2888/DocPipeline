@@ -76,32 +76,65 @@ def parse_and_validate_reader_emails(raw_value: Any) -> tuple[list[str], list[st
 
 def _is_approved_submission_row(row: dict[str, Any]) -> bool:
     """Mirror admin dashboard approval logic for consistency."""
+    return derive_submission_status(row) == "approved"
+
+
+def coerce_reason_codes(reason_codes: Any) -> set[str]:
+    raw = str(reason_codes or "").strip()
+    if raw in {"", "[]", "{}", "null", "None"}:
+        return set()
+    if raw.startswith("["):
+        try:
+            import json
+
+            arr = json.loads(raw)
+            return {str(x).strip() for x in (arr or []) if str(x).strip()}
+        except Exception:
+            return {raw}
+    return {code.strip() for code in raw.split(";") if code.strip()}
+
+
+def has_review_reason_codes(row: dict[str, Any]) -> bool:
+    return bool(coerce_reason_codes(row.get("review_reason_codes")))
+
+
+def is_excluded_submission_row(row: dict[str, Any]) -> bool:
+    codes = coerce_reason_codes(row.get("review_reason_codes"))
+    return bool(codes & {"CONTENT_MISMATCH", "BLANK_SUBMISSION"})
+
+
+def derive_submission_status(row: dict[str, Any]) -> str:
+    """
+    Single source of truth for admin status derivation.
+
+    Persisted states:
+    - `EXCLUDED_FROM_REVIEW` in `review_reason_codes` => excluded
+    - container parent + `needs_review = false` => excluded placeholder
+    - `needs_review = true` or any remaining reason codes => needs_review
+    - required metadata present + no reason codes + `needs_review = false` => approved
+    """
+    codes = coerce_reason_codes(row.get("review_reason_codes"))
+    if "EXCLUDED_FROM_REVIEW" in codes:
+        return "excluded"
     if row.get("is_container_parent"):
-        return False
-    # Safety gate: exclude known non-submission templates if that flag exists.
+        return "needs_review" if row.get("needs_review") else "excluded"
     if bool(row.get("is_blank_template")):
-        return False
-    has_all_data = bool(row.get("student_name") and row.get("school_name") and row.get("grade") is not None)
-    raw_reason_codes = str(row.get("review_reason_codes") or "").strip()
-    if raw_reason_codes in {"[]", "{}", "null", "None"}:
-        raw_reason_codes = ""
-    reason_codes = {
-        code.strip()
-        for code in raw_reason_codes.split(";")
-        if code.strip() and code.strip() in ALLOWED_REASON_CODES
-    }
-    if reason_codes & {"CONTENT_MISMATCH", "BLANK_SUBMISSION"}:
-        return False
-    if reason_codes:
-        return False
-    if row.get("needs_review"):
-        return False
-    # Safety gate: ensure we're assigning actual contest essays (when doc_type exists on the row).
-    doc_type = str(row.get("doc_type") or "").strip()
-    if doc_type:
-        if doc_type not in ASSIGNMENT_ALLOWED_DOC_TYPES:
-            return False
-    return has_all_data
+        return "needs_review"
+
+    has_all_data = bool(
+        (row.get("student_name") or "").strip()
+        and (row.get("school_name") or "").strip()
+        and str(row.get("grade") or "").strip()
+    )
+    remaining_codes = set(codes)
+    remaining_codes.discard("EXCLUDED_FROM_REVIEW")
+
+    if has_all_data and not remaining_codes and not row.get("needs_review"):
+        doc_type = str(row.get("doc_type") or "").strip()
+        if doc_type and doc_type not in ASSIGNMENT_ALLOWED_DOC_TYPES:
+            return "needs_review"
+        return "approved"
+    return "needs_review"
 
 
 def _select_submissions_with_optional_doc_type(sb: Any, select_columns: str):
