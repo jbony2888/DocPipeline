@@ -273,6 +273,33 @@ def test_batches_endpoint_groups_by_school_and_grade(client):
     assert gl["3"]["approvedCount"] == 1
 
 
+def test_force_approve_container_parent_marks_row_approved_without_counting_as_assignment_submission(client):
+    _set_admin_session(client)
+    sb = _FakeSupabase(
+        submissions=[
+            {
+                "submission_id": "parent-1",
+                "student_name": "Alexander Hernandez",
+                "school_name": "Rachel Carson Elementary School",
+                "grade": "8",
+                "needs_review": True,
+                "review_reason_codes": "EXCLUDED_FROM_REVIEW;MULTI_ENTRY_PARENT",
+                "is_container_parent": True,
+            }
+        ]
+    )
+    with patch("admin.routes._get_service_role_client", return_value=sb):
+        res = client.post("/admin/submissions/parent-1/force-approve")
+    assert res.status_code == 200
+    data = res.get_json()
+    assert data["status"] == "approved"
+    assert data["review_reason_codes"] == "MULTI_ENTRY_PARENT"
+
+    from admin.assignments_service import count_approved_essays_for_batch
+
+    assert count_approved_essays_for_batch(sb, "Rachel Carson Elementary School", "8") == 0
+
+
 def test_batches_endpoint_accepts_already_standardized_school_labels(client):
     _set_admin_session(client)
     sb = _FakeSupabase(

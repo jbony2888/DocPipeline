@@ -31,7 +31,9 @@ def _row(**overrides):
         (_row(review_reason_codes="EXCLUDED_FROM_REVIEW"), "excluded"),
         (_row(review_reason_codes="EXCLUDED_FROM_REVIEW;MISSING_GRADE"), "excluded"),
         (_row(is_container_parent=True, needs_review=True), "needs_review"),
-        (_row(is_container_parent=True, needs_review=False), "excluded"),
+        (_row(is_container_parent=True, needs_review=False, review_reason_codes="MULTI_ENTRY_PARENT"), "approved"),
+        (_row(is_container_parent=True, needs_review=False), "approved"),
+        (_row(is_container_parent=True, needs_review=False, school_name=""), "excluded"),
         (_row(school_name="", needs_review=False, review_reason_codes=""), "needs_review"),
     ],
 )

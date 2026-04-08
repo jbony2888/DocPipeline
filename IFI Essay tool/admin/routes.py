@@ -2565,9 +2565,9 @@ def force_approve_submission(submission_id: str):
     Admin override: approve a submission if required metadata is present.
 
     Special case:
-    - Container/parent rows (multi-entry placeholders) are not real submissions and should not
-      be "approved" (they usually have no student/school/grade). For these, we mark the row as
-      EXCLUDED_FROM_REVIEW so it disappears from the active review queue.
+    - Container/parent rows are storage wrappers, not real essay rows. They may still be marked
+      approved in the admin dashboard when they have complete metadata, but remain excluded from
+      assignment/export pools elsewhere.
     """
     _require_admin()
 
@@ -2586,23 +2586,34 @@ def force_approve_submission(submission_id: str):
         return jsonify({"error": "Submission not found"}), 404
     rec = result.data[0]
 
-    # Container parents: exclude instead of approve.
+    # Container parents: allow approval when required metadata is present.
     if rec.get("is_container_parent"):
         existing_codes = _coerce_reason_codes(rec.get("review_reason_codes"))
-        existing_codes.add("EXCLUDED_FROM_REVIEW")
+        existing_codes.discard("EXCLUDED_FROM_REVIEW")
+        missing = []
+        if not (rec.get("student_name") or "").strip():
+            missing.append("student_name")
+        if not (rec.get("school_name") or "").strip():
+            missing.append("school_name")
+        if str(rec.get("grade") or "").strip() == "":
+            missing.append("grade")
+        if missing:
+            return jsonify({"error": f"Cannot approve: missing {', '.join(missing)}"}), 400
+
+        normalized_codes = ";".join(sorted(existing_codes))
         sb.table("submissions").update(
             {
-                "needs_review": True,
-                "review_reason_codes": ";".join(sorted(existing_codes)) if existing_codes else "EXCLUDED_FROM_REVIEW",
+                "needs_review": False,
+                "review_reason_codes": normalized_codes,
             }
         ).eq("submission_id", submission_id).execute()
         return jsonify(
             {
                 "success": True,
                 "submission_id": submission_id,
-                "status": "excluded",
-                "review_reason_codes": ";".join(sorted(existing_codes)) if existing_codes else "EXCLUDED_FROM_REVIEW",
-                "review_reasons": "—",
+                "status": "approved",
+                "review_reason_codes": normalized_codes,
+                "review_reasons": _format_review_reasons(normalized_codes),
             }
         )
 

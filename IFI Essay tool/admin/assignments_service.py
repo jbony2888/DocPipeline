@@ -75,7 +75,14 @@ def parse_and_validate_reader_emails(raw_value: Any) -> tuple[list[str], list[st
 
 
 def _is_approved_submission_row(row: dict[str, Any]) -> bool:
-    """Mirror admin dashboard approval logic for consistency."""
+    """
+    Mirror admin dashboard approval logic for real essay rows only.
+
+    Container-parent rows can show as approved in admin review once metadata is complete,
+    but they are storage wrappers and must not count toward assignment/export pools.
+    """
+    if row.get("is_container_parent"):
+        return False
     return derive_submission_status(row) == "approved"
 
 
@@ -109,7 +116,8 @@ def derive_submission_status(row: dict[str, Any]) -> str:
 
     Persisted states:
     - `EXCLUDED_FROM_REVIEW` in `review_reason_codes` => excluded
-    - container parent + `needs_review = false` => excluded placeholder
+    - container parent + `needs_review = false` + complete metadata => approved
+    - container parent + `needs_review = false` + incomplete metadata => excluded placeholder
     - `needs_review = true` or any remaining reason codes => needs_review
     - required metadata present + no reason codes + `needs_review = false` => approved
     """
@@ -118,8 +126,6 @@ def derive_submission_status(row: dict[str, Any]) -> str:
         return "instruction"
     if "EXCLUDED_FROM_REVIEW" in codes:
         return "excluded"
-    if row.get("is_container_parent"):
-        return "needs_review" if row.get("needs_review") else "excluded"
     if bool(row.get("is_blank_template")):
         return "needs_review"
 
@@ -130,6 +136,11 @@ def derive_submission_status(row: dict[str, Any]) -> str:
     )
     remaining_codes = set(codes)
     remaining_codes.discard("EXCLUDED_FROM_REVIEW")
+    if row.get("is_container_parent"):
+        remaining_codes.discard("MULTI_ENTRY_PARENT")
+        if row.get("needs_review") or remaining_codes:
+            return "needs_review"
+        return "approved" if has_all_data else "excluded"
 
     if has_all_data and not remaining_codes and not row.get("needs_review"):
         doc_type = str(row.get("doc_type") or "").strip()
