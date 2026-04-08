@@ -310,6 +310,8 @@ def _apply_school_grade_filters(
                 continue
             if status_key == "excluded" and row_status != "excluded":
                 continue
+            if status_key == "instruction" and row_status != "instruction":
+                continue
             if submission_key and str(r.get("submission_id") or "").strip().lower() != submission_key:
                 continue
             out.append(r)
@@ -322,6 +324,8 @@ def _apply_school_grade_filters(
         if status_key == "needs_review" and row_status != "needs_review":
             continue
         if status_key == "excluded" and row_status != "excluded":
+            continue
+        if status_key == "instruction" and row_status != "instruction":
             continue
         if submission_key and str(r.get("submission_id") or "").strip().lower() != submission_key:
             continue
@@ -952,6 +956,8 @@ def _failure_reason_stats(rows: list) -> dict:
                 for c in raw_codes:
                     if c in ALLOWED_REASON_CODES:
                         code_counts[c] += 1
+        elif status == "instruction":
+            continue
         else:
             appr += 1
     codes_out = [

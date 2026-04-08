@@ -122,6 +122,7 @@
                                     <option value="" {% if not selected_status %}selected{% endif %}>All</option>
                                     <option value="approved" {% if selected_status == "approved" %}selected{% endif %}>Approved only</option>
                                     <option value="needs_review" {% if selected_status == "needs_review" %}selected{% endif %}>Needs review only</option>
+                                    <option value="instruction" {% if selected_status == "instruction" %}selected{% endif %}>Instruction records</option>
                                     <option value="excluded" {% if selected_status == "excluded" %}selected{% endif %}>Excluded (not in review)</option>
                                 </select>
                             </div>
@@ -282,6 +283,8 @@
                                     <td data-role="status">
                                         {% if s.status == 'approved' %}
                                         <span class="badge badge-approved">Approved</span>
+                                        {% elif s.status == 'instruction' %}
+                                        <span class="badge bg-info text-dark">Instruction</span>
                                         {% elif s.status == 'excluded' %}
                                         <span class="badge bg-secondary">Excluded</span>
                                         {% else %}
@@ -572,12 +575,15 @@
                 const statusCell = tr.querySelector('[data-role="status"]');
                 if (!statusCell) return;
                 const approved = status === 'approved';
+                const instruction = status === 'instruction';
                 const excluded = status === 'excluded';
                 statusCell.innerHTML = approved
                     ? '<span class="badge badge-approved">Approved</span>'
+                    : (instruction
+                        ? '<span class="badge bg-info text-dark">Instruction</span>'
                     : (excluded
                         ? '<span class="badge bg-secondary">Excluded</span>'
-                        : '<span class="badge badge-needs-review">Needs review</span>');
+                        : '<span class="badge badge-needs-review">Needs review</span>'));
             }
 
             async function saveRow(tr, button) {

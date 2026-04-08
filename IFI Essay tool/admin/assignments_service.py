@@ -114,6 +114,8 @@ def derive_submission_status(row: dict[str, Any]) -> str:
     - required metadata present + no reason codes + `needs_review = false` => approved
     """
     codes = coerce_reason_codes(row.get("review_reason_codes"))
+    if "TEMPLATE_ONLY" in codes:
+        return "instruction"
     if "EXCLUDED_FROM_REVIEW" in codes:
         return "excluded"
     if row.get("is_container_parent"):
