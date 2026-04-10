@@ -21,7 +21,7 @@ class DummyRecord:
 def test_is_accepted_child_requires_identity_and_word_count():
     record = DummyRecord(
         student_name="Yesenia Alvarez",
-        school_name="Rachel Edwards Elementary School",
+        school_name="Richard Edwards School",
         grade=4,
         word_count=180,
         review_reason_codes="",
@@ -37,7 +37,7 @@ def test_is_accepted_child_requires_identity_and_word_count():
 def test_is_accepted_child_rejects_template_short_or_risky_records():
     record = DummyRecord(
         student_name="Yesenia Alvarez",
-        school_name="Rachel Edwards Elementary School",
+        school_name="Richard Edwards School",
         grade=4,
         word_count=22,
         review_reason_codes="TEMPLATE_ONLY",
