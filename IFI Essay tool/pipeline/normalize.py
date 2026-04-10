@@ -161,9 +161,9 @@ SCHOOL_TYPOS = {
 
 SCHOOL_DISPLAY_BY_KEY = {
     "RACHEL_CARSON": "Rachel Carson Elementary School",
-    "RACHEL_EDWARDS": "Rachel Edwards Elementary School",
+    "RACHEL_EDWARDS": "Richard Edwards School",
     "DE_LA_SALLE_INSTITUTE": "De La Salle Institute",
-    "EDWARDS": "Edwards",
+    "EDWARDS": "Richard Edwards School",
     "PS_667_B": "PS 667 B",
     "ST_MARY_PONTIAC": "St Mary Pontiac",
     "MUNDELEIN_HS": "Mundelein HS",
