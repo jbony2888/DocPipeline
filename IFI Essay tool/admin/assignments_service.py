@@ -245,8 +245,8 @@ def _standardized_school_label(canonical_school: str) -> str | None:
     value = _normalize_school_text(raw_value)
     if "carson" in value or "cavan" in value:
         return "Rachel Carson Elementary School"
-    if "rachel" in value and "edwards" in value:
-        return "Rachel Edwards Elementary School"
+    if "edwards" in value:
+        return "Richard Edwards School"
     if "la salle" in value or "lasalle" in value or "delasalle" in value:
         return "De La Salle Institute"
     if "mundelein" in value or "munderein" in value:
@@ -259,7 +259,7 @@ def _standardized_school_label(canonical_school: str) -> str | None:
 STANDARD_SCHOOL_OPTIONS = (
     "De La Salle Institute",
     "Rachel Carson Elementary School",
-    "Rachel Edwards Elementary School",
+    "Richard Edwards School",
     "Mundelein HS",
     "St. Mary's Pontiac",
 )
