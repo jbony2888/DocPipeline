@@ -264,8 +264,15 @@ def get_records(
 ) -> List[Dict]:
     """Get submission records from Supabase."""
     try:
-        # Prefer an authenticated client when possible (RLS relies on auth.uid()).
-        supabase = get_supabase_client(access_token=access_token) if access_token else get_supabase_client()
+        # Prefer the service-role client when we already scope by owner_user_id.
+        # This avoids empty result sets when the authenticated client is missing,
+        # expired, or too tightly constrained by RLS, while still keeping owner
+        # filtering explicit in the query.
+        supabase = _get_service_role_client() if owner_user_id else None
+        if not supabase:
+            # Fall back to an authenticated client when owner-scoped service role
+            # access is unavailable.
+            supabase = get_supabase_client(access_token=access_token) if access_token else get_supabase_client()
         
         if not supabase:
             print("❌ Error: Could not initialize Supabase client")
