@@ -260,15 +260,16 @@ def get_records(
     limit: Optional[int] = None,
     access_token: Optional[str] = None,
     refresh_token: Optional[str] = None,
-    select_fields: Optional[List[str]] = None
+    select_fields: Optional[List[str]] = None,
+    force_service_role: bool = False,
 ) -> List[Dict]:
     """Get submission records from Supabase."""
     try:
-        # Prefer the service-role client when we already scope by owner_user_id.
-        # This avoids empty result sets when the authenticated client is missing,
-        # expired, or too tightly constrained by RLS, while still keeping owner
-        # filtering explicit in the query.
-        supabase = _get_service_role_client() if owner_user_id else None
+        # Prefer the service-role client when explicitly requested or when we
+        # already scope by owner_user_id. This avoids empty result sets when the
+        # authenticated client is missing, expired, or too tightly constrained by
+        # RLS, while still keeping the query filters explicit.
+        supabase = _get_service_role_client() if (force_service_role or owner_user_id) else None
         if not supabase:
             # Fall back to an authenticated client when owner-scoped service role
             # access is unavailable.

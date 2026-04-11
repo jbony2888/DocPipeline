@@ -1721,9 +1721,12 @@ def export_csv():
     if not require_auth():
         return _login_redirect()
     
-    user_id = session.get("user_id")
     access_token = session.get("supabase_access_token")
-    records = get_db_records(needs_review=False, owner_user_id=user_id, access_token=access_token)
+    records = get_db_records(
+        needs_review=False,
+        access_token=access_token,
+        force_service_role=True,
+    )
 
     csv_buffer = _export_records_to_csv(records, access_token=access_token)
     
@@ -1741,11 +1744,14 @@ def export_school_csv(school_name: str):
     if not require_auth():
         return _login_redirect()
     
-    user_id = session.get("user_id")
     access_token = session.get("supabase_access_token")
     
     # Get all clean records
-    all_records = get_db_records(needs_review=False, owner_user_id=user_id, access_token=access_token)
+    all_records = get_db_records(
+        needs_review=False,
+        access_token=access_token,
+        force_service_role=True,
+    )
     
     # Filter by school name (case-insensitive, normalized)
     from pipeline.grouping import normalize_key
@@ -1775,11 +1781,14 @@ def export_grade_csv(school_name: str, grade: str):
     if not require_auth():
         return _login_redirect()
     
-    user_id = session.get("user_id")
     access_token = session.get("supabase_access_token")
     
     # Get all clean records
-    all_records = get_db_records(needs_review=False, owner_user_id=user_id, access_token=access_token)
+    all_records = get_db_records(
+        needs_review=False,
+        access_token=access_token,
+        force_service_role=True,
+    )
     
     # Filter by school name and grade (case-insensitive, normalized)
     from pipeline.grouping import normalize_key

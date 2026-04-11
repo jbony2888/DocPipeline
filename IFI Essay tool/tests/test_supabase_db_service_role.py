@@ -102,3 +102,32 @@ def test_get_records_falls_back_when_service_role_unavailable(monkeypatch):
 
     assert [row["submission_id"] for row in rows] == ["approved-2"]
     assert auth_client.table_calls == ["submissions"]
+
+
+def test_get_records_can_force_service_role_without_owner_scope(monkeypatch):
+    from pipeline import supabase_db
+
+    service_rows = [
+        {
+            "submission_id": "approved-1",
+            "owner_user_id": "user-111",
+            "needs_review": False,
+        },
+        {
+            "submission_id": "review-1",
+            "owner_user_id": "user-222",
+            "needs_review": True,
+        },
+    ]
+    service_client = _FakeSupabase(service_rows)
+
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("Authenticated client should not be used when force_service_role is enabled")
+
+    monkeypatch.setattr(supabase_db, "_get_service_role_client", lambda: service_client)
+    monkeypatch.setattr(supabase_db, "get_supabase_client", fail_if_called)
+
+    rows = supabase_db.get_records(needs_review=False, force_service_role=True)
+
+    assert [row["submission_id"] for row in rows] == ["approved-1"]
+    assert service_client.table_calls == ["submissions"]
