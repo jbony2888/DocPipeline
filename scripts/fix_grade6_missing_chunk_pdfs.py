@@ -27,8 +27,13 @@ Usage
   # apply
   python scripts/fix_grade6_missing_chunk_pdfs.py --execute
 
-  # apply but skip the needs_review tag
+  # apply but skip the RECONSTRUCTED_PDF tag entirely
   python scripts/fix_grade6_missing_chunk_pdfs.py --execute --no-tag
+
+NOTE: --no-tag is the recommended default for reader-facing batches.
+Setting needs_review=True hides records from reader batch views.
+The RECONSTRUCTED_PDF code is written to review_reason_codes regardless
+of needs_review, so it serves as an audit marker without hiding essays.
 """
 
 from __future__ import annotations
@@ -208,17 +213,17 @@ def main() -> int:
             failed += 1
             continue
 
-        # Tag the record unless --no-tag
+        # Tag the record with RECONSTRUCTED_PDF in codes for audit trail.
+        # Do NOT set needs_review=True — that hides records from reader batches.
         if not args.no_tag:
             existing_codes = str(r.get("review_reason_codes") or "").strip()
             codes = set(c.strip() for c in existing_codes.split(";") if c.strip())
             codes.add("RECONSTRUCTED_PDF")
             try:
                 sb.table("submissions").update({
-                    "needs_review": True,
                     "review_reason_codes": ";".join(sorted(codes)),
                 }).eq("submission_id", sid).execute()
-                print(f"    ✓ tagged needs_review + RECONSTRUCTED_PDF")
+                print(f"    ✓ tagged RECONSTRUCTED_PDF (needs_review left unchanged)")
             except Exception as exc:
                 print(f"    ✗ DB tag failed: {exc}")
 
