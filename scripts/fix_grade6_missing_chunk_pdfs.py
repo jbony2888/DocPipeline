@@ -213,19 +213,10 @@ def main() -> int:
             failed += 1
             continue
 
-        # Tag the record with RECONSTRUCTED_PDF in codes for audit trail.
-        # Do NOT set needs_review=True — that hides records from reader batches.
-        if not args.no_tag:
-            existing_codes = str(r.get("review_reason_codes") or "").strip()
-            codes = set(c.strip() for c in existing_codes.split(";") if c.strip())
-            codes.add("RECONSTRUCTED_PDF")
-            try:
-                sb.table("submissions").update({
-                    "review_reason_codes": ";".join(sorted(codes)),
-                }).eq("submission_id", sid).execute()
-                print(f"    ✓ tagged RECONSTRUCTED_PDF (needs_review left unchanged)")
-            except Exception as exc:
-                print(f"    ✗ DB tag failed: {exc}")
+        # NOTE: We intentionally do NOT write review_reason_codes here.
+        # Adding any code (e.g. RECONSTRUCTED_PDF) causes derive_submission_status
+        # to return "needs_review", which removes the record from assignment pools
+        # and hides it from readers. The uploaded PDF is the audit trail.
 
         ok += 1
 
