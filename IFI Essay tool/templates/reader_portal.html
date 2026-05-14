@@ -102,7 +102,7 @@
                     {% endif %}
                 </div>
                 {% endfor %}
-                {% else %}
+                {% elif not portal_error %}
                 <p class="text-muted mb-0">No assignments are currently available for this email.</p>
                 {% endif %}
             </div>

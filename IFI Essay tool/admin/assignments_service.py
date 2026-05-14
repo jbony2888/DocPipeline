@@ -498,18 +498,19 @@ def list_assignment_finalist_rows(sb: Any, *, assignment_id: int) -> list[dict[s
     if not ordered_ids:
         return []
 
-    submissions = (
-        sb.table("submissions")
-        .select(
-            "submission_id, filename, artifact_dir, created_at, grade, school_name, student_name, "
-            "needs_review, review_reason_codes, doc_type, is_blank_template, is_container_parent"
-        )
-        .in_("submission_id", ordered_ids)
-        .limit(max(1, len(ordered_ids)))
-        .execute()
-        .data
-        or []
+    lim = max(1, len(ordered_ids))
+    select_with_doc_type = (
+        "submission_id, filename, artifact_dir, created_at, grade, school_name, student_name, "
+        "needs_review, review_reason_codes, doc_type, is_blank_template, is_container_parent"
     )
+    select_fallback = (
+        "submission_id, filename, artifact_dir, created_at, grade, school_name, student_name, "
+        "needs_review, review_reason_codes, is_container_parent"
+    )
+    q1 = sb.table("submissions").select(select_with_doc_type).in_("submission_id", ordered_ids).limit(lim)
+    q2 = sb.table("submissions").select(select_fallback).in_("submission_id", ordered_ids).limit(lim)
+    result = _execute_submissions_query_with_fallback(q1, q2)
+    submissions = result.data or []
     by_id = {str(row.get("submission_id") or "").strip(): dict(row) for row in submissions}
     out: list[dict[str, Any]] = []
     for submission_id in ordered_ids:
