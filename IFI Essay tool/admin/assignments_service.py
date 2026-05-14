@@ -729,21 +729,20 @@ def _load_teacher_emails_by_owner_id(
         return {}
 
     resolved: dict[str, str] = {}
-    page = 1
-    per_page = 1000
-    while True:
-        batch = sb.auth.admin.list_users(page=page, per_page=per_page)
-        users = list(batch or [])
-        if not users:
-            break
-        for user in users:
-            user_id = str(getattr(user, "id", "") or "").strip()
-            email = str(getattr(user, "email", "") or "").strip().lower()
-            if user_id in owner_ids and email:
-                resolved[user_id] = email
-        if len(users) < per_page or len(resolved) == len(owner_ids):
-            break
-        page += 1
+    # Resolve only the owners we need. list_users() paginates the entire project and
+    # can time out on large user bases when loading /admin/essays/batches.
+    for owner_id in sorted(owner_ids):
+        try:
+            resp = sb.auth.admin.get_user_by_id(owner_id)
+        except Exception:
+            continue
+        user = getattr(resp, "user", None)
+        if user is None:
+            continue
+        uid = str(getattr(user, "id", "") or "").strip()
+        email = str(getattr(user, "email", "") or "").strip().lower()
+        if uid and email:
+            resolved[uid] = email
 
     return resolved
 

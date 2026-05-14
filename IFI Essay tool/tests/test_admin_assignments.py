@@ -22,6 +22,15 @@ class _FakeAuthUser:
         self.email = email
 
 
+class _FakeUserResponse:
+    """Mimics supabase_auth UserResponse (get_user_by_id return value)."""
+
+    __slots__ = ("user",)
+
+    def __init__(self, user: _FakeAuthUser):
+        self.user = user
+
+
 class _FakeAuthAdmin:
     def __init__(self, users: list[dict[str, str]] | None = None):
         self._users = [
@@ -33,6 +42,13 @@ class _FakeAuthAdmin:
         start = max(0, (int(page) - 1) * int(per_page))
         end = start + int(per_page)
         return self._users[start:end]
+
+    def get_user_by_id(self, uid: str):
+        want = str(uid or "").strip()
+        for u in self._users:
+            if str(getattr(u, "id", "") or "").strip() == want:
+                return _FakeUserResponse(u)
+        raise LookupError(want)
 
 
 class _FakeAuth:
