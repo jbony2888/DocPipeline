@@ -51,6 +51,9 @@
         <div class="card">
             <div class="card-body p-4">
                 <h2 class="h5 mb-3">Assigned Batches</h2>
+                {% if portal_error %}
+                <div class="alert alert-warning">{{ portal_error }}</div>
+                {% endif %}
                 <div class="instruction-box mb-4">
                     <strong>Ranking instructions</strong><br>
                     Open a batch with <strong>Review &amp; Rank</strong>. For each essay, open the file, choose a rank, and save that essay. Use <strong>1</strong> for the best essay in the batch and use the largest number in that batch for the lowest-ranked essay. Each rank number can be used only once in the batch, and <strong>Unrank</strong> moves an essay back to unranked.

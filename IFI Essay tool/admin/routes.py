@@ -841,6 +841,13 @@ def _verify_reader_portal_token(token: str) -> str | None:
         payload = _reader_portal_serializer().loads(token, max_age=_READER_PORTAL_MAX_AGE_SECONDS)
     except (BadSignature, SignatureExpired):
         return None
+    except Exception as exc:
+        # Malformed tokens or serializer edge cases should show “invalid link”, not a 500 page.
+        try:
+            current_app.logger.warning("reader portal token could not be decoded: %s", exc)
+        except Exception:
+            pass
+        return None
     email = str((payload or {}).get("email") or "").strip().lower()
     return email or None
 
@@ -1653,6 +1660,7 @@ def reader_access():
             token=token,
             reader_email="",
             assignments=[],
+            portal_error="",
         )
 
     email_verified = False
@@ -1666,66 +1674,75 @@ def reader_access():
         email_verified = True
 
     assignments_out: list[dict] = []
+    portal_error = ""
     if email_verified:
-        sb = _get_service_role_client()
-        if sb:
-            reader = get_reader_by_email(sb, token_email)
-            if reader:
-                for row in list_assignments_for_reader(sb, reader.get("id")):
-                    essay_rows, is_finalist_round = _resolve_assignment_essay_rows(sb, row)
-                    total_essays = len(essay_rows)
-                    if is_finalist_round:
-                        start, end = 0, total_essays
-                    else:
-                        approved_total = count_approved_essays_for_batch(
+        try:
+            sb = _get_service_role_client()
+            if sb:
+                reader = get_reader_by_email(sb, token_email)
+                if reader:
+                    for row in list_assignments_for_reader(sb, reader.get("id")):
+                        essay_rows, is_finalist_round = _resolve_assignment_essay_rows(sb, row)
+                        total_essays = len(essay_rows)
+                        if is_finalist_round:
+                            start, end = 0, total_essays
+                        else:
+                            approved_total = count_approved_essays_for_batch(
+                                sb,
+                                school=str(row.get("school_name") or ""),
+                                grade=str(row.get("grade") or ""),
+                            )
+                            start, end = get_batch_bounds(int(row.get("batch_number") or 1), approved_total)
+                        assignment_id = int(row.get("id"))
+                        saved_rankings = list_rankings_for_assignment(
                             sb,
-                            school=str(row.get("school_name") or ""),
-                            grade=str(row.get("grade") or ""),
+                            assignment_id=assignment_id,
+                            reader_id=reader.get("id"),
                         )
-                        start, end = get_batch_bounds(int(row.get("batch_number") or 1), approved_total)
-                    assignment_id = int(row.get("id"))
-                    saved_rankings = list_rankings_for_assignment(
-                        sb,
-                        assignment_id=assignment_id,
-                        reader_id=reader.get("id"),
-                    )
-                    saved_rank_by_submission = {
-                        str(rank_row.get("submission_id") or "").strip(): int(rank_row.get("rank_position") or 0)
-                        for rank_row in saved_rankings
-                        if str(rank_row.get("submission_id") or "").strip()
-                    }
-                    assignments_out.append(
-                        {
-                            "id": assignment_id,
-                            "school": row.get("school_name"),
-                            "grade": row.get("grade"),
-                            "batchNumber": row.get("batch_number"),
-                            "totalBatches": row.get("total_batches"),
-                            "isFinalistRound": is_finalist_round,
-                            "essayCount": max(0, end - start),
-                            "essayRange": f"{start + 1}-{end}" if end > start else "0-0",
-                            "createdAt": row.get("created_at"),
-                            "formattedCreatedAt": _format_human_datetime(row.get("created_at")),
-                            "downloadUrl": url_for("admin.reader_assignment_download", assignment_id=assignment_id, token=token),
-                            "reviewUrl": url_for("admin.reader_assignment_review", assignment_id=assignment_id, token=token),
-                            "essays": [
-                                {
-                                    "submissionId": str(essay_row.get("submission_id") or "").strip(),
-                                    "studentName": essay_row.get("student_name") or "Unknown student",
-                                    "createdAt": _format_human_datetime(essay_row.get("created_at")),
-                                    "rankPosition": saved_rank_by_submission.get(str(essay_row.get("submission_id") or "").strip()),
-                                    "viewUrl": url_for(
-                                        "admin.reader_assignment_submission_view",
-                                        assignment_id=assignment_id,
-                                        submission_id=str(essay_row.get("submission_id") or "").strip(),
-                                        token=token,
-                                    ),
-                                }
-                                for essay_row in essay_rows
-                                if str(essay_row.get("submission_id") or "").strip()
-                            ],
+                        saved_rank_by_submission = {
+                            str(rank_row.get("submission_id") or "").strip(): int(rank_row.get("rank_position") or 0)
+                            for rank_row in saved_rankings
+                            if str(rank_row.get("submission_id") or "").strip()
                         }
-                    )
+                        assignments_out.append(
+                            {
+                                "id": assignment_id,
+                                "school": row.get("school_name"),
+                                "grade": row.get("grade"),
+                                "batchNumber": row.get("batch_number"),
+                                "totalBatches": row.get("total_batches"),
+                                "isFinalistRound": is_finalist_round,
+                                "essayCount": max(0, end - start),
+                                "essayRange": f"{start + 1}-{end}" if end > start else "0-0",
+                                "createdAt": row.get("created_at"),
+                                "formattedCreatedAt": _format_human_datetime(row.get("created_at")),
+                                "downloadUrl": url_for("admin.reader_assignment_download", assignment_id=assignment_id, token=token),
+                                "reviewUrl": url_for("admin.reader_assignment_review", assignment_id=assignment_id, token=token),
+                                "essays": [
+                                    {
+                                        "submissionId": str(essay_row.get("submission_id") or "").strip(),
+                                        "studentName": essay_row.get("student_name") or "Unknown student",
+                                        "createdAt": _format_human_datetime(essay_row.get("created_at")),
+                                        "rankPosition": saved_rank_by_submission.get(str(essay_row.get("submission_id") or "").strip()),
+                                        "viewUrl": url_for(
+                                            "admin.reader_assignment_submission_view",
+                                            assignment_id=assignment_id,
+                                            submission_id=str(essay_row.get("submission_id") or "").strip(),
+                                            token=token,
+                                        ),
+                                    }
+                                    for essay_row in essay_rows
+                                    if str(essay_row.get("submission_id") or "").strip()
+                                ],
+                            }
+                        )
+        except Exception:
+            current_app.logger.exception("reader_access failed while loading assignments for %s", token_email)
+            assignments_out = []
+            portal_error = (
+                "We could not load your assignments right now. "
+                "Please try again in a few minutes. If this keeps happening, contact support."
+            )
 
     return render_template(
         "reader_portal.html",
@@ -1735,6 +1752,7 @@ def reader_access():
         reader_email=token_email,
         submitted_email=submitted_email,
         assignments=assignments_out,
+        portal_error=portal_error,
     )
 
 
